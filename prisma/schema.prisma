@@ -1,0 +1,1063 @@
+// Prisma schema for the Instagram campaign/lead-generation app.
+// Prisma 7: the datasource URL lives in prisma7.config.ts, not here.
+
+generator client {
+  provider = "prisma-client"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+enum CampaignStatus {
+  DRAFT
+  READY
+  RUNNING
+  PAUSED
+  COMPLETED
+  PARTIAL
+  FAILED
+  CANCELLED
+}
+
+enum ExecutionMode {
+  MANUAL
+  REVIEW_REQUIRED
+}
+
+enum CampaignExecutionStatus {
+  PREVIEW
+  DRAFT
+  READY
+  RUNNING
+  PAUSED
+  COMPLETED
+  PARTIAL
+  FAILED
+  CANCELLED
+}
+
+enum CampaignExecutionPhase {
+  DISCOVERY
+  ENRICHMENT
+  READY
+  MESSAGING
+  FINALIZING
+}
+
+enum ExecutionItemStatus {
+  PENDING
+  APPROVED
+  SENDING
+  SKIPPED
+  SENT
+  FAILED
+  SUPPRESSED_DNC
+}
+
+enum ScrapeJobStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+}
+
+enum InstagramSenderSessionType {
+  PERSISTENT_PROFILE
+  STORAGE_STATE
+}
+
+enum InstagramSenderStatus {
+  CONNECTING
+  CONNECTED
+  AUTH_REQUIRED
+  EXPIRED
+  ERROR
+  DISCONNECTED
+}
+
+enum ConnectionMethod {
+  PLAYWRIGHT
+  UNIPILE
+}
+
+enum MessageStatus {
+  DRAFT
+  SENDING
+  SENT
+  FAILED
+  UNKNOWN
+}
+
+enum LeadStatus {
+  NEW
+  QUALIFYING
+  QUALIFIED
+  READY_FOR_OUTREACH
+  QUEUED
+  CONTACTED
+  REPLIED
+  INTERESTED
+  FOLLOW_UP
+  MEETING
+  CONVERTED
+  NOT_INTERESTED
+  DO_NOT_CONTACT
+}
+
+enum AiStatus {
+  PENDING
+  DONE
+  FAILED
+  SKIPPED
+}
+
+enum DncChannel {
+  INSTAGRAM
+  EMAIL
+  ALL
+}
+
+enum DncIdentifierType {
+  USERNAME
+  INSTAGRAM_ID
+  EMAIL
+  DOMAIN
+}
+
+enum DncSource {
+  MANUAL
+  REPLY_OPT_OUT
+  UNSUBSCRIBE
+  IMPORT
+}
+
+enum MessageDirection {
+  OUTBOUND
+  INBOUND
+}
+
+enum MessageChannel {
+  INSTAGRAM
+  EMAIL
+}
+
+enum UsageProvider {
+  SPARIOR
+  APIFY
+  GEMINI
+  ZAPIER
+  OTHER
+}
+
+enum DraftStatus {
+  DRAFT
+  APPROVED
+  REJECTED
+  SUPERSEDED
+  SENT
+  // Step 6 additions (appended to avoid enum reordering drift)
+  PENDING_REVIEW
+  BLOCKED
+}
+
+enum DraftReviewAction {
+  APPROVE
+  REJECT
+  EDIT
+  REGENERATE
+  RECHECK
+  OVERRIDE_WARNING
+  AUTO_APPROVE
+  REVOKE_APPROVAL
+}
+
+enum RejectReason {
+  TOO_GENERIC
+  WRONG_FACT
+  TOO_SALESY
+  BAD_TONE
+  NOT_TARGET
+  TOO_LONG
+  OTHER
+}
+
+enum ReplyIntent {
+  INTERESTED
+  PRICE_REQUEST
+  MEETING_REQUEST
+  QUESTION
+  NOT_INTERESTED
+  OUT_OF_OFFICE
+  FOLLOW_UP_LATER
+  UNCLEAR
+}
+
+enum DraftKind {
+  OUTREACH
+  REPLY
+}
+
+enum ApprovalMode {
+  MANUAL
+  AUTO_ELIGIBLE
+}
+
+enum AiAnalysisJobStatus {
+  PENDING
+  RUNNING
+  COMPLETED
+  FAILED
+  CANCELLED
+  PAUSED
+}
+
+model User {
+  id           String   @id @default(cuid())
+  email        String   @unique
+  passwordHash String
+  name         String?
+  image        String?
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+
+  campaigns               Campaign[]
+  bulkMessageJobs         BulkMessageJob[]
+  messageAttempts         MessageAttempt[]
+  executions              CampaignExecution[]
+  instagramSenderAccounts InstagramSenderAccount[]
+  doNotContacts           DoNotContact[]
+  conversations           Conversation[]
+  usageLogs               UsageLog[]
+  leads                   Lead[]
+  companyProfiles         CompanyProfile[]
+  messageDrafts           MessageDraft[]
+  aiAnalysisJobs          AiAnalysisJob[]
+  draftReviews            DraftReview[]
+  notificationConfig      NotificationConfig?
+  notificationLogs        NotificationLog[]
+
+  @@index([email])
+  @@index([createdAt])
+}
+
+model Campaign {
+  id                      String         @id @default(cuid())
+  userId                  String
+  name                    String
+  description             String?
+  status                  CampaignStatus @default(DRAFT)
+  executionMode           ExecutionMode  @default(MANUAL)
+  messageApprovalRequired Boolean        @default(true)
+  scheduledAt             DateTime?
+  // Discovery intent (remember what the user searched for)
+  intent                  String?
+  location                String?
+  category                String?
+  leadLimit               Int?
+  createdAt               DateTime       @default(now())
+  updatedAt               DateTime       @updatedAt
+
+  user             User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  leads            Lead[]
+  scrapeJobs       ScrapeJob[]
+  messages         Message[]
+  templates        MessageTemplate[]
+  executions       CampaignExecution[]
+  bulkMessageJobs  BulkMessageJob[]
+  messageAttempts  MessageAttempt[]
+  conversations    Conversation[]
+  usageLogs        UsageLog[]
+  leadSightings    LeadSighting[]
+  companyProfileId String
+  companyProfile   CompanyProfile      @relation(fields: [companyProfileId], references: [id], onDelete: Restrict)
+  messageDrafts    MessageDraft[]
+  aiAnalysisJobs   AiAnalysisJob[]
+
+  // AI qualification settings (Step 5). Defaults keep legacy behavior unchanged.
+  aiQualificationEnabled Boolean @default(false)
+  minLeadScore           Int     @default(60)
+  aiInstructions         String?
+  targetNiche            String?
+  messageLanguage        String?
+
+  // Step 6: quality gate + approval workflow. Defaults keep legacy behavior.
+  requireApproval         Boolean      @default(true)
+  approvalMode            ApprovalMode @default(MANUAL)
+  autoApproveMinScore     Int          @default(80)
+  qualityMaxRegenerations Int          @default(2)
+
+  @@index([userId])
+  @@index([status])
+  @@index([executionMode])
+  @@index([createdAt])
+}
+
+model Lead {
+  id                   String    @id @default(cuid())
+  campaignId           String
+  username             String
+  profileUrl           String
+  fullName             String?
+  biography            String?
+  followers            Int? // DEPRECATED: use followersCount
+  following            Int?
+  postsCount           Int?
+  profilePictureUrl    String?
+  profilePicUrl        String?
+  profilePicUrlHD      String?
+  isVerified           Boolean? // DEPRECATED: use verified
+  verified             Boolean?
+  isBusiness           Boolean? // DEPRECATED: use isBusinessAccount
+  isBusinessAccount    Boolean?
+  category             String?
+  businessCategoryName String?
+  externalUrl          String?
+  instagramId          String?
+  location             String?
+  followersCount       Int?
+  followsCount         Int?
+  relatedProfiles      Json?
+  latestPosts          Json?
+  rawProfileData       Json?
+  source               String    @default("apify")
+  scrapedAt            DateTime?
+  createdAt            DateTime  @default(now())
+  updatedAt            DateTime  @updatedAt
+
+  // Foundation fields for Lead-Gen Platform
+  status            LeadStatus @default(NEW)
+  statusUpdatedAt   DateTime   @default(now())
+  instagramUserId   String?
+  email             String?
+  emailNormalized   String?
+  phone             String?
+  phoneNormalized   String?
+  website           String?
+  websiteDomain     String?
+  socialLink        String?
+  socialPlatform    String?
+  contactSource     String?
+  availableChannels String[]   @default([])
+  leadScore         Int?
+  leadQuality       String? // "high" | "medium" | "low"
+  aiStatus          AiStatus   @default(PENDING)
+  aiAnalysis        Json?
+  aiAnalyzedAt      DateTime?
+  aiFailedReason    String?
+  promptVersion     String?
+  lastContactedAt   DateTime?
+
+  // Multi-attribute deduplication (per-user identity)
+  userId                    String?
+  usernameNormalized        String?
+  profileUrlCanonical       String?
+  websiteKey                String?
+  previousUsernames         String[]  @default([])
+  duplicateOfLeadId         String?
+  dedupMatchedBy            String?
+  dedupFlaggedAt            DateTime?
+  possibleDuplicateOfLeadId String?
+  possibleDuplicateReason   String?
+
+  campaign            Campaign                @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  user                User?                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages            Message[]
+  executionItems      CampaignExecutionItem[]
+  bulkMessageItems    BulkMessageItem[]
+  messageAttempts     MessageAttempt[]
+  statusHistory       LeadStatusHistory[]
+  conversations       Conversation[]
+  sightings           LeadSighting[]
+  duplicateOf         Lead?                   @relation("LeadDuplicates", fields: [duplicateOfLeadId], references: [id], onDelete: SetNull)
+  duplicates          Lead[]                  @relation("LeadDuplicates")
+  possibleDuplicateOf Lead?                   @relation("LeadPossibleDuplicates", fields: [possibleDuplicateOfLeadId], references: [id], onDelete: SetNull)
+  possibleDuplicates  Lead[]                  @relation("LeadPossibleDuplicates")
+  messageDrafts       MessageDraft[]
+  // NOTE: three partial unique guards exist in the DB but are NOT expressible in
+  // Prisma schema (see migration 20260928130500_step4_dedup_unique_guards):
+  //   UNIQUE (userId, instagramUserId)    WHERE key NOT NULL AND duplicateOfLeadId IS NULL
+  //   UNIQUE (userId, usernameNormalized) WHERE key NOT NULL AND duplicateOfLeadId IS NULL
+  //   UNIQUE (userId, emailNormalized)    WHERE key NOT NULL AND duplicateOfLeadId IS NULL
+  // `prisma migrate diff --from-config-datasource --to-schema` currently reports
+  // NO drift (Prisma ignores unmodelled partial indexes). If a future version
+  // reports them as DROP INDEX, do NOT accept it — they are the concurrency guard.
+
+  @@unique([campaignId, username])
+  @@index([campaignId])
+  @@index([username])
+  @@index([profileUrl])
+  @@index([fullName])
+  @@index([category])
+  @@index([createdAt])
+  @@index([status])
+  @@index([campaignId, status])
+  @@index([instagramUserId])
+  @@index([emailNormalized])
+  @@index([phoneNormalized])
+  @@index([websiteDomain])
+  @@index([leadScore])
+  @@index([userId])
+  @@index([userId, usernameNormalized])
+  @@index([userId, instagramUserId])
+  @@index([userId, emailNormalized])
+  @@index([userId, websiteKey])
+  @@index([duplicateOfLeadId])
+  @@index([possibleDuplicateOfLeadId])
+}
+
+/// Records that a lead was seen in a campaign/run. Never merges or deletes;
+/// it is the cross-campaign provenance trail used by the duplicate report.
+model LeadSighting {
+  id          String   @id @default(cuid())
+  leadId      String
+  campaignId  String
+  scrapeJobId String?
+  source      String
+  matchedBy   String?
+  createdAt   DateTime @default(now())
+
+  lead     Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@index([leadId])
+  @@index([campaignId, createdAt])
+  @@index([scrapeJobId])
+}
+
+model ScrapeJob {
+  id                   String          @id @default(cuid())
+  campaignId           String?
+  status               ScrapeJobStatus @default(PENDING)
+  provider             String
+  inputCount           Int             @default(0)
+  processedCount       Int             @default(0)
+  errorMessage         String?
+  startedAt            DateTime?
+  completedAt          DateTime?
+  createdAt            DateTime        @default(now())
+  // Discovery metadata (nullable for plain profile-scrape jobs)
+  query                String?
+  location             String?
+  category             String?
+  discoveryActor       String?
+  enrichmentActor      String?
+  requestedLimit       Int?
+  candidatesDiscovered Int?
+  candidatesEnriched   Int?
+  candidatesSkipped    Int?
+  usage                Json?
+  stopReason           String?
+
+  campaign   Campaign?           @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  executions CampaignExecution[]
+
+  @@index([campaignId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+model Message {
+  id                String        @id @default(cuid())
+  campaignId        String
+  leadId            String
+  provider          String        @default("playwright")
+  providerMessageId String?
+  status            MessageStatus @default(DRAFT)
+  messageText       String
+  errorCode         String?
+  errorMessage      String?
+  idempotencyKey    String?
+  contentHash       String?
+  sentAt            DateTime?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+  senderAccountId   String?
+  // Step 6: every draft-based message links back to its approved draft.
+  draftId           String?
+
+  // Step 8: Unipile message & chat correlation
+  unipileMessageId String? @unique
+  unipileChatId    String?
+
+  // Foundation & Inbound fields
+  direction                   MessageDirection @default(OUTBOUND)
+  channel                     MessageChannel   @default(INSTAGRAM)
+  conversationId              String?
+  aiGenerated                 Boolean          @default(false)
+  promptVersion               String?
+  receivedAt                  DateTime?
+  intent                      String?
+  interestLevel               String?
+  requiresHuman               Boolean          @default(false)
+  aiAnalysis                  Json?
+  classifiedAt                DateTime?
+  classificationPromptVersion String?
+
+  campaign      Campaign                @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  lead          Lead                    @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  attempts      MessageAttempt[]
+  senderAccount InstagramSenderAccount? @relation(fields: [senderAccountId], references: [id], onDelete: SetNull)
+  conversation  Conversation?           @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  draft         MessageDraft?           @relation(fields: [draftId], references: [id], onDelete: SetNull)
+  replyDrafts   MessageDraft[]          @relation("MessageDraftReplyTo")
+
+  @@index([leadId])
+  @@index([campaignId])
+  @@index([status])
+  @@index([idempotencyKey])
+  @@index([contentHash])
+  @@index([senderAccountId])
+  @@index([conversationId])
+  @@index([unipileChatId])
+  @@index([draftId])
+  @@index([createdAt])
+  @@index([intent])
+  @@index([classifiedAt])
+}
+
+model MessageTemplate {
+  id         String   @id @default(cuid())
+  campaignId String?
+  name       String
+  body       String
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
+
+  campaign        Campaign?        @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  bulkMessageJobs BulkMessageJob[]
+
+  @@index([campaignId])
+  @@index([createdAt])
+}
+
+model InstagramSenderAccount {
+  id               String                     @id @default(cuid())
+  userId           String
+  username         String
+  displayName      String?
+  connectionMethod ConnectionMethod           @default(PLAYWRIGHT)
+  unipileAccountId String?                    @unique
+  sessionType      InstagramSenderSessionType @default(PERSISTENT_PROFILE)
+  sessionPath      String
+  status           InstagramSenderStatus      @default(CONNECTING)
+  lastVerifiedAt   DateTime?
+  lastError        String?
+  createdAt        DateTime                   @default(now())
+  updatedAt        DateTime                   @updatedAt
+
+  user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages        Message[]
+  messageAttempts MessageAttempt[]
+  bulkMessageJobs BulkMessageJob[]
+  conversations   Conversation[]
+
+  @@unique([userId, username])
+  @@index([userId])
+  @@index([status])
+  @@index([connectionMethod])
+  @@index([unipileAccountId])
+  @@index([createdAt])
+}
+
+model CampaignExecution {
+  id               String                  @id @default(cuid())
+  campaignId       String
+  userId           String?
+  status           CampaignExecutionStatus @default(READY)
+  phase            CampaignExecutionPhase  @default(READY)
+  executionMode    ExecutionMode           @default(MANUAL)
+  workerId         String?
+  leaseUntil       DateTime?
+  heartbeatAt      DateTime?
+  totalItems       Int                     @default(0)
+  processedItems   Int                     @default(0)
+  successfulItems  Int                     @default(0)
+  failedItems      Int                     @default(0)
+  errorCode        String?
+  errorMessage     String?
+  scrapeJobId      String?
+  bulkMessageJobId String?
+  startedAt        DateTime?
+  pausedAt         DateTime?
+  completedAt      DateTime?
+  cancelledAt      DateTime?
+  createdAt        DateTime                @default(now())
+  updatedAt        DateTime                @updatedAt
+
+  campaign       Campaign                @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  user           User?                   @relation(fields: [userId], references: [id], onDelete: SetNull)
+  scrapeJob      ScrapeJob?              @relation(fields: [scrapeJobId], references: [id], onDelete: SetNull)
+  bulkMessageJob BulkMessageJob?         @relation(fields: [bulkMessageJobId], references: [id], onDelete: SetNull)
+  items          CampaignExecutionItem[]
+
+  @@index([campaignId])
+  @@index([userId])
+  @@index([status])
+  @@index([phase])
+  @@index([workerId])
+  @@index([leaseUntil])
+  @@index([createdAt])
+}
+
+model CampaignExecutionItem {
+  id           String              @id @default(cuid())
+  executionId  String
+  leadId       String
+  status       ExecutionItemStatus @default(PENDING)
+  messageText  String
+  errorMessage String?
+  processedAt  DateTime?
+  createdAt    DateTime            @default(now())
+  updatedAt    DateTime            @updatedAt
+
+  execution CampaignExecution @relation(fields: [executionId], references: [id], onDelete: Cascade)
+  lead      Lead              @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@unique([executionId, leadId])
+  @@index([executionId])
+  @@index([leadId])
+  @@index([status])
+  @@index([createdAt])
+}
+
+enum BulkMessageJobStatus {
+  DRAFT
+  QUEUED
+  RUNNING
+  PAUSED
+  COMPLETED
+  PARTIAL
+  FAILED
+  CANCELLED
+}
+
+enum BulkMessageItemStatus {
+  QUEUED
+  PROCESSING
+  SENT
+  FAILED
+  SKIPPED
+  CANCELLED
+  UNKNOWN
+  SUPPRESSED_DNC
+}
+
+model BulkMessageJob {
+  id              String               @id @default(cuid())
+  campaignId      String
+  userId          String
+  // Null for Step 6 draft-based send jobs (no template).
+  templateId      String?
+  status          BulkMessageJobStatus @default(DRAFT)
+  total           Int                  @default(0)
+  queued          Int                  @default(0)
+  processing      Int                  @default(0)
+  sent            Int                  @default(0)
+  failed          Int                  @default(0)
+  skipped         Int                  @default(0)
+  cancelled       Int                  @default(0)
+  unknown         Int                  @default(0)
+  errorMessage    String?
+  senderAccountId String?
+  createdAt       DateTime             @default(now())
+  startedAt       DateTime?
+  completedAt     DateTime?
+  cancelledAt     DateTime?
+  updatedAt       DateTime             @updatedAt
+
+  campaign      Campaign                @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  user          User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  template      MessageTemplate?        @relation(fields: [templateId], references: [id], onDelete: Cascade)
+  items         BulkMessageItem[]
+  attempts      MessageAttempt[]
+  executions    CampaignExecution[]
+  senderAccount InstagramSenderAccount? @relation(fields: [senderAccountId], references: [id], onDelete: SetNull)
+
+  @@index([campaignId])
+  @@index([userId])
+  @@index([status])
+  @@index([senderAccountId])
+  @@index([createdAt])
+}
+
+model BulkMessageItem {
+  id                String                @id @default(cuid())
+  jobId             String
+  leadId            String
+  renderedMessage   String
+  status            BulkMessageItemStatus @default(QUEUED)
+  attempts          Int                   @default(0)
+  startedAt         DateTime?
+  completedAt       DateTime?
+  errorCode         String?
+  errorMessage      String?
+  providerMessageId String?
+  idempotencyKey    String?
+  contentHash       String?
+  // Step 6: draft-based items carry the approved draft and its exact body/hash.
+  // Unique: a draft can be attached to at most one item (no double-send).
+  draftId           String?               @unique
+  renderedBody      String?
+  bodyHash          String?
+  createdAt         DateTime              @default(now())
+  updatedAt         DateTime              @updatedAt
+
+  job             BulkMessageJob   @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  lead            Lead             @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  messageAttempts MessageAttempt[]
+
+  @@unique([jobId, leadId])
+  @@index([jobId])
+  @@index([leadId])
+  @@index([status])
+  @@index([idempotencyKey])
+  @@index([contentHash])
+  @@index([createdAt])
+}
+
+model MessageAttempt {
+  id                String        @id @default(cuid())
+  userId            String
+  campaignId        String
+  leadId            String
+  jobId             String?
+  itemId            String?
+  messageId         String?
+  direction         String        @default("OUTBOUND")
+  status            MessageStatus @default(SENDING)
+  messageText       String
+  provider          String        @default("playwright")
+  providerMessageId String?
+  attemptNumber     Int           @default(1)
+  idempotencyKey    String?
+  contentHash       String?
+  errorCode         String?
+  errorMessage      String?
+  startedAt         DateTime      @default(now())
+  completedAt       DateTime?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+  senderAccountId   String?
+
+  user          User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  campaign      Campaign                @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  lead          Lead                    @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  job           BulkMessageJob?         @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  item          BulkMessageItem?        @relation(fields: [itemId], references: [id], onDelete: Cascade)
+  message       Message?                @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  senderAccount InstagramSenderAccount? @relation(fields: [senderAccountId], references: [id], onDelete: SetNull)
+
+  @@index([leadId])
+  @@index([campaignId])
+  @@index([userId])
+  @@index([jobId])
+  @@index([itemId])
+  @@index([messageId])
+  @@index([status])
+  @@index([idempotencyKey])
+  @@index([contentHash])
+  @@index([senderAccountId])
+  @@index([createdAt])
+}
+
+model LeadStatusHistory {
+  id         String      @id @default(cuid())
+  leadId     String
+  fromStatus LeadStatus?
+  toStatus   LeadStatus
+  reason     String?
+  actor      String
+  createdAt  DateTime    @default(now())
+
+  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@index([leadId, createdAt])
+}
+
+model DoNotContact {
+  id                   String            @id @default(cuid())
+  userId               String
+  channel              DncChannel
+  identifierType       DncIdentifierType
+  identifierNormalized String
+  reason               String?
+  source               DncSource
+  createdAt            DateTime          @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, channel, identifierType, identifierNormalized])
+  @@index([identifierNormalized])
+  @@index([userId])
+}
+
+model Conversation {
+  id               String         @id @default(cuid())
+  userId           String
+  leadId           String
+  campaignId       String?
+  senderAccountId  String?
+  channel          MessageChannel
+  externalThreadId String?
+  unipileChatId    String?        @unique
+  status           String         @default("OPEN")
+  requiresHuman    Boolean        @default(false)
+  unreadCount      Int            @default(0)
+  lastMessageAt    DateTime?
+  lastInboundAt    DateTime?
+  createdAt        DateTime       @default(now())
+  updatedAt        DateTime       @updatedAt
+
+  user          User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lead          Lead                    @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  campaign      Campaign?               @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+  senderAccount InstagramSenderAccount? @relation(fields: [senderAccountId], references: [id], onDelete: SetNull)
+  messages      Message[]
+
+  @@unique([leadId, channel])
+  @@index([userId, requiresHuman])
+  @@index([lastInboundAt])
+  @@index([userId])
+  @@index([campaignId])
+  @@index([unipileChatId])
+}
+
+model UsageLog {
+  id               String        @id @default(cuid())
+  userId           String?
+  campaignId       String?
+  provider         UsageProvider
+  operation        String
+  requestCount     Int           @default(1)
+  itemsReturned    Int?
+  inputTokens      Int?
+  outputTokens     Int?
+  estimatedCostUsd Decimal?      @db.Decimal(12, 6)
+  quotaRemaining   Int?
+  metadata         Json?
+  createdAt        DateTime      @default(now())
+
+  user     User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
+  campaign Campaign? @relation(fields: [campaignId], references: [id], onDelete: SetNull)
+
+  @@index([provider, createdAt])
+  @@index([campaignId, createdAt])
+  @@index([userId, createdAt])
+}
+
+/// Company knowledge base (source of truth for what the company sells).
+/// Fields are entered by the user via Settings; never seed or invent values.
+model CompanyProfile {
+  id                   String   @id @default(cuid())
+  userId               String
+  name                 String
+  isDefault            Boolean  @default(false)
+  description          String   @default("")
+  services             Json     @default("[]")
+  targetIndustries     String[] @default([])
+  targetCountries      String[] @default([])
+  idealCustomerProfile String?
+  brandTone            String?
+  messageLanguage      String   @default("en")
+  preferredLength      Json?
+  ctaStyle             String?
+  forbiddenClaims      String[] @default([])
+  pricingPolicy        String?
+  exampleMessages      Json?
+  objectionNotes       String?
+  createdAt            DateTime @default(now())
+  updatedAt            DateTime @updatedAt
+
+  user      User       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  campaigns Campaign[]
+
+  @@index([userId])
+}
+
+/// AI-generated message draft. Stored only; never sent in Step 5.
+model MessageDraft {
+  id                        String         @id @default(cuid())
+  userId                    String
+  leadId                    String
+  campaignId                String
+  body                      String
+  subject                   String?
+  channel                   MessageChannel @default(INSTAGRAM)
+  kind                      DraftKind      @default(OUTREACH)
+  replyToMessageId          String?
+  status                    DraftStatus    @default(DRAFT)
+  promptVersion             String
+  model                     String
+  personalizationPointsUsed Json?
+  generationMeta            Json?
+  wordCount                 Int
+  // Step 6: quality gate + approval fields.
+  qualityVersion            String?
+  qualityScore              Int?
+  qualityPassed             Boolean?
+  qualityResult             Json?
+  qualityCheckedAt          DateTime?
+  regenerationCount         Int            @default(0)
+  editedBody                String?
+  bodyHash                  String?
+  approvedBodyHash          String?
+  approvedAt                DateTime?
+  approvedByType            String?
+  approvedById              String?
+  rejectedAt                DateTime?
+  rejectReasonCode          String?
+  rejectNotes               String?
+  editDistance              Int?
+  warningOverrides          Json?
+  createdAt                 DateTime       @default(now())
+  updatedAt                 DateTime       @updatedAt
+
+  user           User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  lead           Lead          @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  campaign       Campaign      @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  replyToMessage Message?      @relation("MessageDraftReplyTo", fields: [replyToMessageId], references: [id], onDelete: SetNull)
+  reviews        DraftReview[]
+  messages       Message[]
+
+  @@index([leadId, createdAt])
+  @@index([campaignId, status])
+  @@index([userId, createdAt])
+  @@index([qualityPassed])
+  @@index([kind])
+  @@index([replyToMessageId])
+}
+
+/// Step 6: append-only audit trail for every draft review action.
+model DraftReview {
+  id             String            @id @default(cuid())
+  draftId        String
+  userId         String?
+  actorType      String // "user" | "system"
+  action         DraftReviewAction
+  reasonCode     String?
+  notes          String?
+  meta           Json?
+  bodyHashBefore String?
+  bodyHashAfter  String?
+  createdAt      DateTime          @default(now())
+
+  draft MessageDraft @relation(fields: [draftId], references: [id], onDelete: Cascade)
+  user  User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([draftId, createdAt])
+  @@index([userId])
+}
+
+/// In-process AI analysis job (Step 7 will wrap this in a BullMQ worker).
+model AiAnalysisJob {
+  id              String              @id @default(cuid())
+  userId          String
+  campaignId      String
+  status          AiAnalysisJobStatus @default(PENDING)
+  total           Int                 @default(0)
+  processed       Int                 @default(0)
+  succeeded       Int                 @default(0)
+  failed          Int                 @default(0)
+  skipped         Int                 @default(0)
+  cancelRequested Boolean             @default(false)
+  options         Json?
+  startedAt       DateTime?
+  finishedAt      DateTime?
+  lastError       String?
+  createdAt       DateTime            @default(now())
+
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+
+  @@index([campaignId, createdAt])
+  @@index([userId, createdAt])
+}
+
+enum UnipileWebhookStatus {
+  RECEIVED
+  PROCESSED
+  IGNORED
+  FAILED
+}
+
+model UnipileWebhookEvent {
+  id             String               @id @default(cuid())
+  eventType      String
+  unipileEventId String?              @unique
+  rawPayloadHash String
+  processedAt    DateTime?
+  status         UnipileWebhookStatus @default(RECEIVED)
+  failReason     String?
+  createdAt      DateTime             @default(now())
+
+  @@index([rawPayloadHash])
+  @@index([eventType, status])
+  @@index([createdAt])
+}
+
+model UnmatchedInboundMessage {
+  id               String   @id @default(cuid())
+  unipileAccountId String
+  unipileMessageId String?  @unique
+  unipileChatId    String?
+  providerSenderId String
+  username         String?
+  text             String
+  receivedAt       DateTime @default(now())
+  linkedLeadId     String?
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
+
+  @@index([unipileAccountId])
+  @@index([providerSenderId])
+  @@index([username])
+  @@index([linkedLeadId])
+}
+
+enum NotificationEventType {
+  LEAD_REPLIED
+  HIGH_VALUE_LEAD
+  SENDER_ERROR
+  SESSION_EXPIRED
+  SYSTEM_ERROR
+  DAILY_SUMMARY
+}
+
+enum NotificationLogStatus {
+  SENT
+  FAILED
+  SKIPPED_DISABLED
+}
+
+model NotificationConfig {
+  id              String                  @id @default(cuid())
+  userId          String                  @unique
+  ntfyTopic       String
+  ntfyServerUrl   String                  @default("https://ntfy.sh")
+  ntfyAccessToken String?
+  enabled         Boolean                 @default(true)
+  eventTypes      NotificationEventType[] @default([LEAD_REPLIED, HIGH_VALUE_LEAD, SENDER_ERROR, SYSTEM_ERROR])
+  createdAt       DateTime                @default(now())
+  updatedAt       DateTime                @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model NotificationLog {
+  id          String                @id @default(cuid())
+  userId      String
+  eventType   NotificationEventType
+  leadId      String?
+  status      NotificationLogStatus
+  errorReason String?
+  latencyMs   Int?
+  createdAt   DateTime              @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt])
+  @@index([eventType, createdAt])
+  @@index([leadId])
+}

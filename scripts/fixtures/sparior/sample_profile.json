@@ -1,0 +1,21 @@
+{
+  "data": {
+    "pk": "2001",
+    "id": "2001",
+    "username": "fit_coach_anna",
+    "full_name": "Anna Fitness Coach",
+    "biography": "Certified strength & conditioning coach in NYC. DM for coaching!",
+    "follower_count": 15400,
+    "following_count": 340,
+    "media_count": 320,
+    "is_verified": true,
+    "is_business": true,
+    "is_private": false,
+    "category": "Fitness Trainer",
+    "external_url": "https://fitcoachanna.example",
+    "public_email": "anna@fitcoach.example",
+    "public_phone_number": "+1234567890",
+    "city_name": "New York, NY",
+    "profile_pic_url_hd": "https://example.com/pic1_hd.jpg"
+  }
+}

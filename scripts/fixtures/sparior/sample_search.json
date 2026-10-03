@@ -1,0 +1,51 @@
+{
+  "data": {
+    "items": [
+      {
+        "pk": "1001",
+        "username": "fit_coach_anna",
+        "full_name": "Anna Fitness Coach",
+        "is_private": false,
+        "is_verified": true,
+        "profile_pic_url": "https://example.com/pic1.jpg",
+        "follower_count": "15.4K",
+        "media_count": 320,
+        "category_name": "Fitness Trainer",
+        "bio": "Certified strength & conditioning coach in NYC. DM for coaching!",
+        "public_email": "anna@fitcoach.example",
+        "public_phone_number": "+1234567890",
+        "external_url": "https://fitcoachanna.example",
+        "city_name": "New York, NY"
+      },
+      {
+        "pk": "1002",
+        "username": "private_user_bob",
+        "full_name": "Bob Private",
+        "is_private": true,
+        "is_verified": false,
+        "profile_pic_url": "https://example.com/pic2.jpg",
+        "follower_count": 800,
+        "media_count": 50
+      },
+      {
+        "full_name": "No Username User",
+        "is_private": false
+      },
+      {
+        "pk": "1003",
+        "username": "dnc_lead_charlie",
+        "full_name": "Charlie Opted Out",
+        "is_private": false,
+        "is_verified": false,
+        "profile_pic_url": "https://example.com/pic3.jpg",
+        "follower_count": "2.5K",
+        "media_count": 110,
+        "category_name": "Health Coach",
+        "bio": "Online fitness guidance. Please do not contact.",
+        "public_email": "charlie@optout.example"
+      }
+    ],
+    "next_cursor": "cursor_page_2",
+    "has_more": true
+  }
+}

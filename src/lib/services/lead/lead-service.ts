@@ -1,0 +1,422 @@
+import "server-only";
+
+import type { Prisma } from "@/generated/prisma/client";
+import { LeadStatus } from "@/generated/prisma/enums";
+import { getPrismaClient } from "@/lib/db/prisma";
+import { BadRequestError, NotFoundError } from "@/lib/errors";
+
+export type ListLeadsOptions = {
+  page?: number;
+  limit?: number;
+  search?: string;
+  category?: string;
+  verified?: boolean;
+  isVerified?: boolean;
+  isBusinessAccount?: boolean;
+  isBusiness?: boolean;
+  status?: string;
+};
+
+export type PaginatedLeadsResult = {
+  items: unknown[];
+  leads: unknown[];
+  pagination: {
+    page: number;
+    limit: number;
+    total: number;
+    totalPages: number;
+    hasNextPage: boolean;
+    hasPreviousPage: boolean;
+  };
+};
+
+const MAX_LEAD_FIELD_LENGTH = 5000;
+
+export async function listCampaignLeads(
+  campaignId: string,
+  rawParams: URLSearchParams | Record<string, string | undefined>,
+  userId?: string,
+): Promise<PaginatedLeadsResult> {
+  const prisma = getPrismaClient();
+
+  // Verify campaign exists and belongs to user if specified
+  const campaign = await prisma.campaign.findFirst({
+    where: {
+      id: campaignId,
+      ...(userId ? { userId } : {}),
+    },
+    select: { id: true },
+  });
+
+  if (!campaign) {
+    throw new NotFoundError("CAMPAIGN_NOT_FOUND", "Campaign not found");
+  }
+
+  const getParam = (key: string): string | undefined => {
+    if (rawParams instanceof URLSearchParams) {
+      return rawParams.get(key) ?? undefined;
+    }
+    return rawParams[key];
+  };
+
+  // Parse and validate pagination
+  const rawPage = getParam("page");
+  let page = 1;
+  if (rawPage !== undefined) {
+    const trimmed = rawPage.trim();
+    if (!/^\d+$/.test(trimmed)) {
+      throw new BadRequestError(
+        "INVALID_PAGE",
+        '"page" must be a positive integer.',
+      );
+    }
+    page = Number.parseInt(trimmed, 10);
+    if (page < 1) {
+      throw new BadRequestError(
+        "INVALID_PAGE",
+        '"page" must be a positive integer.',
+      );
+    }
+  }
+
+  const rawLimit = getParam("limit");
+  let limit = 25;
+  if (rawLimit !== undefined) {
+    const trimmed = rawLimit.trim();
+    if (!/^\d+$/.test(trimmed)) {
+      throw new BadRequestError(
+        "INVALID_LIMIT",
+        '"limit" must be an integer between 1 and 100.',
+      );
+    }
+    limit = Number.parseInt(trimmed, 10);
+    if (limit < 1 || limit > 100) {
+      throw new BadRequestError(
+        "INVALID_LIMIT",
+        '"limit" must be an integer between 1 and 100.',
+      );
+    }
+  }
+
+  // Build filters using clean composable AND array
+  const conditions: Prisma.LeadWhereInput[] = [{ campaignId }];
+
+  const rawSearch = getParam("search");
+  if (rawSearch !== undefined) {
+    const search = rawSearch.trim();
+    if (search.length > 0) {
+      conditions.push({
+        OR: [
+          { username: { contains: search, mode: "insensitive" } },
+          { fullName: { contains: search, mode: "insensitive" } },
+          { biography: { contains: search, mode: "insensitive" } },
+        ],
+      });
+    }
+  }
+
+  const rawCategory = getParam("category");
+  if (rawCategory !== undefined) {
+    const category = rawCategory.trim();
+    if (category.length > 0) {
+      conditions.push({
+        OR: [
+          { category: { contains: category, mode: "insensitive" } },
+          { businessCategoryName: { contains: category, mode: "insensitive" } },
+        ],
+      });
+    }
+  }
+
+  const rawVerified = getParam("verified") ?? getParam("isVerified");
+  if (rawVerified !== undefined) {
+    const val = rawVerified.toLowerCase().trim();
+    if (val === "true") {
+      conditions.push({
+        OR: [{ verified: true }, { isVerified: true }],
+      });
+    } else if (val === "false") {
+      conditions.push({
+        AND: [
+          { OR: [{ verified: false }, { verified: null }] },
+          { OR: [{ isVerified: false }, { isVerified: null }] },
+        ],
+      });
+    } else {
+      throw new BadRequestError(
+        "INVALID_FILTER",
+        '"verified" must be "true" or "false".',
+      );
+    }
+  }
+
+  const rawBusiness =
+    getParam("isBusinessAccount") ??
+    getParam("business") ??
+    getParam("isBusiness");
+  if (rawBusiness !== undefined) {
+    const val = rawBusiness.toLowerCase().trim();
+    if (val === "true") {
+      conditions.push({
+        OR: [{ isBusinessAccount: true }, { isBusiness: true }],
+      });
+    } else if (val === "false") {
+      conditions.push({
+        AND: [
+          { OR: [{ isBusinessAccount: false }, { isBusinessAccount: null }] },
+          { OR: [{ isBusiness: false }, { isBusiness: null }] },
+        ],
+      });
+    } else {
+      throw new BadRequestError(
+        "INVALID_FILTER",
+        '"isBusinessAccount" must be "true" or "false".',
+      );
+    }
+  }
+
+  const rawStatus = getParam("status");
+  if (rawStatus !== undefined) {
+    const trimmedStatus = rawStatus.trim().toUpperCase();
+    if (trimmedStatus && trimmedStatus !== "ALL") {
+      if (trimmedStatus === "NEW") {
+        conditions.push({ status: LeadStatus.NEW });
+      } else if (trimmedStatus === "CONTACTED") {
+        conditions.push({ status: LeadStatus.CONTACTED });
+      } else if (trimmedStatus === "SENDING" || trimmedStatus === "QUEUED") {
+        conditions.push({ status: LeadStatus.QUEUED });
+      } else if (trimmedStatus === "FAILED") {
+        conditions.push({ messages: { some: { status: "FAILED" } } });
+      } else if (Object.values(LeadStatus).includes(trimmedStatus as LeadStatus)) {
+        conditions.push({ status: trimmedStatus as LeadStatus });
+      } else {
+        throw new BadRequestError(
+          "INVALID_STATUS_FILTER",
+          `Invalid status filter: "${rawStatus}". Allowed values: NEW, CONTACTED, SENDING, FAILED, ${Object.values(LeadStatus).join(", ")}.`,
+        );
+      }
+    }
+  }
+
+  // Step 4: hide duplicate-linked leads when requested (UI toggle).
+  if ((getParam("excludeDuplicates") ?? "").toLowerCase() === "true") {
+    conditions.push({ duplicateOfLeadId: null });
+  }
+
+  // Part E: Filter by available contact channel ("has email", "has phone", "Instagram only")
+  const rawChannel = getParam("channel") ?? getParam("availableChannel");
+  if (rawChannel !== undefined) {
+    const trimmedChannel = rawChannel.trim().toLowerCase();
+    if (trimmedChannel && trimmedChannel !== "all") {
+      if (trimmedChannel === "has_email" || trimmedChannel === "email") {
+        conditions.push({
+          OR: [
+            { availableChannels: { has: "EMAIL" } },
+            { email: { not: null } },
+            { emailNormalized: { not: null } },
+          ],
+        });
+      } else if (trimmedChannel === "has_phone" || trimmedChannel === "phone") {
+        conditions.push({
+          OR: [
+            { availableChannels: { has: "PHONE" } },
+            { phone: { not: null } },
+            { phoneNormalized: { not: null } },
+          ],
+        });
+      } else if (trimmedChannel === "instagram_only" || trimmedChannel === "instagram") {
+        conditions.push({
+          AND: [
+            { OR: [{ email: null }, { email: "" }] },
+            { OR: [{ phone: null }, { phone: "" }] },
+          ],
+        });
+      } else {
+        throw new BadRequestError(
+          "INVALID_CHANNEL_FILTER",
+          `Invalid channel filter: "${rawChannel}". Allowed values: has_email, has_phone, instagram_only, all.`,
+        );
+      }
+    }
+  }
+
+  const where: Prisma.LeadWhereInput = {
+    AND: conditions,
+  };
+
+  const skip = (page - 1) * limit;
+
+  const [total, items] = await Promise.all([
+    prisma.lead.count({ where }),
+    prisma.lead.findMany({
+      where,
+      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      skip,
+      take: limit,
+    }),
+  ]);
+
+  const totalPages = total === 0 ? 0 : Math.ceil(total / limit);
+
+  const mappedItems = items.map((lead) => ({
+    ...lead,
+    status: lead.status === LeadStatus.QUEUED ? "SENDING" : lead.status,
+    leadStatus: lead.status,
+  }));
+
+  return {
+    items: mappedItems,
+    leads: mappedItems,
+    pagination: {
+      page,
+      limit,
+      total,
+      totalPages,
+      hasNextPage: page < totalPages,
+      hasPreviousPage: page > 1,
+    },
+  };
+}
+
+export async function getLeadById(
+  leadId: string,
+  userId?: string,
+): Promise<unknown> {
+  const prisma = getPrismaClient();
+
+  const lead = await prisma.lead.findFirst({
+    where: {
+      id: leadId,
+      ...(userId ? { campaign: { userId } } : {}),
+    },
+    include: {
+      campaign: {
+        select: {
+          id: true,
+          name: true,
+          status: true,
+          createdAt: true,
+        },
+      },
+      // Step 4 dedup provenance for the lead drawer.
+      duplicateOf: { select: { id: true, username: true } },
+      possibleDuplicateOf: { select: { id: true, username: true } },
+      _count: { select: { sightings: true } },
+    },
+  });
+
+  if (!lead) {
+    throw new NotFoundError("LEAD_NOT_FOUND", "Lead not found");
+  }
+
+  return {
+    ...lead,
+    status: lead.status === LeadStatus.QUEUED ? "SENDING" : lead.status,
+    leadStatus: lead.status,
+  };
+}
+
+export async function updateLead(
+  leadId: string,
+  input: unknown,
+  userId?: string,
+): Promise<unknown> {
+  if (input === null || typeof input !== "object" || Array.isArray(input)) {
+    throw new BadRequestError("INVALID_BODY", "Request body must be a JSON object.");
+  }
+
+  // Ensure lead exists and belongs to user
+  await getLeadById(leadId, userId);
+
+  const record = input as Record<string, unknown>;
+  const allowedKeys = new Set(["fullName", "category", "biography", "externalUrl"]);
+
+  const unexpectedKeys = Object.keys(record).filter((k) => !allowedKeys.has(k));
+  if (unexpectedKeys.length > 0) {
+    throw new BadRequestError(
+      "UNALLOWED_FIELDS",
+      `Cannot update fields: ${unexpectedKeys.join(", ")}. Allowed fields are: fullName, category, biography, externalUrl.`,
+    );
+  }
+
+  const data: {
+    fullName?: string | null;
+    category?: string | null;
+    biography?: string | null;
+    externalUrl?: string | null;
+  } = {};
+
+  const processField = (key: keyof typeof data) => {
+    if (record[key] !== undefined) {
+      const val = record[key];
+      if (val === null) {
+        data[key] = null;
+      } else if (typeof val === "string") {
+        const trimmed = val.trim();
+        if (trimmed.length > MAX_LEAD_FIELD_LENGTH) {
+          throw new BadRequestError(
+            "FIELD_TOO_LONG",
+            `"${key}" exceeds maximum length of ${MAX_LEAD_FIELD_LENGTH} characters.`,
+          );
+        }
+        data[key] = trimmed.length > 0 ? trimmed : null;
+      } else {
+        throw new BadRequestError(
+          "INVALID_FIELD_TYPE",
+          `"${key}" must be a string or null.`,
+        );
+      }
+    }
+  };
+
+  processField("fullName");
+  processField("category");
+  processField("biography");
+  processField("externalUrl");
+
+  if (Object.keys(data).length === 0) {
+    throw new BadRequestError("NO_UPDATES", "No valid update fields were provided.");
+  }
+
+  const prisma = getPrismaClient();
+  const updated = await prisma.lead.update({
+    where: { id: leadId },
+    data,
+    include: {
+      campaign: {
+        select: {
+          id: true,
+          name: true,
+          status: true,
+        },
+      },
+    },
+  });
+
+  return {
+    ...updated,
+    status: updated.status === LeadStatus.QUEUED ? "SENDING" : updated.status,
+    leadStatus: updated.status,
+  };
+}
+
+export async function deleteLead(
+  leadId: string,
+  userId?: string,
+): Promise<{
+  id: string;
+  deleted: true;
+}> {
+  // Ensure lead exists and belongs to user
+  await getLeadById(leadId, userId);
+
+  const prisma = getPrismaClient();
+  await prisma.lead.delete({
+    where: { id: leadId },
+  });
+
+  return {
+    id: leadId,
+    deleted: true,
+  };
+}

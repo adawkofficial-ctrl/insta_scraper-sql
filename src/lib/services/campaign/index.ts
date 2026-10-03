@@ -1,0 +1,17 @@
+export {
+  CAMPAIGN_ID_PATTERN,
+  createCampaign,
+  listCampaigns,
+  getCampaignById,
+  updateCampaign,
+  deleteCampaign,
+  parseCampaignScrapeRequest,
+  runCampaignScrape,
+  persistCampaignLeads,
+  type CampaignSummary,
+  type CampaignDetail,
+  type CreateCampaignInput,
+  type UpdateCampaignInput,
+  type CampaignScrapeInput,
+  type CampaignScrapeResult,
+} from "./campaign-service";
