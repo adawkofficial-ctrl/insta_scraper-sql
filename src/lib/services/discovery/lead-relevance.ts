@@ -117,6 +117,14 @@ export type DiscoveryRelevancePolicy = {
   nationalScaleFollowerThreshold?: number;
   /** Categories considered broad/national (e.g. Magazine, Media). */
   nationalCategories?: string[];
+  /** Minimum number of core intent terms (bio/name/category/handle) required. */
+  minIntentCoreTerms?: number;
+  /** Intent matching strictness level: "permissive" | "moderate" | "strict" (default: "moderate"). */
+  intentStrictness?: "permissive" | "moderate" | "strict";
+  /** Optional AI verification using Gemini for candidates that pass deterministic pre-filtering (default: false). */
+  useAiRelevanceCheck?: boolean;
+  /** Minimum AI confidence score 0..100 to accept (default: 60). */
+  aiRelevanceThreshold?: number;
 };
 
 export const DEFAULT_DISCOVERY_RELEVANCE_POLICY: DiscoveryRelevancePolicy = {
@@ -127,6 +135,9 @@ export const DEFAULT_DISCOVERY_RELEVANCE_POLICY: DiscoveryRelevancePolicy = {
   allowUnknownCategory: true,
   nationalScaleFollowerThreshold: DEFAULT_NATIONAL_SCALE_FOLLOWER_THRESHOLD,
   nationalCategories: [...DEFAULT_NATIONAL_CATEGORIES],
+  intentStrictness: "moderate",
+  useAiRelevanceCheck: false,
+  aiRelevanceThreshold: 60,
 };
 
 export type RelevanceCampaignContext = {
@@ -145,8 +156,12 @@ export type ProfileRelevance = {
   matchedIntentTerms: string[];
   matchedCategoryTerms: string[];
   matchedLocationTerms: string[];
+  matchedKeyPhrases?: string[];
   isNationalScale?: boolean;
   isNationalScaleLocationMismatch?: boolean;
+  aiEvaluated?: boolean;
+  aiScore?: number;
+  aiReason?: string;
 };
 
 export type RelevanceDecision =
@@ -157,23 +172,206 @@ export type RelevanceDecision =
 // Term extraction
 // ---------------------------------------------------------------------------
 
-const RELEVANCE_STOPWORDS = new Set([
+export const RELEVANCE_STOPWORDS = new Set([
   "a",
+  "about",
+  "above",
+  "after",
+  "again",
+  "against",
+  "all",
+  "also",
+  "am",
   "an",
   "and",
+  "any",
+  "are",
+  "as",
   "at",
+  "be",
+  "because",
+  "been",
+  "before",
+  "being",
+  "below",
+  "between",
+  "both",
+  "but",
   "by",
+  "can",
+  "could",
+  "did",
+  "do",
+  "does",
+  "doing",
+  "down",
+  "during",
+  "each",
+  "ever",
+  "every",
+  "few",
+  "find",
+  "finding",
+  "finds",
   "for",
   "from",
+  "further",
+  "get",
+  "gets",
+  "getting",
+  "give",
+  "gives",
+  "giving",
+  "go",
+  "good",
+  "great",
+  "grow",
+  "growing",
+  "grows",
+  "had",
+  "has",
+  "have",
+  "having",
+  "help",
+  "helping",
+  "helps",
+  "her",
+  "here",
+  "hers",
+  "herself",
+  "him",
+  "himself",
+  "his",
+  "how",
+  "i",
+  "if",
+  "improve",
+  "improving",
   "in",
+  "increase",
+  "increasing",
   "into",
   "is",
+  "it",
+  "its",
+  "itself",
+  "just",
+  "like",
+  "look",
+  "looking",
+  "looks",
+  "make",
+  "makes",
+  "making",
+  "many",
+  "me",
+  "more",
+  "most",
+  "much",
+  "my",
+  "myself",
+  "need",
+  "needing",
+  "needs",
+  "new",
+  "no",
+  "nor",
+  "not",
+  "now",
   "of",
+  "off",
+  "offer",
+  "offering",
+  "offers",
   "on",
+  "once",
+  "only",
   "or",
+  "other",
+  "our",
+  "ours",
+  "ourselves",
+  "out",
+  "over",
+  "own",
+  "presence",
+  "provide",
+  "providing",
+  "provides",
+  "real",
+  "require",
+  "requires",
+  "requiring",
+  "same",
+  "seek",
+  "seeking",
+  "seeks",
+  "service",
+  "services",
+  "should",
+  "so",
+  "some",
+  "such",
+  "take",
+  "takes",
+  "taking",
+  "than",
+  "that",
   "the",
+  "their",
+  "theirs",
+  "them",
+  "themselves",
+  "then",
+  "there",
+  "these",
+  "they",
+  "this",
+  "those",
+  "through",
   "to",
+  "too",
+  "top",
+  "under",
+  "until",
+  "up",
+  "very",
+  "want",
+  "wanting",
+  "wants",
+  "was",
+  "we",
+  "well",
+  "were",
+  "what",
+  "when",
+  "where",
+  "which",
+  "while",
+  "who",
+  "whom",
+  "why",
+  "will",
   "with",
+  "would",
+  "you",
+  "your",
+  "yours",
+  "yourself",
+  "yourselves",
+  // Common business filler words that carry no topical niche identity:
+  "business",
+  "businesses",
+  "company",
+  "companies",
+  "firm",
+  "firms",
+  "agency",
+  "agencies",
+  "client",
+  "clients",
+  "customer",
+  "customers",
 ]);
 
 /**
@@ -357,9 +555,40 @@ export function normalizeRelevanceText(
     .trim();
 }
 
+const ACRONYM_EXCEPTIONS = new Set([
+  "saas",
+  "paas",
+  "iaas",
+  "b2b",
+  "b2c",
+  "seo",
+  "sem",
+  "crm",
+  "cms",
+  "erp",
+  "api",
+  "ai",
+  "ml",
+  "ui",
+  "ux",
+  "gym",
+  "gyms",
+  "spa",
+  "spas",
+  "news",
+  "lens",
+  "bass",
+  "boss",
+]);
+
 /** Strips simple plural endings so "gyms" matches "gym", "businesses" -> "business". */
 function stemVariants(term: string): string[] {
   const variants = new Set<string>([term]);
+  if (ACRONYM_EXCEPTIONS.has(term)) {
+    if (term === "gyms") variants.add("gym");
+    if (term === "spas") variants.add("spa");
+    return [...variants];
+  }
   if (term.length <= 3 || /^\d+$/.test(term) || term.endsWith("ss")) {
     return [...variants];
   }
@@ -368,7 +597,8 @@ function stemVariants(term: string): string[] {
     return [...variants];
   }
   if (term.endsWith("es") && term.length > 4) {
-    variants.add(term.slice(0, -2));
+    variants.add(term.slice(0, -1)); // e.g. "magazines" -> "magazine", "websites" -> "website"
+    variants.add(term.slice(0, -2)); // e.g. "businesses" -> "business", "coaches" -> "coach"
     return [...variants];
   }
   if (term.endsWith("s")) {
@@ -406,6 +636,34 @@ export function extractSignificantTerms(
   }
 
   return terms;
+}
+
+export function extractIntentKeyPhrases(
+  intent: string | null | undefined,
+): string[] {
+  if (!intent || typeof intent !== "string") {
+    return [];
+  }
+  const phrases: string[] = [];
+  const parts = intent.split(/[,;\n\r|/]+|\s+(?:and|&|or)\s+/i);
+
+  for (const part of parts) {
+    const tokens = normalizeRelevanceText(part)
+      .split(" ")
+      .filter((t) => t.length > 0 && !RELEVANCE_STOPWORDS.has(t));
+    if (tokens.length >= 2) {
+      phrases.push(tokens.join(" "));
+      for (let i = 0; i < tokens.length - 1; i++) {
+        const sub = `${tokens[i]} ${tokens[i + 1]}`;
+        if (!phrases.includes(sub)) {
+          phrases.push(sub);
+        }
+      }
+    } else if (tokens.length === 1 && tokens[0].length >= 3) {
+      phrases.push(tokens[0]);
+    }
+  }
+  return phrases;
 }
 
 export function buildCategoryTerms(category: string | null): string[] {
@@ -522,21 +780,37 @@ export function findMatchedTerms(haystack: string, terms: string[]): string[] {
   return terms.filter((term) => textContainsTerm(haystack, term));
 }
 
+export function findMatchedPhrases(haystack: string, phrases: string[]): string[] {
+  return phrases.filter((phrase) => {
+    if (phrase.length === 0) return false;
+    const pattern = new RegExp(`(^|[^a-z0-9])${escapeRegExp(phrase)}([^a-z0-9]|$)`);
+    return pattern.test(haystack);
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Profile evaluation
 // ---------------------------------------------------------------------------
 
-function collectProfileText(profile: LeadProfile): string[] {
+export function collectCoreProfileText(profile: LeadProfile): string[] {
   const parts: Array<string | null | undefined> = [
     profile.username,
     profile.fullName,
     profile.biography,
     profile.businessCategoryName,
     profile.category,
-    profile.location,
     profile.externalUrl,
     profile.website,
   ];
+
+  return parts
+    .filter((part): part is string => typeof part === "string" && part.length > 0)
+    .map((part) => normalizeRelevanceText(part))
+    .filter((part) => part.length > 0);
+}
+
+export function collectSecondaryProfileText(profile: LeadProfile): string[] {
+  const parts: Array<string | null | undefined> = [];
 
   for (const post of profile.latestPosts ?? []) {
     if (post.caption) {
@@ -558,14 +832,55 @@ function collectProfileText(profile: LeadProfile): string[] {
     .filter((part) => part.length > 0);
 }
 
+export function collectProfileText(profile: LeadProfile): string[] {
+  return [
+    ...collectCoreProfileText(profile),
+    ...collectSecondaryProfileText(profile),
+    normalizeRelevanceText(profile.location),
+  ].filter((p) => p.length > 0);
+}
+
+export type IntentConcept = {
+  phrase: string;
+  terms: string[];
+};
+
+export function extractIntentConcepts(
+  intent: string | null | undefined,
+): IntentConcept[] {
+  if (!intent || typeof intent !== "string") {
+    return [];
+  }
+  const concepts: IntentConcept[] = [];
+  const rawParts = intent.split(/[,;\n\r|/]+|\s+(?:and|&|or)\s+/i);
+
+  for (const raw of rawParts) {
+    const tokens = normalizeRelevanceText(raw)
+      .split(" ")
+      .filter((t) => t.length > 0 && !RELEVANCE_STOPWORDS.has(t));
+
+    if (tokens.length === 0) continue;
+    concepts.push({
+      phrase: tokens.join(" "),
+      terms: tokens,
+    });
+  }
+  return concepts;
+}
+
 export function evaluateProfileRelevance(
   profile: LeadProfile,
   campaign: RelevanceCampaignContext,
   policy: DiscoveryRelevancePolicy = DEFAULT_DISCOVERY_RELEVANCE_POLICY,
 ): ProfileRelevance {
-  const haystack = collectProfileText(profile).join(" \u0001 ");
+  const coreHaystack = collectCoreProfileText(profile).join(" ");
+  const secondaryHaystack = collectSecondaryProfileText(profile).join(" ");
+  const locationText = normalizeRelevanceText(profile.location);
+  const fullHaystack = `${coreHaystack} ${secondaryHaystack} ${locationText}`;
 
   const intentTerms = extractSignificantTerms(campaign.intent);
+  const intentPhrases = extractIntentKeyPhrases(campaign.intent);
+  const intentConcepts = extractIntentConcepts(campaign.intent);
   const categoryTerms = buildCategoryTerms(campaign.category);
   const locationTerms = buildLocationTerms(campaign.location);
 
@@ -575,14 +890,104 @@ export function evaluateProfileRelevance(
       .join(" "),
   );
 
-  const matchedIntentTerms = findMatchedTerms(haystack, intentTerms);
+  const matchedCoreIntentTerms = findMatchedTerms(coreHaystack, intentTerms);
+  const matchedSecondaryIntentTerms = findMatchedTerms(secondaryHaystack, intentTerms);
+  const matchedIntentTerms = Array.from(
+    new Set([...matchedCoreIntentTerms, ...matchedSecondaryIntentTerms]),
+  );
+
+  const matchedPhrases = findMatchedPhrases(coreHaystack, intentPhrases);
+  const multiWordPhraseMatch = matchedPhrases.some((p) => p.includes(" "));
+
+  const GENERIC_INTENT_WORDS = new Set([
+    "digital",
+    "online",
+    "presence",
+    "media",
+    "content",
+    "services",
+    "solutions",
+    "business",
+    "businesses",
+    "company",
+    "agency",
+    "center",
+    "centre",
+    "centers",
+    "management",
+    "group",
+    "official",
+    "page",
+  ]);
+
+  const matchedDomainCoreTerms = matchedCoreIntentTerms.filter(
+    (t) => !GENERIC_INTENT_WORDS.has(t),
+  );
+
+  let matchedConceptCount = 0;
+  for (const concept of intentConcepts) {
+    if (concept.terms.length >= 2) {
+      if (
+        findMatchedPhrases(coreHaystack, [concept.phrase]).length > 0 ||
+        concept.terms.filter((t) => textContainsTerm(coreHaystack, t)).length >= 2
+      ) {
+        matchedConceptCount++;
+      }
+    } else if (concept.terms.length === 1) {
+      const term = concept.terms[0];
+      if (!GENERIC_INTENT_WORDS.has(term) && textContainsTerm(coreHaystack, term)) {
+        matchedConceptCount++;
+      }
+    }
+  }
+
+  const strictness =
+    policy.intentStrictness ??
+    (typeof process !== "undefined" && process.env?.DISCOVERY_INTENT_STRICTNESS
+      ? (process.env.DISCOVERY_INTENT_STRICTNESS as "permissive" | "moderate" | "strict")
+      : "moderate");
+
+  let minDomainTerms: number;
+  if (policy.minIntentCoreTerms !== undefined) {
+    minDomainTerms = policy.minIntentCoreTerms;
+  } else if (strictness === "permissive") {
+    minDomainTerms = 1;
+  } else if (strictness === "strict") {
+    minDomainTerms = Math.min(3, Math.max(2, Math.ceil(intentTerms.length * 0.4)));
+  } else {
+    // moderate: 1 domain-specific term (or 2 generic/multi terms)
+    minDomainTerms = 1;
+  }
+
+  let intentMatch: RelevanceMatch;
+  if (intentTerms.length === 0) {
+    intentMatch = "UNKNOWN";
+  } else if (matchedConceptCount > 0 || multiWordPhraseMatch) {
+    intentMatch = "MATCHED";
+  } else if (matchedDomainCoreTerms.length >= minDomainTerms) {
+    intentMatch = "MATCHED";
+  } else if (
+    strictness !== "strict" &&
+    matchedCoreIntentTerms.length >= 2
+  ) {
+    intentMatch = "MATCHED";
+  } else if (
+    strictness !== "strict" &&
+    matchedDomainCoreTerms.length >= 1 &&
+    matchedSecondaryIntentTerms.length >= 1
+  ) {
+    intentMatch = "MATCHED";
+  } else {
+    intentMatch = "NOT_MATCHED";
+  }
+
   // Category is evaluated against the profile's OWN declared category only, so a
   // musician biography that happens to mention "fitness" is not mislabelled.
   const matchedCategoryTerms = findMatchedTerms(
     profileCategoryText,
     categoryTerms,
   );
-  const matchedLocationTerms = findMatchedTerms(haystack, locationTerms);
+  const matchedLocationTerms = findMatchedTerms(fullHaystack, locationTerms);
 
   const categoryMatch: RelevanceMatch =
     categoryTerms.length === 0
@@ -592,13 +997,6 @@ export function evaluateProfileRelevance(
         : profileCategoryText.length > 0
           ? "NOT_MATCHED"
           : "UNKNOWN";
-
-  const intentMatch: RelevanceMatch =
-    intentTerms.length === 0
-      ? "UNKNOWN"
-      : matchedIntentTerms.length > 0
-        ? "MATCHED"
-        : "NOT_MATCHED";
 
   const profileLocationText = normalizeRelevanceText(profile.location);
   const profileBioText = normalizeRelevanceText(profile.biography);
@@ -648,6 +1046,7 @@ export function evaluateProfileRelevance(
     matchedIntentTerms,
     matchedCategoryTerms,
     matchedLocationTerms,
+    matchedKeyPhrases: matchedPhrases,
     isNationalScale,
     isNationalScaleLocationMismatch,
   };
@@ -667,10 +1066,15 @@ export function decideRelevance(
   } else if (policy.requireCategoryMatch) {
     topicalMatched = relevance.categoryMatch === "MATCHED";
   } else {
-    // Default: at least one topical signal (intent or category) must match.
-    topicalMatched =
-      relevance.intentMatch === "MATCHED" ||
-      relevance.categoryMatch === "MATCHED";
+    // Default policy:
+    // If a campaign explicitly specified intent, an intent MATCHED candidate qualifies topically
+    // (even if its Instagram declared category tag is broad/different, e.g. "Gym" for "Lifestyle").
+    // A profile that is NOT_MATCHED on the stated intent fails topical matching.
+    if (relevance.intentTerms.length > 0) {
+      topicalMatched = relevance.intentMatch === "MATCHED";
+    } else {
+      topicalMatched = relevance.categoryMatch === "MATCHED";
+    }
   }
 
   if (topicalMatched && !policy.allowUnknownCategory) {
@@ -764,6 +1168,11 @@ export type CollectRelevantLeadsInput = {
   /** Safe upper bound on how many candidates may be enriched in one run. */
   maxCandidates?: number;
   enrich: (batch: string[]) => Promise<EnrichmentBatchResult>;
+  /** Optional AI verification hook called only on candidates passing deterministic gates. */
+  checkAiRelevance?: (
+    profile: LeadProfile,
+    campaign: RelevanceCampaignContext,
+  ) => Promise<{ relevant: boolean; reason?: string }>;
   onBatch?: (info: CollectRelevantLeadsBatchInfo) => void;
 };
 
@@ -854,6 +1263,13 @@ export async function collectRelevantLeads(
       const evaluation = evaluateProfileRelevance(profile, input.campaign, policy);
       const decision = decideRelevance(evaluation, policy);
       if (decision.relevant) {
+        if (policy.useAiRelevanceCheck && input.checkAiRelevance) {
+          const aiCheck = await input.checkAiRelevance(profile, input.campaign);
+          if (!aiCheck.relevant) {
+            skipCounts.IRRELEVANT_INTENT += 1;
+            continue;
+          }
+        }
         relevant.push(profile);
       } else {
         skipCounts[decision.reason] += 1;

@@ -27,7 +27,13 @@ export async function extractTokenFromRequest(request?: Request): Promise<string
         const [rawName, ...rawVal] = cookie.trim().split("=");
         if (rawName === SESSION_COOKIE_NAME) {
           const val = rawVal.join("=");
-          if (val) return decodeURIComponent(val);
+          if (val) {
+            try {
+              return decodeURIComponent(val);
+            } catch {
+              return val;
+            }
+          }
         }
       }
     }

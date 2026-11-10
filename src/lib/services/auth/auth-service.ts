@@ -4,16 +4,13 @@ import bcrypt from "bcryptjs";
 import { SignJWT, jwtVerify } from "jose";
 import { getPrismaClient } from "@/lib/db/prisma";
 import { BadRequestError, ConflictError, UnauthorizedError } from "@/lib/errors";
+import {
+  SESSION_COOKIE_NAME,
+  SESSION_COOKIE_OPTIONS,
+  getAuthSecretBytes,
+} from "./auth-constants";
 
-export const SESSION_COOKIE_NAME = "insta_session";
-
-export const SESSION_COOKIE_OPTIONS = {
-  httpOnly: true,
-  secure: process.env.NODE_ENV === "production",
-  sameSite: "lax" as const,
-  path: "/",
-  maxAge: 7 * 24 * 60 * 60, // 7 days in seconds
-};
+export { SESSION_COOKIE_NAME, SESSION_COOKIE_OPTIONS };
 
 export type SafeUser = {
   id: string;
@@ -29,20 +26,11 @@ export type SessionPayload = {
   name?: string | null;
 };
 
-function getSecretKey(): Uint8Array {
-  const secret = process.env.AUTH_SECRET;
-  // Fail closed in production: never sign sessions with a published default key.
-  if (!secret || secret.length < 32) {
-    if (process.env.NODE_ENV === "production") {
-      throw new Error(
-        "AUTH_SECRET must be configured (at least 32 characters) in production.",
-      );
-    }
-  }
-  return new TextEncoder().encode(
-    secret || "insta_scraper_default_super_secret_signing_key_32_chars",
-  );
-}
+// Standard RFC 5322 compliant email regex
+const EMAIL_REGEX = /^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$/;
+
+// Precomputed cost-12 bcrypt hash used for constant-time comparisons when email is not found
+const DUMMY_HASH = "$2a$12$e8rXpvhMpvxZ1fW5p9h3U.zG3z9/zY4j8n2o9a0b1c2d3e4f5g6h";
 
 export async function hashPassword(password: string): Promise<string> {
   const saltRounds = 12;
@@ -54,19 +42,20 @@ export async function comparePassword(password: string, hash: string): Promise<b
 }
 
 export async function createSessionToken(payload: SessionPayload): Promise<string> {
-  const secret = getSecretKey();
+  const secretKey = getAuthSecretBytes();
   return new SignJWT({ email: payload.email, name: payload.name })
     .setSubject(payload.sub)
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
+    .setJti(crypto.randomUUID())
     .setExpirationTime("7d")
-    .sign(secret);
+    .sign(secretKey);
 }
 
 export async function verifySessionToken(token: string): Promise<SessionPayload | null> {
   try {
-    const secret = getSecretKey();
-    const { payload } = await jwtVerify(token, secret, {
+    const secretKey = getAuthSecretBytes();
+    const { payload } = await jwtVerify(token, secretKey, {
       algorithms: ["HS256"],
     });
 
@@ -93,9 +82,9 @@ export async function registerUser(input: {
 
   const email = (input.email || "").trim().toLowerCase();
   const password = input.password || "";
-  const name = input.name ? input.name.trim() : null;
+  const name = input.name ? input.name.trim().slice(0, 100) : null;
 
-  if (!email || !email.includes("@") || !email.includes(".")) {
+  if (!email || email.length > 254 || !EMAIL_REGEX.test(email)) {
     throw new BadRequestError("INVALID_EMAIL", "A valid email address is required.");
   }
 
@@ -103,6 +92,13 @@ export async function registerUser(input: {
     throw new BadRequestError(
       "PASSWORD_TOO_SHORT",
       "Password must be at least 6 characters long.",
+    );
+  }
+
+  if (password.length > 128) {
+    throw new BadRequestError(
+      "PASSWORD_TOO_LONG",
+      "Password must not exceed 128 characters.",
     );
   }
 
@@ -154,11 +150,17 @@ export async function loginUser(input: {
     throw new BadRequestError("MISSING_CREDENTIALS", "Email and password are required.");
   }
 
+  if (password.length > 128) {
+    throw new UnauthorizedError("INVALID_CREDENTIALS", "Invalid email or password.");
+  }
+
   const userRecord = await prisma.user.findUnique({
     where: { email },
   });
 
   if (!userRecord) {
+    // Run dummy compare to mitigate user enumeration timing attacks
+    await comparePassword(password, DUMMY_HASH);
     throw new UnauthorizedError("INVALID_CREDENTIALS", "Invalid email or password.");
   }
 
@@ -185,6 +187,7 @@ export async function loginUser(input: {
 }
 
 export async function getUserById(userId: string): Promise<SafeUser | null> {
+  if (!userId || typeof userId !== "string") return null;
   const prisma = getPrismaClient();
   const user = await prisma.user.findUnique({
     where: { id: userId },

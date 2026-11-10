@@ -35,10 +35,9 @@ export function Navbar({ onNewCampaign }: { onNewCampaign?: () => void }) {
     try {
       await logoutUser();
       setUser(null);
-      router.push("/login");
-      router.refresh();
+      window.location.href = "/login";
     } catch {
-      // ignore
+      window.location.href = "/login";
     }
   };
 

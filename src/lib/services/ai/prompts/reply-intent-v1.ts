@@ -107,6 +107,7 @@ export function buildReplyIntentPrompt(input: {
     "- OUT_OF_OFFICE: Automated out-of-office message, auto-reply, or vacation notification.",
     "- FOLLOW_UP_LATER: Asks to reach back out next week/month, currently busy, or check back later.",
     "- UNCLEAR: Highly ambiguous message, single emoji, vague remark, or impossible to determine.",
+    "- PRIORITY RULE: If a message expresses interest, asks about pricing, or asks for a call/meeting, classify as INTERESTED, PRICE_REQUEST, or MEETING_REQUEST. Never classify an actionable inquiry as UNCLEAR.",
     "",
     "INTEREST LEVEL RULES:",
     "- 'high': Eager to buy, schedule a call, or strongly positive response.",

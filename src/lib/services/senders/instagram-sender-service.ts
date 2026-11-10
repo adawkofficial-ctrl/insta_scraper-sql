@@ -2,6 +2,7 @@ import "server-only";
 
 import { randomBytes } from "node:crypto";
 
+import { getPrismaClient } from "@/lib/db/prisma";
 import { BadRequestError, NotFoundError } from "@/lib/errors";
 import { logger } from "@/lib/logger";
 import type {
@@ -113,7 +114,17 @@ async function syncUnipileSenders(
       records.find((r) => r.username.toLowerCase() === detectedUsername.toLowerCase());
 
     if (!matched) {
-      // Pick any CONNECTING record or pending record
+      // Check if any sender account in the entire DB already has this unipileAccountId
+      const existingGlobal = await getPrismaClient().instagramSenderAccount.findUnique({
+        where: { unipileAccountId: active.id },
+      });
+      if (existingGlobal) {
+        matched = existingGlobal;
+      }
+    }
+
+    if (!matched) {
+      // Pick any CONNECTING record or pending record for this user
       matched =
         records.find((r) => r.status === "CONNECTING") ||
         records.find((r) => r.username.startsWith("pending_")) ||
@@ -122,6 +133,7 @@ async function syncUnipileSenders(
 
     if (matched) {
       await updateSenderAccountRecord(matched.id, {
+        userId,
         status: "CONNECTED",
         connectionMethod: "UNIPILE",
         unipileAccountId: active.id,
@@ -172,10 +184,12 @@ export async function listSenderAccounts(userId: string): Promise<SenderAccountD
   let records = await listSenderAccountsForUser(userId);
 
   if (isUnipile) {
-    const hasConnectingOrPending = records.some(
-      (r) => r.status === "CONNECTING" || r.username.startsWith("pending_"),
-    );
-    if (hasConnectingOrPending) {
+    const needsSync =
+      records.length === 0 ||
+      records.some(
+        (r) => r.status === "CONNECTING" || r.username.startsWith("pending_"),
+      );
+    if (needsSync) {
       records = await syncUnipileSenders(userId, records);
     }
   }

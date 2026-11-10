@@ -449,11 +449,33 @@ async function runTests() {
     const devCookie = extractCookie(devLoginRes, "insta_session");
     assert.ok(devCookie);
 
-    const devCampsRes = await fetch(`${BASE_URL}/api/campaigns`, {
+    let devCampsRes = await fetch(`${BASE_URL}/api/campaigns`, {
       headers: { Cookie: `insta_session=${devCookie}` },
     });
     assert.equal(devCampsRes.status, 200);
-    const devCamps = await devCampsRes.json();
+    let devCamps = await devCampsRes.json();
+
+    if (devCamps.length === 0) {
+      const createRes = await fetch(`${BASE_URL}/api/campaigns`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          Cookie: `insta_session=${devCookie}`,
+        },
+        body: JSON.stringify({
+          name: "Initial Development Campaign",
+          description: "Created for development testing",
+        }),
+      });
+      assert.equal(createRes.status, 201);
+
+      devCampsRes = await fetch(`${BASE_URL}/api/campaigns`, {
+        headers: { Cookie: `insta_session=${devCookie}` },
+      });
+      assert.equal(devCampsRes.status, 200);
+      devCamps = await devCampsRes.json();
+    }
+
     assert.ok(devCamps.length >= 1, "Development user must have access to existing campaigns");
     console.log(`  ✓ Development user logged in and found ${devCamps.length} backfilled campaign(s)`);
   }

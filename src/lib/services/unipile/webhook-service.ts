@@ -545,39 +545,57 @@ export async function handleInboundMessageWebhook(
     throw new Error(`Cannot ingest inbound message without resolved userId for lead "${matchedLead.id}".`);
   }
 
-  // 7a. Upsert Conversation
-  const conversation = await prisma.conversation.upsert({
-    where: {
-      leadId_channel: {
-        leadId: matchedLead.id,
-        channel: MessageChannel.INSTAGRAM,
+  // 7a. Safely resolve or create Conversation
+  let conversation = chatId
+    ? await prisma.conversation.findUnique({
+        where: { unipileChatId: chatId },
+      })
+    : null;
+
+  if (!conversation) {
+    conversation = await prisma.conversation.findUnique({
+      where: {
+        leadId_channel: {
+          leadId: matchedLead.id,
+          channel: MessageChannel.INSTAGRAM,
+        },
       },
-    },
-    create: {
-      userId: effectiveUserId,
-      leadId: matchedLead.id,
-      campaignId: matchedLead.campaignId,
-      senderAccountId: senderAccount?.id ?? null,
-      channel: MessageChannel.INSTAGRAM,
-      unipileChatId: chatId || null,
-      externalThreadId: chatId || null,
-      status: "OPEN",
-      requiresHuman: true,
-      unreadCount: 1,
-      lastMessageAt: validReceivedAt,
-      lastInboundAt: validReceivedAt,
-    },
-    update: {
-      unipileChatId: chatId || undefined,
-      externalThreadId: chatId || undefined,
-      status: "OPEN",
-      requiresHuman: true,
-      unreadCount: { increment: 1 },
-      lastMessageAt: validReceivedAt,
-      lastInboundAt: validReceivedAt,
-      ...(senderAccount ? { senderAccountId: senderAccount.id } : {}),
-    },
-  });
+    });
+  }
+
+  if (conversation) {
+    conversation = await prisma.conversation.update({
+      where: { id: conversation.id },
+      data: {
+        leadId: matchedLead.id,
+        unipileChatId: chatId || undefined,
+        externalThreadId: chatId || undefined,
+        status: "OPEN",
+        requiresHuman: true,
+        unreadCount: { increment: 1 },
+        lastMessageAt: validReceivedAt,
+        lastInboundAt: validReceivedAt,
+        ...(senderAccount ? { senderAccountId: senderAccount.id } : {}),
+      },
+    });
+  } else {
+    conversation = await prisma.conversation.create({
+      data: {
+        userId: effectiveUserId,
+        leadId: matchedLead.id,
+        campaignId: matchedLead.campaignId,
+        senderAccountId: senderAccount?.id ?? null,
+        channel: MessageChannel.INSTAGRAM,
+        unipileChatId: chatId || null,
+        externalThreadId: chatId || null,
+        status: "OPEN",
+        requiresHuman: true,
+        unreadCount: 1,
+        lastMessageAt: validReceivedAt,
+        lastInboundAt: validReceivedAt,
+      },
+    });
+  }
 
   // 7b. Create INBOUND Message row
   const messageRecord = await prisma.message.create({

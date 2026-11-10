@@ -1,24 +1,18 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { jwtVerify } from "jose";
+import {
+  SESSION_COOKIE_NAME,
+  getAuthSecretBytes,
+} from "@/lib/services/auth/auth-constants";
 
-const AUTH_COOKIE_NAME = "insta_session";
 const REQUEST_ID_HEADER = "x-request-id";
 
 async function isValidSession(req: NextRequest): Promise<boolean> {
-  const token = req.cookies.get(AUTH_COOKIE_NAME)?.value;
+  const token = req.cookies.get(SESSION_COOKIE_NAME)?.value;
   if (!token) return false;
   try {
-    const secret = process.env.AUTH_SECRET;
-    // Fail closed in production when the signing secret is not configured.
-    if (!secret || secret.length < 32) {
-      if (process.env.NODE_ENV === "production") {
-        return false;
-      }
-    }
-    const secretKey = new TextEncoder().encode(
-      secret || "instascraper-jwt-secret-key-32-chars-min!!",
-    );
-    await jwtVerify(token, secretKey);
+    const secretKey = getAuthSecretBytes();
+    await jwtVerify(token, secretKey, { algorithms: ["HS256"] });
     return true;
   } catch {
     return false;
@@ -55,8 +49,9 @@ export async function middleware(req: NextRequest) {
 
   const authenticated = await isValidSession(req);
 
-  if (pathname === "/login") {
-    if (authenticated) {
+  // Allow unauthenticated access to login and register pages
+  if (pathname === "/login" || pathname === "/register") {
+    if (authenticated && !req.nextUrl.searchParams.has("force")) {
       return withRequestId(NextResponse.redirect(new URL("/", req.url)));
     }
     return withRequestId(forward());
@@ -65,7 +60,9 @@ export async function middleware(req: NextRequest) {
   // All browser application pages require authentication
   if (!authenticated) {
     const loginUrl = new URL("/login", req.url);
-    loginUrl.searchParams.set("redirect", pathname);
+    if (pathname !== "/" && pathname !== "/login" && pathname !== "/register") {
+      loginUrl.searchParams.set("redirect", pathname);
+    }
     return withRequestId(NextResponse.redirect(loginUrl));
   }
 

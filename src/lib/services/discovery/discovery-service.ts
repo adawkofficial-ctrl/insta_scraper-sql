@@ -331,13 +331,7 @@ export async function runDiscovery(
     location: request.location,
   });
 
-  // Ask for more raw candidates than the remaining capacity: a large share of
-  // them are expected to be irrelevant to the campaign and will be rejected by
-  // the relevance gate below.
-  const candidateTarget = Math.min(
-    MAX_CANDIDATE_POOL,
-    Math.max(remainingCapacity * 4, remainingCapacity + 10),
-  );
+
 
   const providerName = getScraperProviderName();
   const discoveryActor =
@@ -370,94 +364,6 @@ export async function runDiscovery(
   };
 
   try {
-    logDiscovery(
-      `[DISCOVERY] starting campaignId=${campaign.id} query="${request.query}" location=${request.location ?? "-"} category=${request.category ?? "-"} requestedLimit=${request.maxLeads} existingLeads=${existingLeadCount} remainingCapacity=${remainingCapacity}`,
-    );
-    if (providerName === "sparior") {
-      for (const q of searchQueries) {
-        logDiscovery(
-          `[DISCOVERY] actor=${discoveryActor} searchType=user searchLimit=${candidateTarget} search="${q}"`,
-        );
-      }
-    } else {
-      logDiscovery(
-        `[DISCOVERY] actor=${discoveryActor} searchType=user searchLimit=${candidateTarget} search="${searchTerm}"`,
-      );
-    }
-
-    emit({
-      stage: "discover",
-      message: "Discovering Instagram profiles...",
-      candidatesDiscovered: 0,
-      candidatesEnriched: 0,
-      persisted: 0,
-      skipped: 0,
-      remainingCapacity,
-      existingLeads: existingLeadCount,
-    });
-
-    const discovery = await getDiscoveryProvider().discover({
-      query: searchTerm,
-      queries: searchQueries,
-      limit: candidateTarget,
-      location: request.location,
-      category: request.category,
-      campaignId: campaign.id,
-      userId,
-    });
-
-    if (providerName === "apify") {
-      try {
-        await prisma.usageLog.create({
-          data: {
-            userId,
-            campaignId: campaign.id,
-            provider: UsageProvider.APIFY,
-            operation: "search",
-            requestCount: 1,
-            itemsReturned: discovery.candidates.length,
-            estimatedCostUsd:
-              discovery.usageTotalUsd !== undefined
-                ? new Prisma.Decimal(discovery.usageTotalUsd)
-                : null,
-            metadata: {
-              runId: discovery.runId,
-              actor: discovery.actor,
-              computeUnits: discovery.computeUnits,
-              executedQueries: discovery.executedQueries,
-            },
-          },
-        });
-      } catch {
-        // fire-and-forget
-      }
-    }
-
-    const discoveredUsernames: string[] = [];
-    for (const candidate of discovery.candidates) {
-      const normalized = normalizeInstagramUsername(candidate.username);
-      if (normalized !== null && !discoveredUsernames.includes(normalized)) {
-        discoveredUsernames.push(normalized);
-      }
-    }
-
-    if (discovery.keywordStats && discovery.keywordStats.length > 0) {
-      for (const stat of discovery.keywordStats) {
-        logDiscovery(
-          `[DISCOVERY] keyword search="${stat.query}" candidates=${stat.candidatesCount} raw=${stat.rawCount}`,
-        );
-      }
-    }
-    if (discovery.skippedQueries && discovery.skippedQueries.length > 0) {
-      logDiscovery(
-        `[DISCOVERY] skipped queries this run (budget cap): ${discovery.skippedQueries.join(", ")}`,
-      );
-    }
-
-    logDiscovery(
-      `[DISCOVERY] run=${discovery.runId} dataset=${discovery.datasetId ?? "-"} candidates=${discoveredUsernames.length}`,
-    );
-    console.log("[Discovery Service] candidates discovered:", discoveredUsernames.length);
 
     const existingLeads = await prisma.lead.findMany({
       where: { campaignId: campaign.id },
@@ -467,177 +373,428 @@ export async function runDiscovery(
       existingLeads.map((lead) => lead.username.toLowerCase()),
     );
 
-    // Preserve existing campaignId + normalized username deduplication.
-    const { unique: newCandidates, duplicates: duplicateCandidates } =
-      deduplicateCandidates(discoveredUsernames, existingUsernames);
-    const existingSkipped = duplicateCandidates.length;
-
-    const skipCounts = createEmptySkipCounts();
-    skipCounts.DUPLICATE = existingSkipped;
-
-    emit({
-      stage: "discovered",
-      message: `Candidates found: ${discoveredUsernames.length}`,
-      candidatesDiscovered: discoveredUsernames.length,
-      candidatesEnriched: 0,
-      persisted: 0,
-      skipped: sumSkipCounts(skipCounts),
-      remainingCapacity,
-      existingLeads: existingLeadCount,
-      skipCounts: { ...skipCounts },
+    // Re-run protection: load candidates seen in past scrape jobs for this campaign
+    // to prevent re-enriching previously seen/rejected candidates on repeat clicks.
+    const recentJobs = await prisma.scrapeJob.findMany({
+      where: { campaignId: campaign.id },
+      orderBy: { createdAt: "desc" },
+      take: 20,
+      select: { usage: true },
     });
 
-    logDiscovery(
-      `[ENRICHMENT] candidates=${newCandidates.length} existingSkipped=${existingSkipped}`,
-    );
-    console.log("[Discovery Service] candidates skipped (existing):", existingSkipped);
-
-    const relevancePolicy: DiscoveryRelevancePolicy = {
-      ...DEFAULT_DISCOVERY_RELEVANCE_POLICY,
-      requireLocationMatch: false,
-      allowUnknownLocation: true,
-    };
-
-    const collected = await collectRelevantLeads({
-      candidates: newCandidates,
-      capacity: remainingCapacity,
-      campaign: {
-        intent: request.query,
-        location: request.location,
-        category: request.category,
-      },
-      policy: relevancePolicy,
-      batchSize: ENRICH_BATCH_SIZE,
-      maxCandidates: MAX_CANDIDATE_POOL,
-      enrich: async (batch) => {
-        // Enrich the WHOLE batch. The enrichment actor's maxItems must not
-        // truncate the pool before the relevance gate has run.
-        const enrichment = await scrapeInstagramProfiles(batch, batch.length, {
-          campaignId: campaign.id,
-          userId,
-        });
-        if (providerName === "apify") {
-          try {
-            await prisma.usageLog.create({
-              data: {
-                userId,
-                campaignId: campaign.id,
-                provider: UsageProvider.APIFY,
-                operation: "profile",
-                requestCount: 1,
-                itemsReturned: enrichment.profiles.length,
-                estimatedCostUsd:
-                  enrichment.usageTotalUsd !== undefined
-                    ? new Prisma.Decimal(enrichment.usageTotalUsd)
-                    : null,
-                metadata: {
-                  runId: enrichment.runId,
-                  batchSize: batch.length,
-                  computeUnits: enrichment.computeUnits,
-                },
-              },
-            });
-          } catch {
-            // fire-and-forget
+    let priorNextKeywordIndex = 0;
+    for (const rj of recentJobs) {
+      const u = rj.usage as Record<string, unknown> | null;
+      if (Array.isArray(u?.seenCandidates)) {
+        for (const c of u.seenCandidates) {
+          if (typeof c === "string" && c.trim().length > 0) {
+            existingUsernames.add(c.trim().toLowerCase());
           }
         }
-        return {
-          profiles: enrichment.profiles,
-          skipped: enrichment.skipped.map((entry) => entry.username),
-        };
-      },
-      onBatch: (info) => {
-        emit({
-          stage: "enrich",
-          message: `Enriching and relevance-checking profiles... (${info.relevantCount} relevant)`,
-          candidatesDiscovered: discoveredUsernames.length,
-          candidatesEnriched: info.candidatesEnriched,
-          persisted: 0,
-          skipped: sumSkipCounts(info.skipCounts),
-          remainingCapacity: Math.max(0, remainingCapacity - info.relevantCount),
-          existingLeads: existingLeadCount,
-          skipCounts: { ...info.skipCounts },
-        });
-      },
-    });
-
-    const finalSkipCounts: DiscoverySkipCounts = collected.skipCounts;
-    finalSkipCounts.DUPLICATE += existingSkipped;
-
-    // DNC suppression check across relevant leads before persisting
-    const dncCheckItems = collected.relevant.map((p, idx) => ({
-      id: String(idx),
-      username: p.username,
-      instagramUserId: p.instagramUserId ?? p.instagramId ?? null,
-      email: p.email ?? null,
-      website: p.website ?? p.externalUrl ?? null,
-    }));
-
-    const suppressionMap = await checkManySuppression({
-      userId: userId ?? campaign.userId,
-      leads: dncCheckItems,
-    });
-
-    let dncSkipped = 0;
-    const unsuppressedRelevant: LeadProfile[] = [];
-    for (let i = 0; i < collected.relevant.length; i++) {
-      const profile = collected.relevant[i];
-      const sup = suppressionMap.get(String(i));
-      if (sup?.suppressed) {
-        dncSkipped++;
-        continue;
       }
-      unsuppressedRelevant.push(profile);
+      if (typeof u?.nextKeywordIndex === "number" && priorNextKeywordIndex === 0) {
+        priorNextKeywordIndex = u.nextKeywordIndex;
+      }
     }
 
-    finalSkipCounts.DNC_SUPPRESSED =
-      (finalSkipCounts.DNC_SUPPRESSED ?? 0) + dncSkipped;
+    const effectiveQueries =
+      searchQueries.length > 0 ? searchQueries : [request.query];
 
-    // Persist only relevant, unsuppressed, enriched profiles, never exceeding campaign capacity.
-    const toPersist = unsuppressedRelevant.slice(0, remainingCapacity);
-
-    // Enrich candidates having website but no phone & email via website fallback scrape (bounded by cap)
-    const fallbackCap = process.env.WEBSITE_FALLBACK_MAX_PER_RUN
-      ? Number.parseInt(process.env.WEBSITE_FALLBACK_MAX_PER_RUN, 10)
-      : Math.max(10, remainingCapacity + 5);
-
-    await enrichProfilesWithWebsiteFallback(toPersist, {
-      maxFetches: fallbackCap,
-    });
-
-    const persistResult = await persistCampaignLeads(
-      campaign.id,
-      toPersist,
-      request.maxLeads,
-      {
-        source: "discovery",
-        scrapeJobId: job.id,
-        userId: userId ?? campaign.userId,
-      },
+    logDiscovery(
+      `[DISCOVERY] starting campaignId=${campaign.id} query="${request.query}" location=${request.location ?? "-"} category=${request.category ?? "-"} requestedLimit=${request.maxLeads} existingLeads=${existingLeadCount} remainingCapacity=${remainingCapacity}`,
     );
-    // Rows actually created in THIS campaign (soft duplicates are created+flagged).
-    const createdInCampaign =
-      persistResult.dedupStats.new + persistResult.dedupStats.softDuplicates;
-    const persistedProfiles = toPersist.slice(0, createdInCampaign);
 
-    if (createdInCampaign < toPersist.length) {
-      finalSkipCounts.CAMPAIGN_CAPACITY_REACHED +=
-        toPersist.length - createdInCampaign;
+    let totalPersisted = 0;
+    const persistedProfiles: LeadProfile[] = [];
+    const discoveredUsernamesAll: string[] = [];
+    const allSeenCandidatesThisRun = new Set<string>();
+    const finalSkipCounts: DiscoverySkipCounts = createEmptySkipCounts();
+    let totalExistingSkipped = 0;
+    let totalEnrichedCount = 0;
+    let totalEnrichmentFailures = 0;
+    let totalDncSkipped = 0;
+    let totalRequestsUsed = 0;
+    let qualifiedLeadsCount = 0;
+    let newLeadsCount = 0;
+    let softDuplicatesCount = 0;
+    let hardDuplicatesCount = 0;
+    const dedupByKeyCounts: Record<string, number> = {};
+    const executedQueriesAll: string[] = [];
+    const skippedQueriesAll: string[] = [];
+    const keywordStatsAll: Array<{
+      query: string;
+      candidatesCount: number;
+      rawCount: number;
+    }> = [];
+    const currentKeywordIndex = priorNextKeywordIndex % effectiveQueries.length;
+    let stopReason = "completed";
+
+    const maxRounds = process.env.DISCOVERY_MAX_ROUNDS
+      ? Math.max(1, Number.parseInt(process.env.DISCOVERY_MAX_ROUNDS, 10))
+      : 5;
+    const maxSearchRequests = process.env.APIFY_MAX_REQUESTS_PER_RUN
+      ? Math.max(1, Number.parseInt(process.env.APIFY_MAX_REQUESTS_PER_RUN, 10))
+      : 5;
+
+    for (let round = 0; round < maxRounds; round++) {
+      const remainingNeeded = remainingCapacity - totalPersisted;
+      if (remainingNeeded <= 0) {
+        stopReason = "completed";
+        break;
+      }
+
+      // Check if campaign was paused or cancelled by user
+      const currentCampaign = await prisma.campaign.findUnique({
+        where: { id: campaign.id },
+        select: { status: true },
+      });
+      if (
+        currentCampaign &&
+        (currentCampaign.status === CampaignStatus.PAUSED ||
+          currentCampaign.status === CampaignStatus.CANCELLED)
+      ) {
+        stopReason = "cancelled";
+        break;
+      }
+
+      const roundCandidateTarget = Math.min(
+        MAX_CANDIDATE_POOL,
+        Math.max(remainingNeeded * 4, remainingNeeded + 10),
+      );
+
+      let roundQuery: string;
+      let roundQueries: string[] | undefined;
+
+      if (providerName === "sparior") {
+        roundQuery = searchTerm;
+        roundQueries = effectiveQueries;
+      } else {
+        const kwIdx = (currentKeywordIndex + round) % effectiveQueries.length;
+        roundQuery = effectiveQueries[kwIdx];
+        roundQueries = [roundQuery];
+      }
+
+      emit({
+        stage: "discover",
+        message:
+          round === 0
+            ? "Discovering Instagram profiles..."
+            : `Discovering additional profiles (round ${round + 1})...`,
+        candidatesDiscovered: discoveredUsernamesAll.length,
+        candidatesEnriched: totalEnrichedCount,
+        persisted: totalPersisted,
+        skipped: sumSkipCounts(finalSkipCounts),
+        remainingCapacity: remainingNeeded,
+        existingLeads: existingLeadCount,
+        skipCounts: { ...finalSkipCounts },
+      });
+
+      const discovery = await getDiscoveryProvider().discover({
+        query: roundQuery,
+        queries: roundQueries,
+        limit: roundCandidateTarget,
+        location: request.location,
+        category: request.category,
+        campaignId: campaign.id,
+        userId,
+      });
+
+      totalRequestsUsed += discovery.requestsUsed ?? 1;
+      logDiscovery(
+        `[DISCOVERY] round=${round + 1} run=${discovery.runId} dataset=${discovery.datasetId ?? "-"} actor=${discovery.actor} cost=${discovery.usageTotalUsd ?? 0}`,
+      );
+
+      if (discovery.executedQueries) {
+        for (const eq of discovery.executedQueries) {
+          if (!executedQueriesAll.includes(eq)) executedQueriesAll.push(eq);
+        }
+      }
+      if (discovery.skippedQueries) {
+        for (const sq of discovery.skippedQueries) {
+          if (!skippedQueriesAll.includes(sq)) skippedQueriesAll.push(sq);
+        }
+      }
+      if (discovery.keywordStats) {
+        for (const ks of discovery.keywordStats) {
+          const existingStat = keywordStatsAll.find((s) => s.query === ks.query);
+          if (existingStat) {
+            existingStat.candidatesCount += ks.candidatesCount;
+            existingStat.rawCount += ks.rawCount;
+          } else {
+            keywordStatsAll.push({ ...ks });
+          }
+        }
+      }
+
+      if (providerName === "apify") {
+        try {
+          await prisma.usageLog.create({
+            data: {
+              userId,
+              campaignId: campaign.id,
+              provider: UsageProvider.APIFY,
+              operation: "search",
+              requestCount: 1,
+              itemsReturned: discovery.candidates.length,
+              estimatedCostUsd:
+                discovery.usageTotalUsd !== undefined
+                  ? new Prisma.Decimal(discovery.usageTotalUsd)
+                  : null,
+              metadata: {
+                runId: discovery.runId,
+                actor: discovery.actor,
+                computeUnits: discovery.computeUnits,
+                executedQueries: discovery.executedQueries,
+                round: round + 1,
+              },
+            },
+          });
+        } catch {
+          // fire-and-forget
+        }
+      }
+
+      const roundUsernames: string[] = [];
+      for (const candidate of discovery.candidates) {
+        const normalized = normalizeInstagramUsername(candidate.username);
+        if (normalized !== null && !roundUsernames.includes(normalized)) {
+          roundUsernames.push(normalized);
+          if (!discoveredUsernamesAll.includes(normalized)) {
+            discoveredUsernamesAll.push(normalized);
+          }
+          allSeenCandidatesThisRun.add(normalized);
+        }
+      }
+
+      const { unique: newCandidates, duplicates: duplicateCandidates } =
+        deduplicateCandidates(roundUsernames, existingUsernames);
+
+      for (const u of roundUsernames) {
+        existingUsernames.add(u);
+      }
+
+      totalExistingSkipped += duplicateCandidates.length;
+      finalSkipCounts.DUPLICATE =
+        (finalSkipCounts.DUPLICATE ?? 0) + duplicateCandidates.length;
+
+      emit({
+        stage: "discovered",
+        message: `Candidates found: ${discoveredUsernamesAll.length} (${newCandidates.length} new)`,
+        candidatesDiscovered: discoveredUsernamesAll.length,
+        candidatesEnriched: totalEnrichedCount,
+        persisted: totalPersisted,
+        skipped: sumSkipCounts(finalSkipCounts),
+        remainingCapacity: remainingCapacity - totalPersisted,
+        existingLeads: existingLeadCount,
+        skipCounts: { ...finalSkipCounts },
+      });
+
+      if (newCandidates.length > 0) {
+        const relevancePolicy: DiscoveryRelevancePolicy = {
+          ...DEFAULT_DISCOVERY_RELEVANCE_POLICY,
+          requireLocationMatch: false,
+          allowUnknownLocation: true,
+        };
+
+        const collected = await collectRelevantLeads({
+          candidates: newCandidates,
+          capacity: remainingNeeded,
+          campaign: {
+            intent: request.query,
+            location: request.location,
+            category: request.category,
+          },
+          policy: relevancePolicy,
+          batchSize: ENRICH_BATCH_SIZE,
+          maxCandidates: MAX_CANDIDATE_POOL,
+          enrich: async (batch) => {
+            const enrichment = await scrapeInstagramProfiles(batch, batch.length, {
+              campaignId: campaign.id,
+              userId,
+            });
+            if (providerName === "apify") {
+              try {
+                await prisma.usageLog.create({
+                  data: {
+                    userId,
+                    campaignId: campaign.id,
+                    provider: UsageProvider.APIFY,
+                    operation: "profile",
+                    requestCount: 1,
+                    itemsReturned: enrichment.profiles.length,
+                    estimatedCostUsd:
+                      enrichment.usageTotalUsd !== undefined
+                        ? new Prisma.Decimal(enrichment.usageTotalUsd)
+                        : null,
+                    metadata: {
+                      runId: enrichment.runId,
+                      batchSize: batch.length,
+                      computeUnits: enrichment.computeUnits,
+                    },
+                  },
+                });
+              } catch {
+                // fire-and-forget
+              }
+            }
+            return {
+              profiles: enrichment.profiles,
+              skipped: enrichment.skipped.map((entry) => entry.username),
+            };
+          },
+          onBatch: (info) => {
+            emit({
+              stage: "enrich",
+              message: `Enriching and relevance-checking profiles... (${totalPersisted + info.relevantCount} relevant)`,
+              candidatesDiscovered: discoveredUsernamesAll.length,
+              candidatesEnriched: totalEnrichedCount + info.candidatesEnriched,
+              persisted: totalPersisted,
+              skipped: sumSkipCounts(finalSkipCounts) + sumSkipCounts(info.skipCounts),
+              remainingCapacity: Math.max(
+                0,
+                remainingCapacity - (totalPersisted + info.relevantCount),
+              ),
+              existingLeads: existingLeadCount,
+              skipCounts: { ...finalSkipCounts },
+            });
+          },
+        });
+
+        for (const [key, count] of Object.entries(collected.skipCounts) as Array<
+          [keyof DiscoverySkipCounts, number]
+        >) {
+          if (count > 0) {
+            finalSkipCounts[key] = (finalSkipCounts[key] ?? 0) + count;
+          }
+        }
+        totalEnrichedCount += collected.candidatesEnriched;
+        totalEnrichmentFailures += collected.enrichmentFailures;
+        qualifiedLeadsCount += collected.relevant.length;
+
+        const dncCheckItems = collected.relevant.map((p, idx) => ({
+          id: String(idx),
+          username: p.username,
+          instagramUserId: p.instagramUserId ?? p.instagramId ?? null,
+          email: p.email ?? null,
+          website: p.website ?? p.externalUrl ?? null,
+        }));
+
+        const suppressionMap = await checkManySuppression({
+          userId: userId ?? campaign.userId,
+          leads: dncCheckItems,
+        });
+
+        let roundDncSkipped = 0;
+        const unsuppressedRelevant: LeadProfile[] = [];
+        for (let i = 0; i < collected.relevant.length; i++) {
+          const profile = collected.relevant[i];
+          const sup = suppressionMap.get(String(i));
+          if (sup?.suppressed) {
+            roundDncSkipped++;
+            continue;
+          }
+          unsuppressedRelevant.push(profile);
+        }
+
+        totalDncSkipped += roundDncSkipped;
+        finalSkipCounts.DNC_SUPPRESSED =
+          (finalSkipCounts.DNC_SUPPRESSED ?? 0) + roundDncSkipped;
+
+        const toPersist = unsuppressedRelevant.slice(0, remainingNeeded);
+
+        if (toPersist.length > 0) {
+          const fallbackCap = process.env.WEBSITE_FALLBACK_MAX_PER_RUN
+            ? Number.parseInt(process.env.WEBSITE_FALLBACK_MAX_PER_RUN, 10)
+            : Math.max(10, remainingNeeded + 5);
+
+          await enrichProfilesWithWebsiteFallback(toPersist, {
+            maxFetches: fallbackCap,
+          });
+
+          const persistResult = await persistCampaignLeads(
+            campaign.id,
+            toPersist,
+            request.maxLeads,
+            {
+              source: "discovery",
+              scrapeJobId: job.id,
+              userId: userId ?? campaign.userId,
+            },
+          );
+
+          const createdInCampaign =
+            persistResult.dedupStats.new + persistResult.dedupStats.softDuplicates;
+          totalPersisted += createdInCampaign;
+          persistedProfiles.push(...toPersist.slice(0, createdInCampaign));
+
+          newLeadsCount += persistResult.dedupStats.new;
+          softDuplicatesCount += persistResult.dedupStats.softDuplicates;
+          hardDuplicatesCount += persistResult.dedupStats.hardDuplicates;
+          for (const [k, v] of Object.entries(persistResult.dedupStats.byKey)) {
+            dedupByKeyCounts[k] = (dedupByKeyCounts[k] ?? 0) + v;
+          }
+
+          if (createdInCampaign < toPersist.length) {
+            finalSkipCounts.CAMPAIGN_CAPACITY_REACHED =
+              (finalSkipCounts.CAMPAIGN_CAPACITY_REACHED ?? 0) +
+              (toPersist.length - createdInCampaign);
+          }
+        }
+      }
+
+      if (totalPersisted >= remainingCapacity) {
+        stopReason = "completed";
+        break;
+      }
+
+      // Check continuation stopping criteria
+      if (providerName === "sparior") {
+        if (
+          discovery.stopReason === "max_requests" ||
+          discovery.stopReason === "quota"
+        ) {
+          stopReason = "budget_cap_reached";
+          break;
+        }
+        if (
+          discovery.stopReason === "completed" ||
+          discovery.candidates.length === 0
+        ) {
+          stopReason = "all_keywords_exhausted";
+          break;
+        }
+      } else {
+        if (totalRequestsUsed >= maxSearchRequests) {
+          stopReason = "budget_cap_reached";
+          break;
+        }
+        if (
+          round + 1 >= effectiveQueries.length &&
+          (roundUsernames.length === 0 || newCandidates.length === 0)
+        ) {
+          stopReason = "all_keywords_exhausted";
+          break;
+        }
+      }
     }
 
-    const persisted = createdInCampaign;
-    const candidatesEnriched = collected.candidatesEnriched;
+    const persisted = totalPersisted;
+    const candidatesEnriched = totalEnrichedCount;
     const skipped = sumSkipCounts(finalSkipCounts);
     const finalRemaining = Math.max(
       0,
       request.maxLeads - (existingLeadCount + persisted),
     );
 
+    if (persisted < remainingCapacity && stopReason === "completed") {
+      stopReason = "all_keywords_exhausted";
+    }
+
     console.log(
       "[Discovery Service] candidates enriched:",
       candidatesEnriched,
       "enrichment failures:",
-      collected.enrichmentFailures,
+      totalEnrichmentFailures,
     );
     console.log(
       "[Discovery Service] leads persisted:",
@@ -649,7 +806,7 @@ export async function runDiscovery(
     emit({
       stage: "persist",
       message: `Saving leads...`,
-      candidatesDiscovered: discoveredUsernames.length,
+      candidatesDiscovered: discoveredUsernamesAll.length,
       candidatesEnriched,
       persisted,
       skipped,
@@ -662,47 +819,49 @@ export async function runDiscovery(
       persisted,
       requested: request.maxLeads,
       existingLeads: existingLeadCount,
-      discovered: discoveredUsernames.length,
-      existingSkipped,
-      enrichSkipped: collected.enrichmentFailures,
+      discovered: discoveredUsernamesAll.length,
+      existingSkipped: totalExistingSkipped,
+      enrichSkipped: totalEnrichmentFailures,
       remainingCapacity: finalRemaining,
       skipCounts: finalSkipCounts,
+      stopReason,
     });
 
     const usageFunnel = {
       requestsUsed:
-        (discovery.requestsUsed ?? 1) +
-        Math.ceil(newCandidates.length / ENRICH_BATCH_SIZE),
-      profilesReturned: discoveredUsernames.length,
-      keywordStats: discovery.keywordStats,
-      executedQueries: discovery.executedQueries,
-      skippedQueries: discovery.skippedQueries,
-      nextKeywordIndex: discovery.nextKeywordIndex,
+        totalRequestsUsed + Math.ceil(candidatesEnriched / ENRICH_BATCH_SIZE),
+      profilesReturned: discoveredUsernamesAll.length,
+      keywordStats: keywordStatsAll,
+      executedQueries: executedQueriesAll,
+      skippedQueries: skippedQueriesAll,
+      nextKeywordIndex:
+        (currentKeywordIndex + executedQueriesAll.length) % effectiveQueries.length,
+      seenCandidates: Array.from(allSeenCandidatesThisRun),
       malformedSkipped: finalSkipCounts.MALFORMED ?? 0,
-      duplicatesSkipped:
-        existingSkipped + persistResult.dedupStats.hardDuplicates,
-      duplicatesByKey: persistResult.dedupStats.byKey,
-      softDuplicatesFlagged: persistResult.dedupStats.softDuplicates,
-      leadsEnriched: persistResult.dedupStats.enriched,
+      duplicatesSkipped: totalExistingSkipped + hardDuplicatesCount,
+      duplicatesByKey: dedupByKeyCounts,
+      softDuplicatesFlagged: softDuplicatesCount,
+      leadsEnriched: candidatesEnriched,
       filteredOutByRelevance:
         (finalSkipCounts.IRRELEVANT_CATEGORY ?? 0) +
         (finalSkipCounts.IRRELEVANT_INTENT ?? 0) +
         (finalSkipCounts.IRRELEVANT_LOCATION ?? 0) +
         (finalSkipCounts.IRRELEVANT_LOCATION_NATIONAL_SCALE ?? 0) +
         (finalSkipCounts.INSUFFICIENT_RELEVANCE_DATA ?? 0),
-      dncSkipped,
-      newLeadsCreated: persistResult.dedupStats.new,
-      qualifiedLeads: collected.relevant.length,
-      errors: collected.enrichmentFailures,
+      dncSkipped: totalDncSkipped,
+      newLeadsCreated: newLeadsCount,
+      qualifiedLeads: qualifiedLeadsCount,
+      errors: totalEnrichmentFailures,
+      stopReason,
     };
 
     await prisma.scrapeJob.update({
       where: { id: job.id },
       data: {
         status: ScrapeJobStatus.COMPLETED,
-        inputCount: newCandidates.length,
+        inputCount: discoveredUsernamesAll.length,
         processedCount: persisted,
-        candidatesDiscovered: discoveredUsernames.length,
+        candidatesDiscovered: discoveredUsernamesAll.length,
         candidatesEnriched,
         candidatesSkipped: skipped,
         usage: usageFunnel,
@@ -723,7 +882,7 @@ export async function runDiscovery(
         persisted > 0
           ? `${persisted} new lead${persisted === 1 ? "" : "s"} added`
           : "No relevant profiles were found for this campaign",
-      candidatesDiscovered: discoveredUsernames.length,
+      candidatesDiscovered: discoveredUsernamesAll.length,
       candidatesEnriched,
       persisted,
       skipped,
@@ -739,9 +898,9 @@ export async function runDiscovery(
       enrichmentActor,
       requestedLimit: request.maxLeads,
       existingLeads: existingLeadCount,
-      candidatesDiscovered: discoveredUsernames.length,
+      candidatesDiscovered: discoveredUsernamesAll.length,
       candidatesEnriched,
-      existingSkipped,
+      existingSkipped: totalExistingSkipped,
       skipped,
       persisted,
       remainingCapacity: finalRemaining,
@@ -787,6 +946,7 @@ function buildDiscoveryNotice(input: {
   enrichSkipped: number;
   remainingCapacity: number;
   skipCounts?: DiscoverySkipCounts;
+  stopReason?: string;
 }): string | null {
   const {
     persisted,
@@ -796,6 +956,7 @@ function buildDiscoveryNotice(input: {
     existingSkipped,
     enrichSkipped,
     remainingCapacity,
+    stopReason,
   } = input;
 
   const breakdown = formatSkipBreakdown(input.skipCounts);
@@ -810,7 +971,13 @@ function buildDiscoveryNotice(input: {
 
   const allowedNew = Math.max(0, requested - existingLeads);
   if (persisted < allowedNew) {
-    return `PARTIAL_RESULTS: Saved ${persisted} of ${allowedNew} available slots (campaign limit: ${requested}, existing: ${existingLeads}, remaining capacity: ${remainingCapacity}). Candidates discovered: ${discovered}, already in campaign: ${existingSkipped}, enrichment failures: ${enrichSkipped}, skipped: ${breakdown}.`;
+    const reasonDetail =
+      stopReason === "budget_cap_reached"
+        ? " Reason: budget cap reached."
+        : stopReason === "cancelled"
+          ? " Reason: job cancelled."
+          : " Reason: all search options exhausted for this query/location.";
+    return `PARTIAL_RESULTS: Saved ${persisted} of ${allowedNew} available slots (campaign limit: ${requested}, existing: ${existingLeads}, remaining capacity: ${remainingCapacity}). Candidates discovered: ${discovered}, already in campaign: ${existingSkipped}, enrichment failures: ${enrichSkipped}, skipped: ${breakdown}.${reasonDetail}`;
   }
 
   return `DISCOVERY_COMPLETED: Saved ${persisted} new lead${persisted === 1 ? "" : "s"} (limit: ${requested}, existing: ${existingLeads}, remaining capacity: ${remainingCapacity}). Candidates discovered: ${discovered}, skipped: ${breakdown}.`;

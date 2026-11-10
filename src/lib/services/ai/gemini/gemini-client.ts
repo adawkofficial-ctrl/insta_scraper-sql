@@ -30,7 +30,8 @@ export type GeminiOperation =
   | "draft_generation"
   | "regenerate_draft"
   | "reply_classification"
-  | "reply_draft_generation";
+  | "reply_draft_generation"
+  | "relevance_check";
 
 export type GeminiUsage = { inputTokens: number; outputTokens: number };
 
@@ -42,9 +43,9 @@ export type GeminiStructuredResult<T> = {
   finishReason: string | null;
 };
 
-const DEFAULT_MODEL = "gemini-1.5-flash";
+const DEFAULT_MODEL = "gemini-3.5-flash";
 const DEFAULT_TIMEOUT_MS = 30_000;
-const MAX_ATTEMPTS = 3;
+const MAX_ATTEMPTS = 4;
 
 function getModel(): string {
   return getServerEnv("GEMINI_MODEL") ?? DEFAULT_MODEL;
@@ -59,7 +60,7 @@ function getMaxConcurrency(): number {
 }
 function getMaxRequestsPerMinute(): number {
   const raw = Number(getServerEnv("GEMINI_MAX_REQUESTS_PER_MINUTE") ?? "");
-  return Number.isFinite(raw) && raw > 0 ? Math.trunc(raw) : 30;
+  return Number.isFinite(raw) && raw > 0 ? Math.trunc(raw) : 12;
 }
 function getPricePer1M(name: string): number {
   const raw = Number(getServerEnv(name) ?? "0");
@@ -113,15 +114,26 @@ async function acquireRateSlot(): Promise<void> {
 
 function stripCodeFences(text: string): string {
   const trimmed = text.trim();
-  const fence = /^```(?:json)?\s*([\s\S]*?)\s*```$/i.exec(trimmed);
-  return fence ? fence[1].trim() : trimmed;
+  const fence = /```(?:json)?\s*([\s\S]*?)\s*```/i.exec(trimmed);
+  if (fence) {
+    return fence[1].trim();
+  }
+  const firstBrace = trimmed.indexOf("{");
+  const lastBrace = trimmed.lastIndexOf("}");
+  if (firstBrace !== -1 && lastBrace > firstBrace) {
+    return trimmed.slice(firstBrace, lastBrace + 1);
+  }
+  return trimmed;
 }
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function backoffMs(attempt: number): number {
+function backoffMs(attempt: number, isRateLimit = false): number {
+  if (isRateLimit) {
+    return Math.min(15_000, 3000 * Math.pow(2, attempt - 1)) + Math.floor(Math.random() * 500);
+  }
   const base = Math.min(4000, 500 * 2 ** (attempt - 1));
   return base + Math.floor(Math.random() * 250);
 }
@@ -238,31 +250,47 @@ export async function generateStructured<T>(
         if (!response.ok) {
           const bodyText = await response.text().catch(() => "");
           const status = response.status;
+          const bodySnippet = bodyText.slice(0, 500);
+          logger.warn(`[GEMINI] HTTP ${status} error on attempt ${attempt}/${MAX_ATTEMPTS}`, {
+            operation: params.operation,
+            status,
+            body: bodySnippet,
+          });
           if (status === 401 || status === 403) {
             throw new GeminiApiError("AI_AUTH_FAILED", "Gemini rejected the API key.", status);
           }
           if (status === 400) {
-            throw new GeminiApiError("AI_BAD_OUTPUT", "Gemini rejected the request.", status);
-          }
-          if (status === 429) {
-            const retryAfter = Number(response.headers.get("retry-after") ?? "");
-            lastError = new GeminiApiError("AI_RATE_LIMITED", "Gemini rate limited the request.", status);
-            if (attempt < MAX_ATTEMPTS) {
-              await sleep(Number.isFinite(retryAfter) && retryAfter > 0 ? retryAfter * 1000 : backoffMs(attempt));
-              continue;
-            }
-            throw lastError;
-          }
-          if (status >= 500) {
-            lastError = new GeminiApiError("AI_UNAVAILABLE", `Gemini returned ${status}.`, status);
+            // 400 can be a schema/request error — retryable in case of transient issues
+            lastError = new GeminiApiError("AI_BAD_OUTPUT", `Gemini rejected the request (400): ${bodySnippet}`, status);
             if (attempt < MAX_ATTEMPTS) {
               await sleep(backoffMs(attempt));
               continue;
             }
             throw lastError;
           }
-          void bodyText;
-          throw new GeminiApiError("AI_UNAVAILABLE", `Gemini returned ${status}.`, status);
+          if (status === 429) {
+            const retryAfter = Number(response.headers.get("retry-after") ?? "");
+            lastError = new GeminiApiError("AI_RATE_LIMITED", "Gemini rate limited the request.", status);
+            if (attempt < MAX_ATTEMPTS) {
+              const waitMs =
+                Number.isFinite(retryAfter) && retryAfter > 0
+                  ? retryAfter * 1000
+                  : Math.max(12_000, backoffMs(attempt, true));
+              logger.warn(`[GEMINI] rate limit 429 encountered, backing off ${waitMs}ms before retry ${attempt + 1}/${MAX_ATTEMPTS}`);
+              await sleep(waitMs);
+              continue;
+            }
+            throw lastError;
+          }
+          if (status >= 500) {
+            lastError = new GeminiApiError("AI_UNAVAILABLE", `Gemini returned ${status}: ${bodySnippet}`, status);
+            if (attempt < MAX_ATTEMPTS) {
+              await sleep(backoffMs(attempt));
+              continue;
+            }
+            throw lastError;
+          }
+          throw new GeminiApiError("AI_UNAVAILABLE", `Gemini returned ${status}: ${bodySnippet}`, status);
         }
 
         const payload = (await response.json()) as {
@@ -309,7 +337,11 @@ export async function generateStructured<T>(
         return { data, usage, latencyMs, model, finishReason };
       } catch (error) {
         if (error instanceof GeminiApiError) {
-          if (error.code === "AI_RATE_LIMITED" || error.code === "AI_UNAVAILABLE") {
+          if (
+            error.code === "AI_RATE_LIMITED" ||
+            error.code === "AI_UNAVAILABLE" ||
+            error.code === "AI_BAD_OUTPUT"
+          ) {
             if (attempt < MAX_ATTEMPTS) {
               await sleep(backoffMs(attempt));
               continue;

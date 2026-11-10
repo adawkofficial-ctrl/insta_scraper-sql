@@ -33,6 +33,7 @@ export const ALLOWED_LEAD_TRANSITIONS: Record<LeadStatus, readonly LeadStatus[]>
   [LeadStatus.QUALIFIED]: [
     LeadStatus.READY_FOR_OUTREACH,
     LeadStatus.QUEUED,             // Direct bulk queue
+    LeadStatus.CONTACTED,          // Direct send
     LeadStatus.NOT_INTERESTED,
     LeadStatus.DO_NOT_CONTACT,
   ],
