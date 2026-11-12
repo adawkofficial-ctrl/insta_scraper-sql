@@ -25,3 +25,9 @@ export {
   type CsvImportResult,
 } from "./csv-lead-import-service";
 
+export {
+  exportCampaignLeads,
+  type ExportLeadsOptions,
+  type CsvExportResult,
+} from "./lead-export-service";
+

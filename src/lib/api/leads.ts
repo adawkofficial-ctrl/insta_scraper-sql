@@ -429,3 +429,21 @@ export async function deleteDryRunLeadsApi(
     },
   );
 }
+
+export function getCampaignLeadsExportUrl(
+  campaignId: string,
+  options?: {
+    leadIds?: string[];
+    format?: "csv" | "json";
+  },
+): string {
+  const params = new URLSearchParams();
+  if (options?.format) {
+    params.set("format", options.format);
+  }
+  if (options?.leadIds && options.leadIds.length > 0) {
+    params.set("leadIds", options.leadIds.join(","));
+  }
+  const queryString = params.toString();
+  return `/api/campaigns/${encodeURIComponent(campaignId)}/leads/export${queryString ? `?${queryString}` : ""}`;
+}
