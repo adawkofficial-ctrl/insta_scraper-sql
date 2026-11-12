@@ -1,7 +1,7 @@
 import "server-only";
 
 import { getPrismaClient } from "@/lib/db/prisma";
-import type { Prisma } from "@/generated/prisma/client";
+import { Prisma } from "@/generated/prisma/client";
 import { logger } from "@/lib/logger";
 import { MessageDirection, MessageStatus } from "@/generated/prisma/enums";
 
@@ -20,19 +20,25 @@ import {
 const KEY_CHUNK_SIZE = 500;
 
 export type DedupKey =
+  | "GMAPS_PLACE_ID"
   | "INSTAGRAM_ID"
   | "USERNAME"
   | "PROFILE_URL"
   | "EMAIL"
+  | "PHONE"
+  | "WEBSITE_DOMAIN"
   | "WEBSITE_KEY";
 
 export type NormalizedProfile = {
-  username: string;
+  username: string | null;
   usernameNormalized: string | null;
   profileUrlCanonical: string | null;
   instagramUserId: string | null;
   email: string | null;
   emailNormalized: string | null;
+  phone: string | null;
+  phoneNormalized: string | null;
+  gmapsPlaceId: string | null;
   website: string | null;
   websiteDomain: string | null;
   websiteKey: string | null;
@@ -41,8 +47,15 @@ export type NormalizedProfile = {
 };
 
 export type DedupProfileInput = {
-  username: string;
+  username?: string | null;
+  instagramUsername?: string | null;
   profileUrl?: string | null;
+  gmapsPlaceId?: string | null;
+  rating?: number | null;
+  reviewCount?: number | null;
+  city?: string | null;
+  handleSource?: string | null;
+  handleConfidence?: string | null;
   instagramUserId?: string | null;
   instagramId?: string | null;
   email?: string | null;
@@ -66,6 +79,12 @@ export type DedupProfileInput = {
   following?: number | null;
   postsCount?: number | null;
   source?: string | null;
+  scrapeJobId?: string | null;
+  discoveryKeyword?: string | null;
+  discoveryCity?: string | null;
+  acquisitionCostUsd?: number | null;
+  acquisitionCostBreakdown?: unknown | null;
+  messageVariant?: string | null;
 };
 
 export type DedupClassification =
@@ -101,13 +120,23 @@ export function emptyDedupStats(): DedupStats {
     softDuplicates: 0,
     enriched: 0,
     intraBatchDuplicates: 0,
-    byKey: { INSTAGRAM_ID: 0, USERNAME: 0, PROFILE_URL: 0, EMAIL: 0, WEBSITE_KEY: 0 },
+    byKey: {
+      GMAPS_PLACE_ID: 0,
+      INSTAGRAM_ID: 0,
+      USERNAME: 0,
+      PROFILE_URL: 0,
+      EMAIL: 0,
+      PHONE: 0,
+      WEBSITE_DOMAIN: 0,
+      WEBSITE_KEY: 0,
+    },
   };
 }
 
 export function normalizeProfile(profile: DedupProfileInput): NormalizedProfile {
-  const usernameNormalized = normalizeUsername(profile.username);
+  const usernameNormalized = profile.username ? normalizeUsername(profile.username) : null;
   const emailNormalized = normalizeEmail(profile.email);
+  const phoneNormalized = profile.phoneNormalized ?? (profile.phone ? normalizePhone(profile.phone) : null);
   const rawUrl =
     typeof profile.website === "string" && profile.website.length > 0
       ? profile.website.trim()
@@ -132,14 +161,19 @@ export function normalizeProfile(profile: DedupProfileInput): NormalizedProfile 
   const instagramUserId = profile.instagramUserId ?? profile.instagramId ?? null;
 
   return {
-    username: profile.username,
+    username: profile.username ?? null,
     usernameNormalized:
       usernameNormalized ??
-      (typeof profile.username === "string" ? profile.username.trim().toLowerCase() : null),
+      (typeof profile.username === "string" && profile.username.trim().length > 0
+        ? profile.username.trim().toLowerCase()
+        : null),
     profileUrlCanonical: usernameNormalized ? canonicalProfileUrl(usernameNormalized) : null,
     instagramUserId: instagramUserId ? String(instagramUserId) : null,
     email: profile.email ?? null,
     emailNormalized,
+    phone: profile.phone ?? null,
+    phoneNormalized,
+    gmapsPlaceId: profile.gmapsPlaceId ?? null,
     website,
     websiteDomain,
     websiteKey,
@@ -158,9 +192,12 @@ type CandidateLead = {
   usernameNormalized: string | null;
   profileUrlCanonical: string | null;
   emailNormalized: string | null;
+  phoneNormalized: string | null;
+  gmapsPlaceId: string | null;
+  websiteDomain: string | null;
   websiteKey: string | null;
   duplicateOfLeadId: string | null;
-  username: string;
+  username: string | null;
 };
 
 const CANDIDATE_SELECT = {
@@ -173,6 +210,9 @@ const CANDIDATE_SELECT = {
   usernameNormalized: true,
   profileUrlCanonical: true,
   emailNormalized: true,
+  phoneNormalized: true,
+  gmapsPlaceId: true,
+  websiteDomain: true,
   websiteKey: true,
   duplicateOfLeadId: true,
   username: true,
@@ -249,27 +289,38 @@ export async function classifyProfiles(input: {
   userId: string;
   campaignId: string;
   profiles: DedupProfileInput[];
+  isDryRun?: boolean;
   client?: Prisma.TransactionClient;
 }): Promise<DedupClassification[]> {
   const prisma = input.client ?? getPrismaClient();
   const normalized = input.profiles.map((profile) => normalizeProfile(profile));
   if (normalized.length === 0) return [];
 
+  // In real runs, completely ignore dry-run leads during dedup lookup
+  const isDry = input.isDryRun === true;
+  const dryRunFilter = !isDry ? { isDryRun: false } : {};
+
+  const gmapsPlaceIds = uniq(normalized.map((n) => n.gmapsPlaceId));
   const instagramIds = uniq(normalized.map((n) => n.instagramUserId));
   const usernames = uniq(normalized.map((n) => n.usernameNormalized));
   const profileUrls = uniq(normalized.map((n) => n.profileUrlCanonical));
   const emails = uniq(normalized.map((n) => n.emailNormalized));
+  const phones = uniq(normalized.map((n) => n.phoneNormalized));
   const websiteKeys = uniq(normalized.map((n) => n.websiteKey));
+  const websiteDomains = uniq(normalized.map((n) => n.websiteDomain));
 
   const found = new Map<string, CandidateLead>();
   const collect = async (where: Prisma.LeadWhereInput): Promise<void> => {
     const rows = (await prisma.lead.findMany({
-      where,
+      where: { ...where, ...dryRunFilter },
       select: CANDIDATE_SELECT,
     })) as CandidateLead[];
     for (const row of rows) found.set(row.id, row);
   };
 
+  for (const part of chunk(gmapsPlaceIds, KEY_CHUNK_SIZE)) {
+    if (part.length) await collect({ userId: input.userId, gmapsPlaceId: { in: part } });
+  }
   for (const part of chunk(instagramIds, KEY_CHUNK_SIZE)) {
     if (part.length) await collect({ userId: input.userId, instagramUserId: { in: part } });
   }
@@ -282,24 +333,33 @@ export async function classifyProfiles(input: {
   for (const part of chunk(emails, KEY_CHUNK_SIZE)) {
     if (part.length) await collect({ userId: input.userId, emailNormalized: { in: part } });
   }
+  for (const part of chunk(phones, KEY_CHUNK_SIZE)) {
+    if (part.length) await collect({ userId: input.userId, phoneNormalized: { in: part } });
+  }
   for (const part of chunk(websiteKeys, KEY_CHUNK_SIZE)) {
     if (part.length) await collect({ userId: input.userId, websiteKey: { in: part } });
+  }
+  for (const part of chunk(websiteDomains, KEY_CHUNK_SIZE)) {
+    if (part.length) await collect({ userId: input.userId, websiteDomain: { in: part } });
   }
 
   const pointerIds = uniq([...found.values()].map((row) => row.duplicateOfLeadId));
   if (pointerIds.length > 0) {
     const canonicalRows = (await prisma.lead.findMany({
-      where: { id: { in: pointerIds } },
+      where: { id: { in: pointerIds }, ...dryRunFilter },
       select: CANDIDATE_SELECT,
     })) as CandidateLead[];
     for (const row of canonicalRows) found.set(row.id, row);
   }
 
+  const byGmapsPlaceId = new Map<string, CandidateLead[]>();
   const byInstagramId = new Map<string, CandidateLead[]>();
   const byUsername = new Map<string, CandidateLead[]>();
   const byProfileUrl = new Map<string, CandidateLead[]>();
   const byEmail = new Map<string, CandidateLead[]>();
+  const byPhone = new Map<string, CandidateLead[]>();
   const byWebsiteKey = new Map<string, CandidateLead[]>();
+  const byWebsiteDomain = new Map<string, CandidateLead[]>();
 
   const push = (map: Map<string, CandidateLead[]>, key: string | null, lead: CandidateLead) => {
     if (!key) return;
@@ -308,11 +368,14 @@ export async function classifyProfiles(input: {
     map.set(key, list);
   };
   for (const lead of found.values()) {
+    push(byGmapsPlaceId, lead.gmapsPlaceId, lead);
     push(byInstagramId, lead.instagramUserId, lead);
     push(byUsername, lead.usernameNormalized, lead);
     push(byProfileUrl, lead.profileUrlCanonical, lead);
     push(byEmail, lead.emailNormalized, lead);
+    push(byPhone, lead.phoneNormalized, lead);
     push(byWebsiteKey, lead.websiteKey, lead);
+    push(byWebsiteDomain, lead.websiteDomain, lead);
   }
 
   const batchSeen = new Map<string, number>();
@@ -321,6 +384,34 @@ export async function classifyProfiles(input: {
   for (let index = 0; index < normalized.length; index += 1) {
     const n = normalized[index];
 
+    // Priority 1: Dedup by gmapsPlaceId first
+    if (n.gmapsPlaceId) {
+      const gmapsMatches = byGmapsPlaceId.get(n.gmapsPlaceId) ?? [];
+      if (gmapsMatches.length > 0) {
+        const canonical = pickCanonical(gmapsMatches);
+        results.push({
+          kind: "HARD_DUPLICATE",
+          leadId: canonical.id,
+          matchedBy: ["GMAPS_PLACE_ID"],
+          matchedLeadIds: uniq(gmapsMatches.map((l) => l.id)),
+          normalized: n,
+        });
+        continue;
+      }
+      if (batchSeen.has(`GMAPS:${n.gmapsPlaceId}`)) {
+        results.push({
+          kind: "HARD_DUPLICATE",
+          leadId: "",
+          matchedBy: ["GMAPS_PLACE_ID"],
+          matchedLeadIds: [],
+          intraBatchWinnerIndex: batchSeen.get(`GMAPS:${n.gmapsPlaceId}`),
+          normalized: n,
+        });
+        continue;
+      }
+    }
+
+    // Standard hard matches (Instagram ID, Username, Profile URL, Email)
     const matchLists: Array<{ key: DedupKey; leads: CandidateLead[] }> = [];
     if (n.instagramUserId) matchLists.push({ key: "INSTAGRAM_ID", leads: byInstagramId.get(n.instagramUserId) ?? [] });
     if (n.usernameNormalized) matchLists.push({ key: "USERNAME", leads: byUsername.get(n.usernameNormalized) ?? [] });
@@ -342,6 +433,60 @@ export async function classifyProfiles(input: {
         normalized: n,
       });
       continue;
+    }
+
+    // Priority 2: Dedup by normalized website domain (especially for no-IG leads)
+    const domainMatches = n.websiteDomain ? byWebsiteDomain.get(n.websiteDomain) ?? [] : [];
+    if (domainMatches.length > 0) {
+      const canonical = pickCanonical(domainMatches);
+      if (!n.usernameNormalized) {
+        results.push({
+          kind: "HARD_DUPLICATE",
+          leadId: canonical.id,
+          matchedBy: ["WEBSITE_DOMAIN"],
+          matchedLeadIds: uniq(domainMatches.map((l) => l.id)),
+          normalized: n,
+        });
+        continue;
+      }
+    }
+    if (n.websiteDomain && batchSeen.has(`DOMAIN:${n.websiteDomain}`) && !n.usernameNormalized) {
+      results.push({
+        kind: "HARD_DUPLICATE",
+        leadId: "",
+        matchedBy: ["WEBSITE_DOMAIN"],
+        matchedLeadIds: [],
+        intraBatchWinnerIndex: batchSeen.get(`DOMAIN:${n.websiteDomain}`),
+        normalized: n,
+      });
+      continue;
+    }
+
+    // Priority 3: Dedup by normalized phone (E.164)
+    if (n.phoneNormalized) {
+      const phoneMatches = byPhone.get(n.phoneNormalized) ?? [];
+      if (phoneMatches.length > 0) {
+        const canonical = pickCanonical(phoneMatches);
+        results.push({
+          kind: "HARD_DUPLICATE",
+          leadId: canonical.id,
+          matchedBy: ["PHONE"],
+          matchedLeadIds: uniq(phoneMatches.map((l) => l.id)),
+          normalized: n,
+        });
+        continue;
+      }
+      if (batchSeen.has(`PHONE:${n.phoneNormalized}`)) {
+        results.push({
+          kind: "HARD_DUPLICATE",
+          leadId: "",
+          matchedBy: ["PHONE"],
+          matchedLeadIds: [],
+          intraBatchWinnerIndex: batchSeen.get(`PHONE:${n.phoneNormalized}`),
+          normalized: n,
+        });
+        continue;
+      }
     }
 
     const batchKey = n.instagramUserId
@@ -373,6 +518,9 @@ export async function classifyProfiles(input: {
       continue;
     }
 
+    if (n.gmapsPlaceId) batchSeen.set(`GMAPS:${n.gmapsPlaceId}`, index);
+    if (n.websiteDomain) batchSeen.set(`DOMAIN:${n.websiteDomain}`, index);
+    if (n.phoneNormalized) batchSeen.set(`PHONE:${n.phoneNormalized}`, index);
     if (batchKey) batchSeen.set(batchKey, index);
     results.push({ kind: "NEW", normalized: n });
   }
@@ -393,6 +541,7 @@ export type ApplyClassifiedInput = {
   classifications: DedupClassification[];
   maxTotalLimit?: number;
   currentTotal?: number;
+  isDryRun?: boolean;
   /** Extra (enrichment) fields merged into new lead rows. */
   extraCreateFields?: (
     profile: DedupProfileInput,
@@ -512,9 +661,15 @@ export async function applyClassifiedProfiles(
       const combinedEmail = (data.email as string | undefined) ?? existing.email;
       const combinedPhone = (data.phone as string | undefined) ?? existing.phone;
       data.availableChannels = computeAvailableChannels({
-        hasInstagram: true,
+        hasInstagram: Boolean(
+          profile.username ||
+          profile.instagramUsername ||
+          existing.username ||
+          existing.instagramUserId,
+        ),
         email: combinedEmail,
         phone: combinedPhone,
+        website: n.website ?? existing.website,
       });
 
       // Username change: matched by instagramUserId but handle differs.
@@ -573,8 +728,9 @@ export async function applyClassifiedProfiles(
     const createData: Prisma.LeadUncheckedCreateInput = {
       campaignId: input.campaignId,
       userId: input.userId,
-      username: profile.username,
-      profileUrl: profile.profileUrl ?? n.profileUrlCanonical ?? "",
+      username: profile.username ?? null,
+      instagramUsername: profile.instagramUsername ?? profile.username ?? null,
+      profileUrl: profile.profileUrl ?? (n.profileUrlCanonical ? n.profileUrlCanonical : null),
       status: "NEW",
       source: profile.source ?? input.source,
       usernameNormalized: n.usernameNormalized,
@@ -584,12 +740,13 @@ export async function applyClassifiedProfiles(
       email: profile.email ?? null,
       emailNormalized: n.emailNormalized,
       phone: profile.phone ?? null,
-      phoneNormalized: profile.phoneNormalized ?? (profile.phone ? normalizePhone(profile.phone) : null),
+      phoneNormalized: n.phoneNormalized,
       contactSource: profile.contactSource ?? null,
       availableChannels: profile.availableChannels ?? computeAvailableChannels({
-        hasInstagram: true,
+        hasInstagram: Boolean(n.usernameNormalized),
         email: profile.email,
         phone: profile.phone,
+        website: n.website,
       }),
       website: n.website,
       websiteDomain: n.websiteDomain,
@@ -603,9 +760,22 @@ export async function applyClassifiedProfiles(
       followersCount: profile.followersCount ?? profile.followers ?? null,
       followsCount: profile.followsCount ?? profile.following ?? null,
       postsCount: profile.postsCount ?? null,
+      gmapsPlaceId: profile.gmapsPlaceId ?? null,
+      rating: profile.rating ?? null,
+      reviewCount: profile.reviewCount ?? null,
+      city: profile.city ?? null,
+      handleSource: profile.handleSource ?? null,
+      handleConfidence: profile.handleConfidence ?? null,
+      scrapeJobId: profile.scrapeJobId ?? input.scrapeJobId ?? null,
+      discoveryKeyword: profile.discoveryKeyword ?? null,
+      discoveryCity: profile.discoveryCity ?? profile.city ?? null,
+      acquisitionCostUsd: profile.acquisitionCostUsd != null ? profile.acquisitionCostUsd : null,
+      acquisitionCostBreakdown: profile.acquisitionCostBreakdown ? (profile.acquisitionCostBreakdown as Prisma.InputJsonValue) : Prisma.DbNull,
+      messageVariant: profile.messageVariant ?? null,
       possibleDuplicateOfLeadId: isSoft ? classification.leadId : null,
       possibleDuplicateReason: isSoft ? "WEBSITE_KEY" : null,
       dedupFlaggedAt: isSoft ? new Date() : null,
+      isDryRun: input.isDryRun ?? false,
     };
 
     const extras = input.extraCreateFields?.(profile, index) ?? {};

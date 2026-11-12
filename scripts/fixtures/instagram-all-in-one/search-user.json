@@ -1,0 +1,51 @@
+[
+  {
+    "username": "toronto_dental_studio",
+    "fullName": "Toronto Dental Studio",
+    "biography": "Cosmetic & family dentistry in Toronto. Book online \u2193",
+    "followersCount": 4820,
+    "followsCount": 210,
+    "postsCount": 186,
+    "isBusinessAccount": true,
+    "businessCategoryName": "Dentist",
+    "verified": false,
+    "private": false,
+    "externalUrl": "https://torontodentalstudio.example.com",
+    "locationName": "Toronto, Ontario",
+    "latestPosts": [
+      {
+        "caption": "Smile makeover results",
+        "timestamp": "2026-10-28T15:20:00.000Z",
+        "likesCount": 142,
+        "commentsCount": 9
+      },
+      {
+        "caption": "Meet the team",
+        "timestamp": "2026-10-21T11:05:00.000Z",
+        "likesCount": 98,
+        "commentsCount": 4
+      }
+    ]
+  },
+  {
+    "username": "vancouver_skin_clinic",
+    "fullName": "Vancouver Skin Clinic",
+    "biography": "Medical aesthetics and skin health. 1200 Robson St, Vancouver.",
+    "followersCount": 9100,
+    "followsCount": 380,
+    "postsCount": 240,
+    "isBusinessAccount": true,
+    "businessCategoryName": "Skin Care Service",
+    "verified": true,
+    "private": false,
+    "externalUrl": "https://vancouverskinclinic.example.com",
+    "latestPosts": [
+      {
+        "caption": "Fall treatment menu",
+        "timestamp": "2026-11-01T09:00:00.000Z",
+        "likesCount": 210,
+        "commentsCount": 12
+      }
+    ]
+  }
+]

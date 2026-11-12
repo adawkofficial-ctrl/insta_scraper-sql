@@ -24,7 +24,31 @@ const projectRoot = path.resolve(__dirname);
 const ignoredWatchPattern =
   /(?:^|[/\\])(?:node_modules|\.git|\.next|System Volume Information|\$Recycle\.Bin|Config\.Msi|Recovery)(?:[/\\]|$)|^[a-zA-Z]:[/\\]?$|^[a-zA-Z]:[/\\][^/\\]+$/;
 
+if (process.env.NODE_ENV === "production") {
+  const authSecret = process.env.AUTH_SECRET;
+  if (!authSecret || authSecret.length < 32) {
+    throw new Error("Production error: AUTH_SECRET must be configured and at least 32 characters.");
+  }
+  const adminPassword = process.env.ADMIN_PASSWORD;
+  const weakPasswords = ["admin", "password", "12345678", "AdminPass2026!Secure", "Admin123!", "ChangeMe123!"];
+  if (adminPassword && weakPasswords.includes(adminPassword)) {
+    throw new Error("Production error: ADMIN_PASSWORD cannot use default/weak values in production.");
+  }
+  if (process.env.DISABLE_AUTH_RATE_LIMIT && process.env.DISABLE_AUTH_RATE_LIMIT !== "0" && process.env.DISABLE_AUTH_RATE_LIMIT !== "false") {
+    throw new Error("Production error: DISABLE_AUTH_RATE_LIMIT cannot be enabled in production.");
+  }
+  if (process.env.COOKIE_SECURE === "false" || process.env.COOKIE_SECURE === "0") {
+    throw new Error("Production error: COOKIE_SECURE cannot be false in production (HTTPS required).");
+  }
+}
+
 const nextConfig: NextConfig = {
+  env: {
+    NEXT_PUBLIC_MAX_LEAD_LIMIT: process.env.MAX_LEAD_LIMIT ?? "100",
+    NEXT_PUBLIC_MAX_PROFILE_BATCH: process.env.MAX_PROFILE_BATCH_SIZE ?? "1000",
+    MAX_LEAD_LIMIT: process.env.MAX_LEAD_LIMIT ?? "100",
+    MAX_PROFILE_BATCH_SIZE: process.env.MAX_PROFILE_BATCH_SIZE ?? "1000",
+  },
   outputFileTracingRoot: projectRoot,
   turbopack: {
     root: projectRoot,

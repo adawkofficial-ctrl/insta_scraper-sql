@@ -23,6 +23,8 @@ import {
   notifyLeadReplied,
   notifySenderStatusChange,
 } from "../notifications/notification-triggers";
+import { processInboundReplyOutcome } from "../analytics/lead-event-service";
+import { handleInboundReplyForFollowUps } from "../messaging/follow-up-service";
 
 /**
  * Global hook emitted whenever an inbound message is successfully processed
@@ -37,19 +39,45 @@ export async function onLeadReplied(leadId: string, messageId: string): Promise<
     messageId,
   });
 
-  // 1. Classify reply intent
+  // 1. Classify reply intent (disabled by default; enabled only if ENABLE_AI_REPLY_CLASSIFICATION === "true")
+  const aiEnabled = process.env.ENABLE_AI_REPLY_CLASSIFICATION === "true";
   let classification = null;
+  if (aiEnabled) {
+    try {
+      classification = await classifyReply({ leadId, messageId });
+    } catch (err) {
+      logger.warn("[LEAD_REPLIED] classification failed in hook", {
+        leadId,
+        messageId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
+
+  // 2. Track outcome event, categorize reply, and update lead status
   try {
-    classification = await classifyReply({ leadId, messageId });
+    const prisma = getPrismaClient();
+    const rawMessage = await prisma.message.findUnique({
+      where: { id: messageId },
+      select: { messageText: true, channel: true },
+    });
+    await processInboundReplyOutcome({
+      leadId,
+      messageId,
+      replyText: rawMessage?.messageText ?? "",
+      channel: rawMessage?.channel ?? MessageChannel.INSTAGRAM,
+      aiIntent: classification?.intent ?? null,
+      actor: "system:webhook",
+    });
   } catch (err) {
-    logger.warn("[LEAD_REPLIED] classification failed in hook", {
+    logger.warn("[LEAD_REPLIED] outcome event processing failed in hook", {
       leadId,
       messageId,
       error: err instanceof Error ? err.message : String(err),
     });
   }
 
-  // 2. Advance lead status if classification succeeded
+  // 3. Advance lead status if classification succeeded
   if (classification && classification.intent) {
     try {
       await applyIntentToLeadStatus({
@@ -58,16 +86,16 @@ export async function onLeadReplied(leadId: string, messageId: string): Promise<
         interestLevel: classification.interestLevel,
         actor: "system:reply_classifier",
       });
-    } catch (err) {
-      logger.warn("[LEAD_REPLIED] lead status update failed in hook", {
+    } catch (applyErr) {
+      logger.warn("[LEAD_REPLIED] lead status update failed", {
         leadId,
         messageId,
-        error: err instanceof Error ? err.message : String(err),
+        error: applyErr instanceof Error ? applyErr.message : String(applyErr),
       });
     }
   }
 
-  // 3. Conditionally generate suggested reply draft for reply-worthy intents
+  // 4. Conditionally generate suggested reply draft for reply-worthy intents
   if (classification && classification.intent && REPLY_WORTHY_INTENTS.has(classification.intent)) {
     try {
       await generateReplyDraft({ leadId, messageId });
@@ -332,8 +360,13 @@ export async function handleInboundMessageWebhook(
     (typeof body.id === "string" ? body.id : null)
   )?.trim();
 
+  const messageObj =
+    body.message && typeof body.message === "object" ? (body.message as Record<string, unknown>) : null;
+
   const rawMessageText = (
     (typeof body.message === "string" ? body.message : null) ||
+    (messageObj && typeof messageObj.text === "string" ? messageObj.text : null) ||
+    (messageObj && typeof messageObj.content === "string" ? messageObj.content : null) ||
     (typeof body.text === "string" ? body.text : null) ||
     (typeof body.content === "string" ? body.content : "")
   );
@@ -654,6 +687,20 @@ export async function handleInboundMessageWebhook(
   // 7d. Fire onLeadReplied hook
   if (transitionFired || postRepliedStatuses.includes(matchedLead.status)) {
     await onLeadReplied(matchedLead.id, messageRecord.id);
+  }
+
+  // 7d.2 Cancel pending follow-ups & handle stop keywords
+  try {
+    await handleInboundReplyForFollowUps(
+      matchedLead.id,
+      rawMessageText,
+      effectiveUserId,
+    );
+  } catch (followUpErr) {
+    logger.warn("[WEBHOOK] handleInboundReplyForFollowUps failed", {
+      leadId: matchedLead.id,
+      error: followUpErr instanceof Error ? followUpErr.message : String(followUpErr),
+    });
   }
 
   // 7e. Mark webhook event processed

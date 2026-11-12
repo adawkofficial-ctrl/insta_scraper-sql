@@ -4,6 +4,7 @@ import bcrypt from "bcryptjs";
 import { SignJWT, jwtVerify } from "jose";
 import { getPrismaClient } from "@/lib/db/prisma";
 import { BadRequestError, ConflictError, UnauthorizedError } from "@/lib/errors";
+import { getAdminCredentials } from "@/lib/env";
 import {
   SESSION_COOKIE_NAME,
   SESSION_COOKIE_OPTIONS,
@@ -17,6 +18,7 @@ export type SafeUser = {
   email: string;
   name: string | null;
   image: string | null;
+  role: string;
   createdAt: Date;
 };
 
@@ -24,6 +26,7 @@ export type SessionPayload = {
   sub: string; // User ID
   email: string;
   name?: string | null;
+  role?: string;
 };
 
 // Standard RFC 5322 compliant email regex
@@ -43,7 +46,11 @@ export async function comparePassword(password: string, hash: string): Promise<b
 
 export async function createSessionToken(payload: SessionPayload): Promise<string> {
   const secretKey = getAuthSecretBytes();
-  return new SignJWT({ email: payload.email, name: payload.name })
+  return new SignJWT({
+    email: payload.email,
+    name: payload.name,
+    role: payload.role ?? "USER",
+  })
     .setSubject(payload.sub)
     .setProtectedHeader({ alg: "HS256" })
     .setIssuedAt()
@@ -67,6 +74,7 @@ export async function verifySessionToken(token: string): Promise<SessionPayload 
       sub: payload.sub,
       email: typeof payload.email === "string" ? payload.email : "",
       name: typeof payload.name === "string" ? payload.name : null,
+      role: typeof payload.role === "string" ? payload.role : "USER",
     };
   } catch {
     return null;
@@ -77,12 +85,14 @@ export async function registerUser(input: {
   email?: string;
   password?: string;
   name?: string;
+  role?: string;
 }): Promise<{ user: SafeUser; token: string }> {
   const prisma = getPrismaClient();
 
   const email = (input.email || "").trim().toLowerCase();
   const password = input.password || "";
   const name = input.name ? input.name.trim().slice(0, 100) : null;
+  const role = input.role === "ADMIN" ? "ADMIN" : "USER";
 
   if (!email || email.length > 254 || !EMAIL_REGEX.test(email)) {
     throw new BadRequestError("INVALID_EMAIL", "A valid email address is required.");
@@ -118,12 +128,14 @@ export async function registerUser(input: {
       email,
       passwordHash,
       name,
+      role,
     },
     select: {
       id: true,
       email: true,
       name: true,
       image: true,
+      role: true,
       createdAt: true,
     },
   });
@@ -132,9 +144,67 @@ export async function registerUser(input: {
     sub: user.id,
     email: user.email,
     name: user.name,
+    role: user.role,
   });
 
   return { user, token };
+}
+
+export async function ensureAdminUser(): Promise<SafeUser> {
+  const prisma = getPrismaClient();
+  const adminCreds = getAdminCredentials();
+  const existing = await prisma.user.findUnique({
+    where: { email: adminCreds.email },
+  });
+
+  const passwordHash = await hashPassword(adminCreds.password);
+
+  if (existing) {
+    const isMatch = await comparePassword(adminCreds.password, existing.passwordHash);
+    if (!isMatch || existing.role !== "ADMIN") {
+      const updated = await prisma.user.update({
+        where: { id: existing.id },
+        data: {
+          passwordHash,
+          role: "ADMIN",
+        },
+      });
+      return {
+        id: updated.id,
+        email: updated.email,
+        name: updated.name,
+        image: updated.image,
+        role: updated.role,
+        createdAt: updated.createdAt,
+      };
+    }
+    return {
+      id: existing.id,
+      email: existing.email,
+      name: existing.name,
+      image: existing.image,
+      role: existing.role,
+      createdAt: existing.createdAt,
+    };
+  }
+
+  const created = await prisma.user.create({
+    data: {
+      email: adminCreds.email,
+      passwordHash,
+      name: "System Administrator",
+      role: "ADMIN",
+    },
+  });
+
+  return {
+    id: created.id,
+    email: created.email,
+    name: created.name,
+    image: created.image,
+    role: created.role,
+    createdAt: created.createdAt,
+  };
 }
 
 export async function loginUser(input: {
@@ -154,19 +224,48 @@ export async function loginUser(input: {
     throw new UnauthorizedError("INVALID_CREDENTIALS", "Invalid email or password.");
   }
 
-  const userRecord = await prisma.user.findUnique({
+  const adminCreds = getAdminCredentials();
+  const isAdminEmail = email === adminCreds.email;
+
+  let userRecord = await prisma.user.findUnique({
     where: { email },
   });
 
   if (!userRecord) {
-    // Run dummy compare to mitigate user enumeration timing attacks
-    await comparePassword(password, DUMMY_HASH);
-    throw new UnauthorizedError("INVALID_CREDENTIALS", "Invalid email or password.");
-  }
-
-  const isMatch = await comparePassword(password, userRecord.passwordHash);
-  if (!isMatch) {
-    throw new UnauthorizedError("INVALID_CREDENTIALS", "Invalid email or password.");
+    // If logging in with the configured admin credentials from .env, auto-provision
+    if (isAdminEmail && password === adminCreds.password) {
+      const passwordHash = await hashPassword(adminCreds.password);
+      userRecord = await prisma.user.create({
+        data: {
+          email: adminCreds.email,
+          passwordHash,
+          name: "System Administrator",
+          role: "ADMIN",
+        },
+      });
+    } else {
+      // Run dummy compare to mitigate user enumeration timing attacks
+      await comparePassword(password, DUMMY_HASH);
+      throw new UnauthorizedError("INVALID_CREDENTIALS", "Invalid email or password.");
+    }
+  } else if (isAdminEmail && password === adminCreds.password) {
+    // Admin password or role may have been updated in .env; sync to database
+    const isMatch = await comparePassword(password, userRecord.passwordHash);
+    if (!isMatch || userRecord.role !== "ADMIN") {
+      const passwordHash = await hashPassword(adminCreds.password);
+      userRecord = await prisma.user.update({
+        where: { id: userRecord.id },
+        data: {
+          passwordHash,
+          role: "ADMIN",
+        },
+      });
+    }
+  } else {
+    const isMatch = await comparePassword(password, userRecord.passwordHash);
+    if (!isMatch) {
+      throw new UnauthorizedError("INVALID_CREDENTIALS", "Invalid email or password.");
+    }
   }
 
   const user: SafeUser = {
@@ -174,6 +273,7 @@ export async function loginUser(input: {
     email: userRecord.email,
     name: userRecord.name,
     image: userRecord.image,
+    role: userRecord.role || "USER",
     createdAt: userRecord.createdAt,
   };
 
@@ -181,6 +281,7 @@ export async function loginUser(input: {
     sub: user.id,
     email: user.email,
     name: user.name,
+    role: user.role,
   });
 
   return { user, token };
@@ -196,6 +297,7 @@ export async function getUserById(userId: string): Promise<SafeUser | null> {
       email: true,
       name: true,
       image: true,
+      role: true,
       createdAt: true,
     },
   });

@@ -38,6 +38,7 @@ import {
   type MessagingProvider,
   type MessagingProviderStatus,
 } from "../src/lib/services/messaging";
+import { setSendGateClock } from "../src/lib/services/messaging/send-gate";
 import { setMessagingProvider, activeDispatches } from "../src/lib/services/messaging/messaging-service";
 import { POST as sendReplyRoute } from "../src/app/api/drafts/[draftId]/send-reply/route";
 
@@ -104,6 +105,9 @@ class MockMessagingProvider implements MessagingProvider {
 }
 
 async function main() {
+  let fakeClockTime = new Date("2026-06-10T14:00:00Z");
+  setSendGateClock(() => fakeClockTime);
+
   console.log("=================================================================");
   console.log("   STEP 9: APPROVED REPLY DRAFT SEND PIPELINE TEST SUITE        ");
   console.log("=================================================================");
@@ -241,6 +245,28 @@ async function main() {
         promptVersion: "reply-draft-v1",
       },
     });
+
+    // Explicit OUTSIDE_WORKING_HOURS check with fake clock
+    setSendGateClock(() => new Date("2026-06-10T03:00:00Z"));
+    let replyBlockedByHours = false;
+    let replyRetryAtSet = false;
+    try {
+      await sendApprovedReply({
+        userId: testUser.id,
+        draftId: replyDraft1.id,
+      });
+    } catch (err: unknown) {
+      const errorObj = err as { code?: string; userMessage?: string };
+      if (errorObj.code === "OUTSIDE_WORKING_HOURS") {
+        replyBlockedByHours = true;
+        if (errorObj.userMessage && errorObj.userMessage.includes("retry after")) {
+          replyRetryAtSet = true;
+        }
+      }
+    }
+    check(replyBlockedByHours, "sendApprovedReply blocked when clock is OUTSIDE_WORKING_HOURS (03:00 UTC)");
+    check(replyRetryAtSet, "OUTSIDE_WORKING_HOURS reply error message includes retryAt time");
+    setSendGateClock(() => fakeClockTime);
 
     mockProvider.sentRequests = [];
     const sendResult1 = await sendApprovedReply({
@@ -433,7 +459,7 @@ async function main() {
         userId: testUser.id,
         channel: DncChannel.INSTAGRAM,
         identifierType: DncIdentifierType.USERNAME,
-        identifierNormalized: leadDnc.username.toLowerCase(),
+        identifierNormalized: leadDnc.username!.toLowerCase(),
         reason: "User opted out",
         source: DncSource.MANUAL,
       },
@@ -808,6 +834,7 @@ async function main() {
       process.exit(1);
     }
   } finally {
+    setSendGateClock(null);
     // Reset messaging provider
     setMessagingProvider(null);
 

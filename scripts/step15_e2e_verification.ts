@@ -350,7 +350,7 @@ async function runTest() {
   }
 
   // Deduplication check
-  const usernames = dbLeads.map((l) => l.username.toLowerCase());
+  const usernames = dbLeads.map((l) => (l.username ?? "").toLowerCase());
   const uniqueUsernames = new Set(usernames);
   if (uniqueUsernames.size === usernames.length) {
     report.deduplication = true;

@@ -12,6 +12,8 @@
  */
 
 import type { LeadProfile } from "@/lib/types";
+import { isCategoryAllowed } from "./category-synonyms";
+import { findMatchedNegativeKeyword } from "./negative-keywords";
 
 export type RelevanceMatch = "MATCHED" | "NOT_MATCHED" | "UNKNOWN";
 
@@ -28,7 +30,11 @@ export type DiscoverySkipReason =
   | "ENRICHMENT_FAILED"
   | "DNC_SUPPRESSED"
   | "PRIVATE_PROFILE"
-  | "MALFORMED";
+  | "MALFORMED"
+  | "PRE_ENRICHMENT_REJECTED"
+  | "ENRICHMENT_CRITERIA_REJECTED"
+  | "LOCATION_UNVERIFIED"
+  | "AI_UNAVAILABLE";
 
 export const DISCOVERY_SKIP_REASONS: readonly DiscoverySkipReason[] = [
   "IRRELEVANT_CATEGORY",
@@ -44,6 +50,10 @@ export const DISCOVERY_SKIP_REASONS: readonly DiscoverySkipReason[] = [
   "DNC_SUPPRESSED",
   "PRIVATE_PROFILE",
   "MALFORMED",
+  "PRE_ENRICHMENT_REJECTED",
+  "ENRICHMENT_CRITERIA_REJECTED",
+  "LOCATION_UNVERIFIED",
+  "AI_UNAVAILABLE",
 ];
 
 export type DiscoverySkipCounts = Record<DiscoverySkipReason, number>;
@@ -136,8 +146,8 @@ export const DEFAULT_DISCOVERY_RELEVANCE_POLICY: DiscoveryRelevancePolicy = {
   nationalScaleFollowerThreshold: DEFAULT_NATIONAL_SCALE_FOLLOWER_THRESHOLD,
   nationalCategories: [...DEFAULT_NATIONAL_CATEGORIES],
   intentStrictness: "moderate",
-  useAiRelevanceCheck: false,
-  aiRelevanceThreshold: 60,
+  useAiRelevanceCheck: true,
+  aiRelevanceThreshold: 70,
 };
 
 export type RelevanceCampaignContext = {
@@ -159,14 +169,40 @@ export type ProfileRelevance = {
   matchedKeyPhrases?: string[];
   isNationalScale?: boolean;
   isNationalScaleLocationMismatch?: boolean;
+  declaredCategory?: string | null;
+  negativeKeywordMatched?: string | null;
   aiEvaluated?: boolean;
   aiScore?: number;
   aiReason?: string;
+  accountType?: string;
+};
+
+export type RelevanceGate =
+  | "prefilter"
+  | "enrichment_criteria"
+  | "category"
+  | "negative_keyword"
+  | "intent"
+  | "location"
+  | "ai_relevance";
+
+export type LeadRejectionEntry = {
+  username: string;
+  gate: RelevanceGate;
+  reason: DiscoverySkipReason;
+  matchedTerm?: string;
+  aiScore?: number;
 };
 
 export type RelevanceDecision =
   | { relevant: true }
-  | { relevant: false; reason: DiscoverySkipReason };
+  | {
+      relevant: false;
+      reason: DiscoverySkipReason;
+      gate?: RelevanceGate;
+      matchedTerm?: string;
+      detail?: string;
+    };
 
 // ---------------------------------------------------------------------------
 // Term extraction
@@ -372,6 +408,45 @@ export const RELEVANCE_STOPWORDS = new Set([
   "clients",
   "customer",
   "customers",
+]);
+
+export const GENERIC_INTENT_WORDS = new Set([
+  "digital",
+  "online",
+  "presence",
+  "media",
+  "content",
+  "services",
+  "service",
+  "solutions",
+  "solution",
+  "business",
+  "businesses",
+  "company",
+  "agency",
+  "center",
+  "centre",
+  "centers",
+  "management",
+  "group",
+  "official",
+  "page",
+  "product",
+  "products",
+  "practice",
+  "practices",
+  "patient",
+  "patients",
+  "client",
+  "clients",
+  "customer",
+  "customers",
+  "recommend",
+  "recommended",
+  "sell",
+  "selling",
+  "offer",
+  "offering",
 ]);
 
 /**
@@ -666,8 +741,8 @@ export function extractIntentKeyPhrases(
   return phrases;
 }
 
-export function buildCategoryTerms(category: string | null): string[] {
-  if (category === null || category.trim().length === 0) {
+export function buildCategoryTerms(category: string | null | undefined): string[] {
+  if (!category || category.trim().length === 0) {
     return [];
   }
 
@@ -716,8 +791,8 @@ export const BROAD_COUNTRY_TOKENS: ReadonlySet<string> = new Set([
   "international",
 ]);
 
-export function buildLocationTerms(location: string | null): string[] {
-  if (location === null || location.trim().length === 0) {
+export function buildLocationTerms(location: string | null | undefined): string[] {
+  if (!location || location.trim().length === 0) {
     return [];
   }
 
@@ -899,27 +974,6 @@ export function evaluateProfileRelevance(
   const matchedPhrases = findMatchedPhrases(coreHaystack, intentPhrases);
   const multiWordPhraseMatch = matchedPhrases.some((p) => p.includes(" "));
 
-  const GENERIC_INTENT_WORDS = new Set([
-    "digital",
-    "online",
-    "presence",
-    "media",
-    "content",
-    "services",
-    "solutions",
-    "business",
-    "businesses",
-    "company",
-    "agency",
-    "center",
-    "centre",
-    "centers",
-    "management",
-    "group",
-    "official",
-    "page",
-  ]);
-
   const matchedDomainCoreTerms = matchedCoreIntentTerms.filter(
     (t) => !GENERIC_INTENT_WORDS.has(t),
   );
@@ -981,22 +1035,64 @@ export function evaluateProfileRelevance(
     intentMatch = "NOT_MATCHED";
   }
 
-  // Category is evaluated against the profile's OWN declared category only, so a
-  // musician biography that happens to mention "fitness" is not mislabelled.
+  // 1. Check negative keywords across username, full name, bio, and category
+  const rawDeclaredCategory = profile.businessCategoryName || profile.category || null;
+  const gmapsCategory =
+    profile.gmapsCategory ||
+    (Array.isArray(profile.gmapsCategories) && profile.gmapsCategories.length > 0
+      ? profile.gmapsCategories[0]
+      : null);
+
+  const allowedCampaignTerms = new Set<string>([
+    ...intentTerms,
+    ...categoryTerms,
+  ]);
+  const negativeKeywordMatched = findMatchedNegativeKeyword(
+    [
+      profile.username,
+      profile.fullName,
+      profile.biography,
+      rawDeclaredCategory,
+      gmapsCategory,
+    ],
+    null,
+    allowedCampaignTerms,
+  );
+
+  // 2. Category is evaluated with isCategoryAllowed against the campaign's category
+  let categoryMatch: RelevanceMatch;
+  let effectiveDeclaredCategory = rawDeclaredCategory;
+
+  if (!campaign.category || campaign.category.trim().length === 0) {
+    categoryMatch = "UNKNOWN";
+  } else if (gmapsCategory && gmapsCategory.trim().length > 0) {
+    // If Google Maps provides a category, use it as a verified signal
+    const gmapsAllowed = isCategoryAllowed(gmapsCategory, campaign.category);
+    if (!gmapsAllowed) {
+      categoryMatch = "NOT_MATCHED";
+      effectiveDeclaredCategory = gmapsCategory;
+    } else {
+      categoryMatch = "MATCHED";
+      effectiveDeclaredCategory = gmapsCategory;
+    }
+  } else if (!rawDeclaredCategory || rawDeclaredCategory.trim().length === 0) {
+    // If profile category is null/empty, do NOT auto-reject on category; defer to negative keywords + AI gate.
+    categoryMatch = "UNKNOWN";
+  } else {
+    const allowed = isCategoryAllowed(rawDeclaredCategory, campaign.category);
+    categoryMatch = allowed ? "MATCHED" : "NOT_MATCHED";
+  }
+
   const matchedCategoryTerms = findMatchedTerms(
     profileCategoryText,
     categoryTerms,
   );
   const matchedLocationTerms = findMatchedTerms(fullHaystack, locationTerms);
 
-  const categoryMatch: RelevanceMatch =
-    categoryTerms.length === 0
-      ? "UNKNOWN"
-      : matchedCategoryTerms.length > 0
-        ? "MATCHED"
-        : profileCategoryText.length > 0
-          ? "NOT_MATCHED"
-          : "UNKNOWN";
+  // Set location from Maps if not present on profile
+  if (!profile.location && (profile.gmapsCity || profile.gmapsAddress)) {
+    profile.location = profile.gmapsCity || profile.gmapsAddress || null;
+  }
 
   const profileLocationText = normalizeRelevanceText(profile.location);
   const profileBioText = normalizeRelevanceText(profile.biography);
@@ -1023,8 +1119,17 @@ export function evaluateProfileRelevance(
   const isNationalScaleLocationMismatch =
     hasLocationConstraint && isNationalScale && !explicitLocationMatched;
 
-  const locationMatch: RelevanceMatch =
-    locationTerms.length === 0
+  const isFromGoogleMaps = Boolean(
+    profile.gmapsCity ||
+    profile.gmapsAddress ||
+    profile.sourceProvider === "google_maps" ||
+    (profile.rawProfileData &&
+      (profile.rawProfileData as Record<string, unknown>).sourceProvider === "google_maps")
+  );
+
+  const locationMatch: RelevanceMatch = isFromGoogleMaps
+    ? "MATCHED"
+    : locationTerms.length === 0
       ? "UNKNOWN"
       : explicitLocationMatched
         ? "MATCHED"
@@ -1049,6 +1154,8 @@ export function evaluateProfileRelevance(
     matchedKeyPhrases: matchedPhrases,
     isNationalScale,
     isNationalScaleLocationMismatch,
+    declaredCategory: effectiveDeclaredCategory,
+    negativeKeywordMatched,
   };
 }
 
@@ -1056,6 +1163,62 @@ export function decideRelevance(
   relevance: ProfileRelevance,
   policy: DiscoveryRelevancePolicy = DEFAULT_DISCOVERY_RELEVANCE_POLICY,
 ): RelevanceDecision {
+  // Gate 1: Negative keywords check
+  if (relevance.negativeKeywordMatched) {
+    return {
+      relevant: false,
+      reason: "IRRELEVANT_INTENT",
+      gate: "negative_keyword",
+      matchedTerm: relevance.negativeKeywordMatched,
+      detail: `Matched negative keyword "${relevance.negativeKeywordMatched}"`,
+    };
+  }
+
+  // Gate 2: HARD Category Gate
+  // If profile category is present and NOT in the allowed set, reject immediately, even if intent terms match.
+  // If profile category was null/empty, categoryMatch is UNKNOWN and passes to subsequent gates.
+  if (relevance.categoryMatch === "NOT_MATCHED") {
+    return {
+      relevant: false,
+      reason: "IRRELEVANT_CATEGORY",
+      gate: "category",
+      matchedTerm: relevance.declaredCategory ?? undefined,
+      detail: `Declared category "${relevance.declaredCategory ?? "unknown"}" is not in the allowed category set`,
+    };
+  }
+
+  // Gate 3: Location checks
+  if (relevance.isNationalScaleLocationMismatch) {
+    return {
+      relevant: false,
+      reason: "IRRELEVANT_LOCATION_NATIONAL_SCALE",
+      gate: "location",
+      detail: "National scale media account without local presence",
+    };
+  }
+
+  if (relevance.locationMatch === "NOT_MATCHED") {
+    return {
+      relevant: false,
+      reason: "IRRELEVANT_LOCATION",
+      gate: "location",
+      detail: "Declared location conflicts with campaign location",
+    };
+  }
+
+  if (
+    relevance.locationMatch === "UNKNOWN" &&
+    (policy.requireLocationMatch || !policy.allowUnknownLocation)
+  ) {
+    return {
+      relevant: false,
+      reason: "IRRELEVANT_LOCATION",
+      gate: "location",
+      detail: "Location unknown and policy does not permit unknown location",
+    };
+  }
+
+  // Gate 4: Topical matching
   let topicalMatched: boolean;
   if (policy.requireIntentMatch && policy.requireCategoryMatch) {
     topicalMatched =
@@ -1067,9 +1230,6 @@ export function decideRelevance(
     topicalMatched = relevance.categoryMatch === "MATCHED";
   } else {
     // Default policy:
-    // If a campaign explicitly specified intent, an intent MATCHED candidate qualifies topically
-    // (even if its Instagram declared category tag is broad/different, e.g. "Gym" for "Lifestyle").
-    // A profile that is NOT_MATCHED on the stated intent fails topical matching.
     if (relevance.intentTerms.length > 0) {
       topicalMatched = relevance.intentMatch === "MATCHED";
     } else {
@@ -1079,33 +1239,15 @@ export function decideRelevance(
 
   if (topicalMatched && !policy.allowUnknownCategory) {
     if (relevance.categoryMatch !== "MATCHED") {
-      return { relevant: false, reason: "INSUFFICIENT_RELEVANCE_DATA" };
+      return { relevant: false, reason: "INSUFFICIENT_RELEVANCE_DATA", gate: "category" };
     }
   }
 
   if (!topicalMatched) {
-    if (relevance.categoryMatch === "NOT_MATCHED") {
-      return { relevant: false, reason: "IRRELEVANT_CATEGORY" };
-    }
     if (relevance.intentMatch === "NOT_MATCHED") {
-      return { relevant: false, reason: "IRRELEVANT_INTENT" };
+      return { relevant: false, reason: "IRRELEVANT_INTENT", gate: "intent" };
     }
-    return { relevant: false, reason: "INSUFFICIENT_RELEVANCE_DATA" };
-  }
-
-  if (relevance.isNationalScaleLocationMismatch) {
-    return { relevant: false, reason: "IRRELEVANT_LOCATION_NATIONAL_SCALE" };
-  }
-
-  if (relevance.locationMatch === "NOT_MATCHED") {
-    return { relevant: false, reason: "IRRELEVANT_LOCATION" };
-  }
-
-  if (
-    relevance.locationMatch === "UNKNOWN" &&
-    (policy.requireLocationMatch || !policy.allowUnknownLocation)
-  ) {
-    return { relevant: false, reason: "IRRELEVANT_LOCATION" };
+    return { relevant: false, reason: "INSUFFICIENT_RELEVANCE_DATA", gate: "intent" };
   }
 
   return { relevant: true };
@@ -1172,7 +1314,12 @@ export type CollectRelevantLeadsInput = {
   checkAiRelevance?: (
     profile: LeadProfile,
     campaign: RelevanceCampaignContext,
-  ) => Promise<{ relevant: boolean; reason?: string }>;
+  ) => Promise<{
+    relevant: boolean;
+    score?: number;
+    reason?: string;
+    accountType?: string;
+  }>;
   onBatch?: (info: CollectRelevantLeadsBatchInfo) => void;
 };
 
@@ -1190,7 +1337,29 @@ export type CollectRelevantLeadsResult = {
   candidatesEnriched: number;
   enrichmentFailures: number;
   skipCounts: DiscoverySkipCounts;
+  rejectionLog: LeadRejectionEntry[];
+  gateRejections: Record<string, number>;
 };
+
+async function mapConcurrent<T, R>(
+  items: T[],
+  concurrency: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let index = 0;
+  const workers = Array.from(
+    { length: Math.min(concurrency, items.length) },
+    async () => {
+      while (index < items.length) {
+        const i = index++;
+        results[i] = await fn(items[i]);
+      }
+    },
+  );
+  await Promise.all(workers);
+  return results;
+}
 
 /**
  * Enriches candidates in batches and keeps only those that pass the relevance
@@ -1213,6 +1382,17 @@ export async function collectRelevantLeads(
   const skipCounts = createEmptySkipCounts();
   const relevant: LeadProfile[] = [];
   const seenUsernames = new Set<string>();
+  const rejectionLog: LeadRejectionEntry[] = [];
+  const gateRejections: Record<string, number> = {
+    prefilter: 0,
+    category: 0,
+    negative_keyword: 0,
+    intent: 0,
+    location: 0,
+    ai_relevance: 0,
+    duplicate: 0,
+    other: 0,
+  };
 
   let candidatesProcessed = 0;
   let candidatesEnriched = 0;
@@ -1237,7 +1417,9 @@ export async function collectRelevantLeads(
 
     const enrichment = await input.enrich(batch);
     const returnedUsernames = new Set(
-      enrichment.profiles.map((profile) => profile.username.toLowerCase()),
+      enrichment.profiles
+        .map((profile) => profile.username?.toLowerCase())
+        .filter((u): u is string => Boolean(u)),
     );
     const missing = batch.filter(
       (username) => !returnedUsernames.has(username.toLowerCase()),
@@ -1247,15 +1429,20 @@ export async function collectRelevantLeads(
     skipCounts.ENRICHMENT_FAILED += failures;
     candidatesEnriched += enrichment.profiles.length;
 
+    const passingCheapProfiles: LeadProfile[] = [];
+
     for (const profile of enrichment.profiles) {
-      const username = profile.username.toLowerCase();
+      const username = (profile.username ?? "").toLowerCase();
+      if (!username) continue;
       if (seenUsernames.has(username)) {
         skipCounts.DUPLICATE += 1;
+        gateRejections.duplicate = (gateRejections.duplicate ?? 0) + 1;
+        rejectionLog.push({ username, gate: "intent", reason: "DUPLICATE" });
         continue;
       }
       seenUsernames.add(username);
 
-      if (relevant.length >= input.capacity) {
+      if (relevant.length + passingCheapProfiles.length >= input.capacity) {
         skipCounts.CAMPAIGN_CAPACITY_REACHED += 1;
         continue;
       }
@@ -1263,16 +1450,73 @@ export async function collectRelevantLeads(
       const evaluation = evaluateProfileRelevance(profile, input.campaign, policy);
       const decision = decideRelevance(evaluation, policy);
       if (decision.relevant) {
-        if (policy.useAiRelevanceCheck && input.checkAiRelevance) {
-          const aiCheck = await input.checkAiRelevance(profile, input.campaign);
-          if (!aiCheck.relevant) {
-            skipCounts.IRRELEVANT_INTENT += 1;
-            continue;
-          }
-        }
-        relevant.push(profile);
+        passingCheapProfiles.push(profile);
       } else {
         skipCounts[decision.reason] += 1;
+        const gate: RelevanceGate =
+          decision.gate ??
+          (decision.reason === "IRRELEVANT_CATEGORY"
+            ? "category"
+            : decision.reason === "IRRELEVANT_LOCATION"
+              ? "location"
+              : "intent");
+        gateRejections[gate] = (gateRejections[gate] ?? 0) + 1;
+        rejectionLog.push({
+          username,
+          gate,
+          reason: decision.reason,
+          matchedTerm: decision.matchedTerm,
+        });
+      }
+    }
+
+    if (passingCheapProfiles.length > 0) {
+      if (policy.useAiRelevanceCheck && input.checkAiRelevance) {
+        // Limited concurrency (5) for AI relevance verification
+        const aiResults = await mapConcurrent(passingCheapProfiles, 5, async (p) => {
+          try {
+            return await input.checkAiRelevance!(p, input.campaign);
+          } catch {
+            return {
+              relevant: false,
+              score: 0,
+              reason: "AI_UNAVAILABLE",
+              accountType: "other",
+            };
+          }
+        });
+
+        for (let i = 0; i < passingCheapProfiles.length; i++) {
+          const profile = passingCheapProfiles[i];
+          const aiCheck = aiResults[i];
+          if (relevant.length >= input.capacity) {
+            skipCounts.CAMPAIGN_CAPACITY_REACHED += 1;
+            continue;
+          }
+          if (aiCheck.relevant) {
+            relevant.push(profile);
+          } else {
+            const skipReason: DiscoverySkipReason =
+              aiCheck.reason === "AI_UNAVAILABLE" ? "AI_UNAVAILABLE" : "IRRELEVANT_INTENT";
+            skipCounts[skipReason] = (skipCounts[skipReason] ?? 0) + 1;
+            gateRejections.ai_relevance = (gateRejections.ai_relevance ?? 0) + 1;
+            rejectionLog.push({
+              username: profile.username?.toLowerCase() ?? "",
+              gate: "ai_relevance",
+              reason: skipReason,
+              matchedTerm: aiCheck.accountType ?? aiCheck.reason,
+              aiScore: aiCheck.score,
+            });
+          }
+        }
+      } else {
+        for (const profile of passingCheapProfiles) {
+          if (relevant.length >= input.capacity) {
+            skipCounts.CAMPAIGN_CAPACITY_REACHED += 1;
+            continue;
+          }
+          relevant.push(profile);
+        }
       }
     }
 
@@ -1296,5 +1540,225 @@ export async function collectRelevantLeads(
     candidatesEnriched,
     enrichmentFailures,
     skipCounts,
+    rejectionLog,
+    gateRejections,
   };
+}
+
+export type PreFilterResult =
+  | { action: "PROCEED" }
+  | {
+      action: "REJECT";
+      reason: DiscoverySkipReason;
+      underlyingReason?: DiscoverySkipReason;
+      detail?: string;
+    };
+
+/**
+ * Lightweight, conservative pre-enrichment relevance filter.
+ *
+ * Runs BEFORE expensive profile enrichment (the active enrichment actor),
+ * inspecting ONLY data already returned by the cheap search stage (e.g. bio,
+ * category, location, follower count).
+ *
+ * REJECT-ONLY DESIGN:
+ * - Can ONLY skip an obvious mismatch (saving an enrichment call).
+ * - Never declares a candidate "definitely relevant" — any candidate that passes
+ *   still undergoes authoritative post-enrichment validation in collectRelevantLeads.
+ * - Conservative by design: if data is missing, ambiguous, or bio < 15 chars,
+ *   it lets the candidate through (PROCEED) rather than risking a false rejection.
+ */
+export function prefilterCandidate(
+  candidate: {
+    username?: string | null;
+    profileUrl?: string | null;
+    fullName?: string | null;
+    biography?: string | null;
+    bio?: string | null;
+    category?: string | null;
+    businessCategoryName?: string | null;
+    location?: string | null;
+    followers?: number | null;
+    followersCount?: number | null;
+    externalUrl?: string | null;
+    website?: string | null;
+    businessAddress?: { city_name?: string } | null;
+    latestPosts?: Array<{ caption?: string | null; locationName?: string | null }> | LeadProfile["latestPosts"];
+    gmapsCategory?: string | null;
+    gmapsCategories?: string[] | null;
+    gmapsCity?: string | null;
+    gmapsAddress?: string | null;
+    sourceProvider?: string | null;
+  },
+  campaign: RelevanceCampaignContext,
+  policy: DiscoveryRelevancePolicy = DEFAULT_DISCOVERY_RELEVANCE_POLICY,
+): PreFilterResult {
+  const bio = candidate.biography?.trim() || candidate.bio?.trim() || "";
+  const cat =
+    candidate.gmapsCategory?.trim() ||
+    candidate.businessCategoryName?.trim() ||
+    candidate.category?.trim() ||
+    "";
+  const loc =
+    candidate.gmapsCity?.trim() ||
+    candidate.location?.trim() ||
+    candidate.businessAddress?.city_name?.trim() ||
+    "";
+  const followers = candidate.followers ?? candidate.followersCount ?? 0;
+
+  // 0. NEGATIVE KEYWORDS CHECK:
+  // Reject non-clinic accounts (staffing, consultant, student, car wash, etc.) before enrichment
+  const prefilterAllowedTerms = new Set<string>();
+  if (campaign.intent) {
+    for (const t of extractSignificantTerms(campaign.intent)) {
+      prefilterAllowedTerms.add(t);
+    }
+  }
+  if (campaign.category) {
+    for (const t of buildCategoryTerms(campaign.category)) {
+      prefilterAllowedTerms.add(t);
+    }
+  }
+
+  const negKw = findMatchedNegativeKeyword(
+    [candidate.username, candidate.fullName, bio, cat],
+    null,
+    prefilterAllowedTerms,
+  );
+  if (negKw) {
+    return {
+      action: "REJECT",
+      reason: "PRE_ENRICHMENT_REJECTED",
+      underlyingReason: "IRRELEVANT_INTENT",
+      detail: `Matched negative keyword "${negKw}"`,
+    };
+  }
+
+  // If candidate has NO metadata at all (e.g. only username), let through to enrichment
+  if (!bio && !cat && !loc && followers === 0) {
+    return { action: "PROCEED" };
+  }
+
+  // Pre-filter policy is strictly conservative:
+  // - Never requires location to match (absent location is UNKNOWN -> allowed).
+  // - Never requires category to match (absent category is UNKNOWN -> allowed).
+  const prefilterPolicy: DiscoveryRelevancePolicy = {
+    ...policy,
+    requireLocationMatch: false,
+    requireCategoryMatch: false,
+    allowUnknownLocation: true,
+    allowUnknownCategory: true,
+  };
+
+  const mockProfile: LeadProfile = {
+    username: candidate.username,
+    instagramId: null,
+    profileUrl:
+      candidate.profileUrl ?? `https://www.instagram.com/${candidate.username}/`,
+    fullName: candidate.fullName ?? null,
+    biography: bio || null,
+    bio: bio || null,
+    category: cat || null,
+    businessCategoryName: cat || null,
+    location: loc || null,
+    followers: followers || null,
+    followersCount: followers || null,
+    following: null,
+    followsCount: null,
+    postsCount: null,
+    profilePictureUrl: null,
+    profilePicUrl: null,
+    profilePicUrlHD: null,
+    isVerified: false,
+    verified: false,
+    isBusiness: false,
+    isBusinessAccount: false,
+    isPrivate: false,
+    externalUrl: candidate.externalUrl ?? null,
+    website: candidate.website ?? candidate.externalUrl ?? null,
+    socialLink: null,
+    socialPlatform: null,
+    email: null,
+    phone: null,
+    relatedProfiles: null,
+    gmapsCategory: candidate.gmapsCategory ?? null,
+    gmapsCategories: candidate.gmapsCategories ?? null,
+    gmapsCity: candidate.gmapsCity ?? null,
+    gmapsAddress: candidate.gmapsAddress ?? null,
+    sourceProvider: candidate.sourceProvider ?? null,
+    latestPosts: candidate.latestPosts
+      ? candidate.latestPosts.map((p) => ({
+          id: null,
+          shortCode: null,
+          url: null,
+          type: null,
+          caption: p?.caption ?? null,
+          likesCount: null,
+          commentsCount: null,
+          displayUrl: null,
+          timestamp: null,
+        }))
+      : null,
+    rawProfileData: null,
+    raw: null,
+    source: "apify",
+    scrapedAt: new Date().toISOString(),
+  };
+
+  const evaluation = evaluateProfileRelevance(
+    mockProfile,
+    campaign,
+    prefilterPolicy,
+  );
+
+  // 2. CLEAR LOCATION MISMATCH:
+  // If campaign has location constraint and candidate provided explicit location text
+  // that contradicts the target location, or is a national media account mismatch
+  if (campaign.location && evaluation.locationTerms.length > 0) {
+    if (evaluation.isNationalScaleLocationMismatch) {
+      return {
+        action: "REJECT",
+        reason: "PRE_ENRICHMENT_REJECTED",
+        underlyingReason: "IRRELEVANT_LOCATION_NATIONAL_SCALE",
+        detail: "National scale media/magazine account without local presence",
+      };
+    }
+    if (loc.length > 0 && evaluation.locationMatch === "NOT_MATCHED") {
+      return {
+        action: "REJECT",
+        reason: "PRE_ENRICHMENT_REJECTED",
+        underlyingReason: "IRRELEVANT_LOCATION",
+        detail: `Declared location "${loc}" conflicts with campaign location "${campaign.location}"`,
+      };
+    }
+  }
+
+  // 2. HARD CATEGORY CHECK:
+  // If campaign specified category and candidate declared category, check allowed category set
+  if (campaign.category && cat.length > 0) {
+    if (!isCategoryAllowed(cat, campaign.category)) {
+      return {
+        action: "REJECT",
+        reason: "PRE_ENRICHMENT_REJECTED",
+        underlyingReason: "IRRELEVANT_CATEGORY",
+        detail: `Declared category "${cat}" is not in the allowed category set for "${campaign.category}"`,
+      };
+    }
+  }
+
+  // 3. CLEAR INTENT MISMATCH:
+  // Only reject for intent when candidate has a meaningful bio (>= 15 chars) AND
+  // intentMatch is NOT_MATCHED (0 domain terms, 0 phrases, 0 concepts)
+  if (campaign.intent && evaluation.intentTerms.length > 0) {
+    if (bio.length >= 15 && evaluation.intentMatch === "NOT_MATCHED") {
+      return {
+        action: "REJECT",
+        reason: "PRE_ENRICHMENT_REJECTED",
+        underlyingReason: "IRRELEVANT_INTENT",
+        detail: `Bio (${bio.length} chars) has zero overlap with campaign intent`,
+      };
+    }
+  }
+
+  return { action: "PROCEED" };
 }

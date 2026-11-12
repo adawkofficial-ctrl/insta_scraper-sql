@@ -674,6 +674,33 @@ export function CampaignExecutionControlPanel({
         </div>
       )}
 
+      {/* 5b. Safe Outbound Pacing & Estimated Completion */}
+      {status?.estimatedCompletion && (
+        <div
+          data-testid="campaign-estimated-completion"
+          className="rounded-xl border border-indigo-500/20 bg-indigo-950/20 p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs"
+        >
+          <div className="flex items-center gap-2">
+            <div className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
+            <span className="font-semibold text-zinc-200">
+              Safe Outbound Pacing:
+            </span>
+            <span className="text-zinc-300">
+              {status.estimatedCompletion.healthySendersCount} healthy sender{status.estimatedCompletion.healthySendersCount === 1 ? "" : "s"} · {status.estimatedCompletion.dailyCapacity} DMs/day cap · {status.estimatedCompletion.workingHoursWindow}
+            </span>
+          </div>
+          <div className="font-mono text-zinc-300">
+            {status.estimatedCompletion.estimatedCompletionDate ? (
+              <span>
+                Estimated Completion: <strong className="text-emerald-400">{new Date(status.estimatedCompletion.estimatedCompletionDate).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" })}</strong> ({status.estimatedCompletion.daysRemaining} day{status.estimatedCompletion.daysRemaining === 1 ? "" : "s"} remaining)
+              </span>
+            ) : (
+              <span className="text-zinc-500">No active senders or queue complete</span>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* 6. Real-time Metrics Grid */}
       <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-6 gap-3 text-center">
         <div className="rounded-xl border border-zinc-800/80 bg-zinc-950/60 p-2.5">

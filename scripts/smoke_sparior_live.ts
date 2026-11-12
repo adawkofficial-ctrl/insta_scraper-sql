@@ -69,7 +69,7 @@ async function main() {
     console.log(
       JSON.stringify(
         {
-          username: mapped.username.slice(0, 3) + "***",
+          username: (mapped.username ?? "").slice(0, 3) + "***",
           hasBiography: Boolean(mapped.biography),
           followers: mapped.followers,
           following: mapped.following,

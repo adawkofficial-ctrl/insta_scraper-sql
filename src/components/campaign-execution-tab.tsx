@@ -26,6 +26,7 @@ import {
 } from "@/lib/services/template/template-renderer";
 import { ApiClientError } from "@/lib/api/client";
 import { ConfirmModal } from "./confirm-modal";
+import { useSendingStatus } from "./sending-banner";
 
 // Derived from the centralized template variable definitions (single source of truth).
 const TEMPLATE_VARIABLES = TEMPLATE_VARIABLE_DEFINITIONS.map(
@@ -47,6 +48,7 @@ export function CampaignExecutionTab({
   selectedLeads = [],
   onClearSelection,
 }: CampaignExecutionTabProps) {
+  const { sendingEnabled } = useSendingStatus();
   const previewLead = selectedLeads[0] ?? null;
   // Templates state
   const [templates, setTemplates] = useState<MessageTemplate[]>([]);
@@ -737,12 +739,12 @@ export function CampaignExecutionTab({
                   <div className="flex-1 space-y-2">
                     <div className="flex items-center gap-2">
                       <a
-                        href={item.lead.profileUrl}
+                        href={item.lead.profileUrl || "#"}
                         target="_blank"
                         rel="noopener noreferrer"
                         className="text-xs font-bold text-rose-400 hover:underline flex items-center gap-1"
                       >
-                        <span>@{item.lead.username}</span>
+                        <span>{item.lead.username ? `@${item.lead.username}` : "lead"}</span>
                         <svg
                           className="h-3 w-3"
                           fill="none"
@@ -901,9 +903,10 @@ export function CampaignExecutionTab({
             <button
               type="button"
               id="dispatch-approved-btn"
-              disabled={isDispatching || approvedCount === 0}
+              disabled={!sendingEnabled || isDispatching || approvedCount === 0}
+              title={!sendingEnabled ? "Sending is OFF - discovery only (OUTBOUND_SENDING_ENABLED=false)" : undefined}
               onClick={() => setShowSendConfirm(true)}
-              className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-5 py-2.5 text-xs font-bold text-white shadow-md transition hover:bg-emerald-500 disabled:opacity-40"
+              className="inline-flex items-center gap-2 rounded-xl bg-emerald-600 px-5 py-2.5 text-xs font-bold text-white shadow-md transition hover:bg-emerald-500 disabled:opacity-40 disabled:cursor-not-allowed"
             >
               {isDispatching
                 ? "Sending via browser..."

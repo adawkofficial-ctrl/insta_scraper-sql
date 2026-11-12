@@ -33,14 +33,17 @@ export type RateLimitResult = {
   resetMs: number;
 };
 
+export const AUTH_RATE_LIMIT_MAX = 5;
+export const AUTH_RATE_LIMIT_WINDOW_MS = 15 * 60 * 1000; // 15 minutes
+
 export function checkRateLimit(
   key: string,
   limit: number,
   windowMs: number,
 ): RateLimitResult {
-  // Allow disabling in automated test environments if needed
+  // Allow disabling via explicit env flag only outside production
   if (
-    process.env.NODE_ENV === "test" ||
+    process.env.NODE_ENV !== "production" &&
     process.env.DISABLE_AUTH_RATE_LIMIT === "1"
   ) {
     return {
@@ -97,3 +100,39 @@ export function getClientIp(request: Request): string {
 
   return "127.0.0.1";
 }
+
+/**
+ * Enforces rate limiting per IP and per Email for authentication endpoints:
+ * 5 attempts / 15 min per IP and email. Disabled when NODE_ENV=test.
+ */
+export function checkAuthRateLimit(
+  action: "login" | "register",
+  clientIp: string,
+  email?: string | null,
+): RateLimitResult {
+  const ipCheck = checkRateLimit(
+    `${action}:ip:${clientIp}`,
+    AUTH_RATE_LIMIT_MAX,
+    AUTH_RATE_LIMIT_WINDOW_MS,
+  );
+  if (!ipCheck.allowed) {
+    return ipCheck;
+  }
+
+  if (email && typeof email === "string") {
+    const normalizedEmail = email.trim().toLowerCase();
+    if (normalizedEmail) {
+      const emailCheck = checkRateLimit(
+        `${action}:email:${normalizedEmail}`,
+        AUTH_RATE_LIMIT_MAX,
+        AUTH_RATE_LIMIT_WINDOW_MS,
+      );
+      if (!emailCheck.allowed) {
+        return emailCheck;
+      }
+    }
+  }
+
+  return ipCheck;
+}
+

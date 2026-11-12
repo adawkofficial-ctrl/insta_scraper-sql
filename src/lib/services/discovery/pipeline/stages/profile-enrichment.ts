@@ -143,14 +143,27 @@ export async function profileEnrichmentStage(
   for (const profile of enrichedProfiles) {
     const meta = profile.username ? input.candidateMetaByUsername.get(profile.username.toLowerCase()) : undefined;
     if (meta) {
+      const alternate: Record<string, string> = {};
       if (!profile.location && (meta.gmapsCity || meta.gmapsAddress || meta.location)) {
         profile.location = meta.gmapsCity || meta.gmapsAddress || meta.location || null;
       }
-      if (!profile.phone && meta.phone) {
+      if (meta.phone) {
+        if (profile.phone && profile.phone !== meta.phone) {
+          alternate.alternatePhone = profile.phone;
+        }
         profile.phone = meta.phone;
       }
-      if (!profile.website && meta.website) {
+      if (meta.website) {
+        if (profile.website && profile.website !== meta.website) {
+          alternate.alternateWebsite = profile.website;
+        }
         profile.website = meta.website;
+      }
+      if (meta.email) {
+        if (profile.email && profile.email !== meta.email) {
+          alternate.alternateEmail = profile.email;
+        }
+        profile.email = meta.email;
       }
       profile.gmapsCategory = meta.gmapsCategory ?? null;
       profile.gmapsCategories = meta.gmapsCategories ?? null;
@@ -168,7 +181,7 @@ export async function profileEnrichmentStage(
       profile.isClaimed = meta.isClaimed ?? null;
       profile.permanentlyClosed = meta.permanentlyClosed ?? null;
       profile.temporarilyClosed = meta.temporarilyClosed ?? null;
-      profile.sourceProvider = meta.sourceProvider ?? "google_maps";
+      profile.sourceProvider = meta.sourceProvider ?? profile.sourceProvider ?? "google_maps";
 
       profile.rawProfileData = {
         ...(typeof profile.rawProfileData === "object" && profile.rawProfileData !== null
@@ -186,9 +199,23 @@ export async function profileEnrichmentStage(
         phone: meta.phone ?? null,
         website: meta.website ?? null,
         socialLinks: meta.socialLinks ?? {},
-        sourceProvider: meta.sourceProvider ?? "google_maps",
+        sourceProvider: meta.sourceProvider ?? profile.sourceProvider ?? "google_maps",
         isChain: meta.isChain ?? false,
         isClaimed: meta.isClaimed ?? null,
+        ...alternate,
+        dataSources: {
+          businessName: "maps",
+          category: "maps",
+          city: "maps",
+          rating: "maps",
+          reviewCount: "maps",
+          phone: meta.phone ? "maps" : profile.phone ? "instagram" : null,
+          website: meta.website ? "maps" : profile.website ? "instagram" : null,
+          email: meta.email ? "maps" : profile.email ? "instagram" : null,
+          followers: "instagram",
+          postsCount: "instagram",
+          lastPostAt: "instagram",
+        },
       };
     }
   }

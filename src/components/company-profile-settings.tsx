@@ -223,15 +223,15 @@ export function CompanyProfileSettings() {
   };
 
   const inputClass =
-    "mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-xs text-zinc-200 focus:border-rose-500 focus:outline-none";
-  const labelClass = "block text-[11px] font-semibold uppercase text-zinc-400";
+    "mt-1 w-full rounded-lg border border-subtle bg-surface px-3 py-2 text-xs text-primary placeholder-muted focus:border-indigo-500 focus:outline-none transition-colors";
+  const labelClass = "block text-[11px] font-semibold uppercase text-muted";
 
   return (
-    <section className="rounded-2xl border border-zinc-800 bg-zinc-900/60 p-6 space-y-6">
-      <div className="flex flex-col gap-2 border-b border-zinc-800 pb-4 sm:flex-row sm:items-center sm:justify-between">
+    <section className="rounded-2xl border border-subtle bg-surface shadow-card p-6 space-y-6 transition-colors">
+      <div className="flex flex-col gap-2 border-b border-subtle pb-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h2 className="text-lg font-bold text-zinc-100">Company Profiles</h2>
-          <p className="mt-0.5 text-xs text-zinc-400">
+          <h2 className="text-lg font-bold text-primary">Company Profiles</h2>
+          <p className="mt-0.5 text-xs text-muted">
             Create and manage distinct company contexts for different campaigns (services, tone,
             forbidden claims, CTA styles).
           </p>
@@ -240,7 +240,7 @@ export function CompanyProfileSettings() {
           <button
             type="button"
             onClick={startCreate}
-            className="inline-flex items-center gap-1.5 rounded-lg bg-rose-600 px-3.5 py-2 text-xs font-semibold text-white shadow-sm hover:bg-rose-500 transition"
+            className="inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 px-3.5 py-2 text-xs font-semibold text-white shadow-sm shadow-indigo-500/20 transition cursor-pointer"
           >
             <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
               <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
@@ -251,13 +251,13 @@ export function CompanyProfileSettings() {
       </div>
 
       {error && (
-        <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 p-3 text-xs text-rose-300">
+        <div className="rounded-xl border border-rose-500/20 bg-rose-500/10 p-3.5 text-xs text-rose-700 dark:text-rose-300">
           {error}
         </div>
       )}
 
       {saved && (
-        <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-3 text-xs text-emerald-300">
+        <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-3.5 text-xs text-emerald-700 dark:text-emerald-300">
           Company profile saved successfully.
         </div>
       )}
@@ -265,17 +265,17 @@ export function CompanyProfileSettings() {
       {!isEditing ? (
         <div>
           {isLoading ? (
-            <p className="text-xs text-zinc-500 py-4">Loading company profiles...</p>
+            <p className="text-xs text-muted py-4">Loading company profiles...</p>
           ) : profiles.length === 0 ? (
-            <div className="rounded-xl border border-dashed border-zinc-800 p-8 text-center">
-              <p className="text-sm font-medium text-zinc-300">No company profiles yet</p>
-              <p className="mt-1 text-xs text-zinc-500">
+            <div className="rounded-2xl border border-dashed border-subtle p-8 text-center bg-subtle/40">
+              <p className="text-sm font-semibold text-primary">No company profiles yet</p>
+              <p className="mt-1 text-xs text-muted">
                 Create your first profile to configure AI analysis and messaging rules.
               </p>
               <button
                 type="button"
                 onClick={startCreate}
-                className="mt-4 inline-flex items-center gap-1.5 rounded-lg bg-rose-600 px-4 py-2 text-xs font-semibold text-white hover:bg-rose-500 transition"
+                className="mt-4 inline-flex items-center gap-1.5 rounded-lg bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 px-4 py-2 text-xs font-semibold text-white shadow-sm shadow-indigo-500/20 transition cursor-pointer"
               >
                 Create First Profile
               </button>
@@ -285,34 +285,34 @@ export function CompanyProfileSettings() {
               {profiles.map(({ profile, completeness: comp, campaignCount }) => (
                 <div
                   key={profile.id}
-                  className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-4 flex flex-col justify-between hover:border-zinc-700 transition"
+                  className="rounded-xl border border-subtle bg-subtle p-4 flex flex-col justify-between hover:border-slate-300 dark:hover:border-slate-700 transition shadow-xs"
                 >
                   <div>
                     <div className="flex items-start justify-between gap-2">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <h3 className="text-sm font-semibold text-zinc-100">{profile.name}</h3>
+                        <h3 className="text-sm font-semibold text-primary">{profile.name}</h3>
                         {profile.isDefault && (
-                          <span className="rounded bg-rose-500/20 text-rose-400 border border-rose-500/30 px-2 py-0.5 text-[10px] font-medium">
+                          <span className="rounded-full bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 border border-indigo-500/20 px-2 py-0.5 text-[10px] font-semibold">
                             Default
                           </span>
                         )}
                       </div>
                       {comp.complete ? (
-                        <span className="shrink-0 rounded-full border border-emerald-500/30 bg-emerald-500/10 px-2.5 py-0.5 text-[10px] font-semibold text-emerald-400">
+                        <span className="shrink-0 rounded-full border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-0.5 text-[10px] font-semibold text-emerald-700 dark:text-emerald-400">
                           Ready for AI
                         </span>
                       ) : (
-                        <span className="shrink-0 rounded-full border border-amber-500/30 bg-amber-500/10 px-2.5 py-0.5 text-[10px] font-semibold text-amber-300">
+                        <span className="shrink-0 rounded-full border border-amber-500/20 bg-amber-500/10 px-2.5 py-0.5 text-[10px] font-semibold text-amber-700 dark:text-amber-400">
                           {comp.missingFields.length} missing
                         </span>
                       )}
                     </div>
 
-                    <p className="mt-2 text-xs text-zinc-400 line-clamp-2">
+                    <p className="mt-2 text-xs text-muted line-clamp-2">
                       {profile.description || "No description provided."}
                     </p>
 
-                    <div className="mt-3 flex items-center gap-3 text-[11px] text-zinc-500">
+                    <div className="mt-3 flex items-center gap-3 text-[11px] text-muted">
                       <span>{profile.services.length} service(s)</span>
                       <span>•</span>
                       <span>
@@ -323,19 +323,19 @@ export function CompanyProfileSettings() {
                     </div>
 
                     {!comp.complete && (
-                      <p className="mt-2 text-[10px] text-amber-300/80">
+                      <p className="mt-2 text-[10px] text-amber-700 dark:text-amber-400 font-medium">
                         Missing: {comp.missingFields.join(", ")}
                       </p>
                     )}
                   </div>
 
-                  <div className="mt-4 pt-3 border-t border-zinc-800/80 flex items-center justify-between gap-2">
+                  <div className="mt-4 pt-3 border-t border-subtle flex items-center justify-between gap-2">
                     <div className="flex items-center gap-2">
                       {!profile.isDefault && (
                         <button
                           type="button"
                           onClick={() => handleSetDefault(profile.id)}
-                          className="text-[11px] text-zinc-400 hover:text-zinc-200 transition"
+                          className="text-[11px] text-muted hover:text-primary transition cursor-pointer"
                         >
                           Make default
                         </button>
@@ -345,14 +345,14 @@ export function CompanyProfileSettings() {
                       <button
                         type="button"
                         onClick={() => startEdit({ profile, completeness: comp, campaignCount })}
-                        className="rounded-md border border-zinc-700 bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-200 hover:bg-zinc-700 transition"
+                        className="rounded-lg border border-subtle bg-surface hover:bg-surface-hover px-2.5 py-1 text-xs font-medium text-secondary hover:text-primary transition shadow-card cursor-pointer"
                       >
                         Edit
                       </button>
                       <button
                         type="button"
                         onClick={() => handleDelete(profile.id)}
-                        className="rounded-md border border-rose-500/20 bg-rose-500/10 px-2.5 py-1 text-xs font-medium text-rose-400 hover:bg-rose-500/20 transition"
+                        className="rounded-lg border border-rose-500/20 bg-rose-500/10 hover:bg-rose-500/20 px-2.5 py-1 text-xs font-medium text-rose-700 dark:text-rose-400 transition cursor-pointer"
                       >
                         Delete
                       </button>
@@ -365,21 +365,21 @@ export function CompanyProfileSettings() {
         </div>
       ) : (
         <div className="space-y-4">
-          <div className="flex items-center justify-between">
-            <h3 className="text-sm font-semibold text-zinc-200">
+          <div className="flex items-center justify-between border-b border-subtle pb-3">
+            <h3 className="text-sm font-semibold text-primary">
               {isCreating ? "New Company Profile" : `Edit Profile: ${form.name}`}
             </h3>
             <button
               type="button"
               onClick={cancelEdit}
-              className="text-xs text-zinc-400 hover:text-zinc-200 transition"
+              className="text-xs text-muted hover:text-primary transition cursor-pointer"
             >
               Cancel
             </button>
           </div>
 
           {completeness && !completeness.complete && (
-            <div className="rounded-lg border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-200">
+            <div className="rounded-xl border border-amber-500/20 bg-amber-500/10 p-3.5 text-xs text-amber-800 dark:text-amber-300">
               Missing required fields: {completeness.missingFields.join(", ")}. AI analysis and draft
               generation are blocked until these are filled.
             </div>
@@ -388,7 +388,7 @@ export function CompanyProfileSettings() {
           <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
             <div>
               <label className={labelClass} htmlFor="cp-name">
-                Profile Label / Company Name <span className="text-rose-400">*</span>
+                Profile Label / Company Name <span className="text-rose-500">*</span>
               </label>
               <input
                 id="cp-name"
@@ -401,7 +401,7 @@ export function CompanyProfileSettings() {
 
             <div>
               <label className={labelClass} htmlFor="cp-language">
-                Message Language <span className="text-rose-400">*</span>
+                Message Language <span className="text-rose-500">*</span>
               </label>
               <input
                 id="cp-language"
@@ -413,12 +413,12 @@ export function CompanyProfileSettings() {
             </div>
 
             <div className="sm:col-span-2">
-              <label className="flex items-center gap-2 text-xs text-zinc-300">
+              <label className="flex items-center gap-2 text-xs text-secondary cursor-pointer">
                 <input
                   type="checkbox"
                   checked={form.isDefault}
                   onChange={(e) => setForm((prev) => ({ ...prev, isDefault: e.target.checked }))}
-                  className="rounded border-zinc-700 bg-zinc-950 text-rose-600 focus:ring-rose-500"
+                  className="rounded border-subtle bg-surface text-indigo-600 focus:ring-indigo-500"
                 />
                 <span>Set as default profile (pre-filled starting point for new campaigns)</span>
               </label>
@@ -426,7 +426,7 @@ export function CompanyProfileSettings() {
 
             <div className="sm:col-span-2">
               <label className={labelClass} htmlFor="cp-description">
-                Company Description <span className="text-rose-400">*</span>
+                Company Description <span className="text-rose-500">*</span>
               </label>
               <textarea
                 id="cp-description"
@@ -600,12 +600,12 @@ export function CompanyProfileSettings() {
               />
             </div>
 
-            <div className="sm:col-span-2 flex items-center justify-end gap-3 pt-3 border-t border-zinc-800">
+            <div className="sm:col-span-2 flex items-center justify-end gap-3 pt-4 border-t border-subtle">
               <button
                 type="button"
                 onClick={cancelEdit}
                 disabled={isSaving}
-                className="rounded-lg border border-zinc-700 bg-zinc-800 px-4 py-2 text-xs font-medium text-zinc-300 hover:bg-zinc-700 transition"
+                className="rounded-lg border border-subtle bg-surface hover:bg-surface-hover px-4 py-2 text-xs font-semibold text-secondary hover:text-primary transition shadow-card cursor-pointer"
               >
                 Cancel
               </button>
@@ -614,7 +614,7 @@ export function CompanyProfileSettings() {
                 id="save-company-profile"
                 onClick={handleSave}
                 disabled={isSaving}
-                className="rounded-lg bg-rose-600 px-5 py-2 text-xs font-semibold text-white hover:bg-rose-500 transition disabled:opacity-40"
+                className="rounded-lg bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 px-5 py-2 text-xs font-semibold text-white shadow-sm shadow-indigo-500/20 transition disabled:opacity-40 cursor-pointer"
               >
                 {isSaving ? "Saving..." : isCreating ? "Create Profile" : "Save Changes"}
               </button>

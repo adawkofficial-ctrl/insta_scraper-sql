@@ -66,6 +66,14 @@ export async function createAiAnalysisJob(input: {
     duplicateOfLeadId: null,
     status: { not: "DO_NOT_CONTACT" },
     ...(options.onlyUnanalyzed === false ? {} : { aiStatus: AiStatus.PENDING }),
+    ...(options.generateDrafts === true
+      ? {
+          OR: [
+            { qualityTier: null },
+            { qualityTier: { notIn: ["D", "C"] } },
+          ],
+        }
+      : {}),
   };
   const eligible = await prisma.lead.count({ where });
 
@@ -142,10 +150,18 @@ export async function runAiAnalysisJob(jobId: string): Promise<void> {
     duplicateOfLeadId: null,
     status: { not: "DO_NOT_CONTACT" },
     ...(options.onlyUnanalyzed === false ? {} : { aiStatus: AiStatus.PENDING }),
+    ...(options.generateDrafts === true
+      ? {
+          OR: [
+            { qualityTier: null },
+            { qualityTier: { notIn: ["D", "C"] } },
+          ],
+        }
+      : {}),
   };
   const leads = await prisma.lead.findMany({
     where,
-    orderBy: { createdAt: "asc" },
+    orderBy: [{ qualityScore: "desc" }, { createdAt: "asc" }],
     take: job.total > 0 ? job.total : getAiAnalysisMaxLeadsPerJob(),
     select: { id: true },
   });

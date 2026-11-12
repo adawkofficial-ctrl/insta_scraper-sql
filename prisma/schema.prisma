@@ -75,6 +75,10 @@ enum InstagramSenderStatus {
   EXPIRED
   ERROR
   DISCONNECTED
+  ACTIVE
+  WARMING
+  PAUSED
+  NEEDS_ATTENTION
 }
 
 enum ConnectionMethod {
@@ -116,6 +120,7 @@ enum AiStatus {
 enum DncChannel {
   INSTAGRAM
   EMAIL
+  PHONE
   ALL
 }
 
@@ -124,6 +129,7 @@ enum DncIdentifierType {
   INSTAGRAM_ID
   EMAIL
   DOMAIN
+  PHONE
 }
 
 enum DncSource {
@@ -183,6 +189,17 @@ enum RejectReason {
   OTHER
 }
 
+enum LeadEventType {
+  SENT
+  DELIVERED
+  REPLIED
+  POSITIVE_REPLY
+  NEGATIVE_REPLY
+  UNSUBSCRIBE_OR_DNC
+  MEETING_BOOKED
+  WON
+}
+
 enum ReplyIntent {
   INTERESTED
   PRICE_REQUEST
@@ -219,6 +236,7 @@ model User {
   passwordHash String
   name         String?
   image        String?
+  role         String   @default("USER")
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
 
@@ -237,6 +255,7 @@ model User {
   draftReviews            DraftReview[]
   notificationConfig      NotificationConfig?
   notificationLogs        NotificationLog[]
+  emailSenderAccounts     EmailSenderAccount[]
 
   @@index([email])
   @@index([createdAt])
@@ -256,14 +275,21 @@ model Campaign {
   location                String?
   category                String?
   leadLimit               Int?
-  createdAt               DateTime       @default(now())
-  updatedAt               DateTime       @updatedAt
+  // Follow-up Configuration
+  followUpEnabled         Boolean             @default(false)
+  followUpCount           Int                 @default(1)
+  followUpDelayDays       Int[]               @default([3, 5])
+  followUpTemplates       String[]            @default([])
+  createdAt               DateTime            @default(now())
+  updatedAt               DateTime            @updatedAt
 
   user             User                @relation(fields: [userId], references: [id], onDelete: Cascade)
   leads            Lead[]
   scrapeJobs       ScrapeJob[]
   messages         Message[]
   templates        MessageTemplate[]
+  emailSettings    EmailCampaignSettings?
+  emailSends       EmailSend[]
   executions       CampaignExecution[]
   bulkMessageJobs  BulkMessageJob[]
   messageAttempts  MessageAttempt[]
@@ -274,6 +300,7 @@ model Campaign {
   companyProfile   CompanyProfile      @relation(fields: [companyProfileId], references: [id], onDelete: Restrict)
   messageDrafts    MessageDraft[]
   aiAnalysisJobs   AiAnalysisJob[]
+  followUpMessages FollowUpMessage[]
 
   // AI qualification settings (Step 5). Defaults keep legacy behavior unchanged.
   aiQualificationEnabled Boolean @default(false)
@@ -288,6 +315,18 @@ model Campaign {
   autoApproveMinScore     Int          @default(80)
   qualityMaxRegenerations Int          @default(2)
 
+  // Quality score & chain filtering settings
+  customNegativeKeywords String[] @default([])
+  customPositiveKeywords String[] @default([])
+  minRating              Float?
+  minReviews             Int?
+  excludeChains          Boolean  @default(true)
+
+  // Outcome optimization & feedback loop (Step 4)
+  autoOptimize           Boolean     @default(false)
+  explorationBudgetShare Float       @default(0.15)
+  leadEvents             LeadEvent[]
+
   @@index([userId])
   @@index([status])
   @@index([executionMode])
@@ -297,8 +336,9 @@ model Campaign {
 model Lead {
   id                   String    @id @default(cuid())
   campaignId           String
-  username             String
-  profileUrl           String
+  username             String?
+  instagramUsername    String?
+  profileUrl           String?
   fullName             String?
   biography            String?
   followers            Int? // DEPRECATED: use followersCount
@@ -339,6 +379,12 @@ model Lead {
   socialLink        String?
   socialPlatform    String?
   contactSource     String?
+  emailSourceUrl    String?
+  emailFoundAt      DateTime?
+  emailConfidence   Float?
+  emailRole         String? // "generic" | "named" | null
+  emailInvalid      Boolean  @default(false)
+  emailOptOutAt     DateTime?
   availableChannels String[]   @default([])
   leadScore         Int?
   leadQuality       String? // "high" | "medium" | "low"
@@ -361,14 +407,53 @@ model Lead {
   possibleDuplicateOfLeadId String?
   possibleDuplicateReason   String?
 
+  // Google Maps / Multi-channel discovery fields
+  gmapsPlaceId              String?
+  rating                    Float?
+  reviewCount               Int?
+  city                      String?
+  handleSource              String?
+  handleConfidence          String?
+
+  // Lead Quality Scoring & Chain Detection
+  qualityScore              Int?
+  qualityTier               String? // "A" | "B" | "C" | "D"
+  scoreBreakdown            Json?
+  scoreFlags                String[]  @default([])
+  isChain                   Boolean   @default(false)
+  isClaimed                 Boolean?
+  lastPostAt                DateTime?
+  scoreVersion              Int       @default(1)
+
+  // Attribution & Cost Tracking (Step 1)
+  scrapeJobId               String?
+  discoveryKeyword          String?
+  discoveryCity             String?
+  acquisitionCostUsd        Decimal?  @db.Decimal(10, 4)
+  emailSends                EmailSend[]
+  emailUnsubscribeTokens    EmailUnsubscribeToken[]
+  acquisitionCostBreakdown   Json?
+  messageVariant            String?   // A/B test variant: "A" | "B" | "C"
+
+  // Pilot and dry-run isolation
+  isDryRun                  Boolean   @default(false)
+
+  // Multi-location group detection & deduplication
+  isGroup                   Boolean   @default(false)
+  groupKey                  String?
+  lastHandleEnrichmentAt    DateTime?
+
   campaign            Campaign                @relation(fields: [campaignId], references: [id], onDelete: Cascade)
   user                User?                   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  scrapeJob           ScrapeJob?              @relation(fields: [scrapeJobId], references: [id], onDelete: SetNull)
+  events              LeadEvent[]
   messages            Message[]
   executionItems      CampaignExecutionItem[]
   bulkMessageItems    BulkMessageItem[]
   messageAttempts     MessageAttempt[]
   statusHistory       LeadStatusHistory[]
   conversations       Conversation[]
+  followUpMessages    FollowUpMessage[]
   sightings           LeadSighting[]
   duplicateOf         Lead?                   @relation("LeadDuplicates", fields: [duplicateOfLeadId], references: [id], onDelete: SetNull)
   duplicates          Lead[]                  @relation("LeadDuplicates")
@@ -405,6 +490,18 @@ model Lead {
   @@index([userId, websiteKey])
   @@index([duplicateOfLeadId])
   @@index([possibleDuplicateOfLeadId])
+  @@index([gmapsPlaceId])
+  @@index([userId, gmapsPlaceId])
+  @@index([qualityScore])
+  @@index([qualityTier])
+  @@index([scrapeJobId])
+  @@index([discoveryKeyword])
+  @@index([discoveryCity])
+  @@index([isDryRun])
+  @@index([campaignId, isDryRun])
+  @@index([groupKey])
+  @@index([campaignId, groupKey])
+  @@index([messageVariant])
 }
 
 /// Records that a lead was seen in a campaign/run. Never merges or deletes;
@@ -449,13 +546,148 @@ model ScrapeJob {
   candidatesSkipped    Int?
   usage                Json?
   stopReason           String?
+  costUsd              Decimal? @db.Decimal(10, 4)
+  costBreakdown        Json?
+  isDryRun             Boolean         @default(false)
 
   campaign   Campaign?           @relation(fields: [campaignId], references: [id], onDelete: Cascade)
   executions CampaignExecution[]
+  leads      Lead[]
 
   @@index([campaignId])
   @@index([status])
   @@index([createdAt])
+  @@index([isDryRun])
+  @@index([campaignId, isDryRun])
+}
+
+model DiscoveryCoverage {
+  id            String   @id @default(cuid())
+  userId        String
+  campaignId    String?
+  keyword       String
+  area          String
+  runDate       DateTime @default(now())
+  placeIds      Json
+  newPlaces     Int      @default(0)
+  acceptedLeads Int      @default(0)
+  createdAt     DateTime @default(now())
+
+  @@index([userId, keyword, area, runDate])
+  @@index([userId, runDate])
+}
+
+model DiscoveryPlaceOutcome {
+  id        String   @id @default(cuid())
+  userId    String
+  placeId   String
+  outcome   String
+  reason    String?
+  keyword   String?
+  area      String?
+  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now())
+
+  @@unique([userId, placeId])
+  @@index([userId, updatedAt])
+}
+
+model EmailSenderAccount {
+  id                    String    @id @default(cuid())
+  userId                String
+  fromName              String
+  fromAddress           String
+  postalAddress         String
+  smtpHost              String
+  smtpPort              Int
+  smtpUser              String
+  smtpPasswordEncrypted String
+  secure                Boolean   @default(true)
+  status                String    @default("PENDING") // PENDING | ACTIVE | PAUSED | DISABLED
+  dailyCap              Int       @default(15)
+  hourlyCap             Int       @default(4)
+  warmupStartedAt       DateTime?
+  lastSentAt            DateTime?
+  consecutiveErrors     Int       @default(0)
+  pausedUntil           DateTime?
+  lastError             String?
+  verifiedAt            DateTime?
+  dnsCheckedAt          DateTime?
+  spfStatus             String?
+  dkimStatus            String?
+  dmarcStatus           String?
+  dkimSelector          String?
+  allowDnsOverride      Boolean   @default(false)
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+
+  user  User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  sends EmailSend[]
+
+  @@index([userId])
+  @@index([userId, status])
+}
+
+model EmailCampaignSettings {
+  id              String   @id @default(cuid())
+  campaignId      String   @unique
+  subjectTemplate String   @default("")
+  bodyTemplate    String   @default("")
+  enabled         Boolean  @default(false)
+  templateVersion Int      @default(1)
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+}
+
+model EmailSend {
+  id                String    @id @default(cuid())
+  campaignId        String?
+  leadId            String?
+  senderAccountId   String
+  recipient         String
+  recipientDomain   String?
+  status            String    @default("QUEUED") // QUEUED | SENT | UNKNOWN | FAILED | SUPPRESSED
+  subject           String
+  body              String
+  messageId         String?
+  templateVersion   Int       @default(1)
+  senderIdentity    String
+  addressSource     String?
+  addressFoundAt    DateTime?
+  addressConfidence Float?
+  errorCode         String?
+  errorMessage      String?
+  groupKey          String?
+  isTest            Boolean   @default(false)
+  reservedAt        DateTime  @default(now())
+  sentAt            DateTime?
+  createdAt         DateTime  @default(now())
+  updatedAt         DateTime  @updatedAt
+
+  campaign      Campaign?            @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  lead          Lead?               @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  senderAccount EmailSenderAccount @relation(fields: [senderAccountId], references: [id], onDelete: Restrict)
+
+  @@unique([leadId])
+  @@index([campaignId, status])
+  @@index([senderAccountId, createdAt])
+  @@index([recipientDomain])
+}
+
+model EmailUnsubscribeToken {
+  id              String    @id @default(cuid())
+  token           String    @unique
+  leadId          String
+  campaignId      String?
+  emailNormalized String
+  usedAt          DateTime?
+  createdAt       DateTime  @default(now())
+
+  lead Lead @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@index([leadId])
 }
 
 model Message {
@@ -494,14 +726,17 @@ model Message {
   aiAnalysis                  Json?
   classifiedAt                DateTime?
   classificationPromptVersion String?
+  replyCategory               String? // "positive" | "question" | "not_now" | "negative" | "unsubscribe" | "spam" | "unknown"
 
   campaign      Campaign                @relation(fields: [campaignId], references: [id], onDelete: Cascade)
   lead          Lead                    @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  leadEvents    LeadEvent[]
   attempts      MessageAttempt[]
   senderAccount InstagramSenderAccount? @relation(fields: [senderAccountId], references: [id], onDelete: SetNull)
   conversation  Conversation?           @relation(fields: [conversationId], references: [id], onDelete: SetNull)
   draft         MessageDraft?           @relation(fields: [draftId], references: [id], onDelete: SetNull)
   replyDrafts   MessageDraft[]          @relation("MessageDraftReplyTo")
+  followUpMessages FollowUpMessage[]
 
   @@index([leadId])
   @@index([campaignId])
@@ -522,6 +757,7 @@ model MessageTemplate {
   campaignId String?
   name       String
   body       String
+  variants   Json?    // Optional A/B variants: [{ id: "A", body: "..." }, { id: "B", body: "..." }]
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
@@ -547,11 +783,31 @@ model InstagramSenderAccount {
   createdAt        DateTime                   @default(now())
   updatedAt        DateTime                   @updatedAt
 
-  user            User             @relation(fields: [userId], references: [id], onDelete: Cascade)
-  messages        Message[]
-  messageAttempts MessageAttempt[]
-  bulkMessageJobs BulkMessageJob[]
-  conversations   Conversation[]
+  // Persistent send-gate safety counters & settings (Step 2 & 3)
+  lastSentAt         DateTime?
+  sentToday          Int       @default(0)
+  sentTodayDate      String?
+  sentThisHour       Int       @default(0)
+  sentThisHourWindow String?
+  totalSent          Int       @default(0)
+  warmupStartedAt    DateTime?
+  pausedUntil        DateTime?
+  lastErrorCode      String?
+  consecutiveErrors  Int       @default(0)
+  dailyCap           Int?
+  hourlyCap          Int?
+  customMinGapSeconds Int?
+  customMaxGapSeconds Int?
+  timezone           String    @default("UTC")
+  workingHoursStart  Int       @default(9)
+  workingHoursEnd    Int       @default(18)
+
+  user                  User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  messages              Message[]
+  messageAttempts       MessageAttempt[]
+  bulkMessageJobs       BulkMessageJob[]
+  conversations         Conversation[]
+  outboundIdempotencies OutboundSendIdempotency[]
 
   @@unique([userId, username])
   @@index([userId])
@@ -559,6 +815,33 @@ model InstagramSenderAccount {
   @@index([connectionMethod])
   @@index([unipileAccountId])
   @@index([createdAt])
+  @@index([lastSentAt])
+  @@index([pausedUntil])
+}
+
+model OutboundSendIdempotency {
+  id              String    @id @default(cuid())
+  campaignId      String
+  leadId          String
+  step            String    @default("1")
+  senderAccountId String?
+  status          String    @default("RESERVED") // RESERVED | SENT | FAILED | UNKNOWN
+  messageId       String?
+  errorCode       String?
+  errorMessage    String?
+  contentHash     String?
+  reservedAt      DateTime  @default(now())
+  completedAt     DateTime?
+  createdAt       DateTime  @default(now())
+  updatedAt       DateTime  @updatedAt
+
+  senderAccount InstagramSenderAccount? @relation(fields: [senderAccountId], references: [id], onDelete: SetNull)
+
+  @@unique([campaignId, leadId, step])
+  @@index([campaignId, leadId])
+  @@index([senderAccountId])
+  @@index([status])
+  @@index([reservedAt])
 }
 
 model CampaignExecution {
@@ -837,6 +1120,7 @@ model UsageLog {
   estimatedCostUsd Decimal?      @db.Decimal(12, 6)
   quotaRemaining   Int?
   metadata         Json?
+  scrapeJobId      String?
   createdAt        DateTime      @default(now())
 
   user     User?     @relation(fields: [userId], references: [id], onDelete: SetNull)
@@ -845,6 +1129,7 @@ model UsageLog {
   @@index([provider, createdAt])
   @@index([campaignId, createdAt])
   @@index([userId, createdAt])
+  @@index([scrapeJobId])
 }
 
 /// Company knowledge base (source of truth for what the company sells).
@@ -1061,3 +1346,69 @@ model NotificationLog {
   @@index([eventType, createdAt])
   @@index([leadId])
 }
+
+model LeadEvent {
+  id         String         @id @default(cuid())
+  leadId     String
+  campaignId String
+  eventType  LeadEventType
+  channel    MessageChannel @default(INSTAGRAM)
+  messageId  String?
+  variant    String?
+  metadata   Json?
+  actor      String         @default("system")
+  createdAt  DateTime       @default(now())
+
+  lead     Lead      @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  campaign Campaign  @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  message  Message?  @relation(fields: [messageId], references: [id], onDelete: SetNull)
+
+  @@index([leadId, createdAt])
+  @@index([campaignId, eventType])
+  @@index([campaignId, createdAt])
+  @@index([eventType, createdAt])
+  @@index([campaignId, variant])
+}
+
+enum FollowUpStatus {
+  SCHEDULED
+  SENT
+  CANCELLED_REPLIED
+  CANCELLED_DNC
+  CANCELLED_MANUAL
+  NEEDS_EDIT
+  FAILED
+  SKIPPED
+}
+
+model FollowUpMessage {
+  id              String         @id @default(cuid())
+  campaignId      String
+  leadId          String
+  step            Int
+  status          FollowUpStatus @default(SCHEDULED)
+  templateText    String
+  renderedBody    String?
+  dueAt           DateTime
+  sentAt          DateTime?
+  retryAt         DateTime?
+  cancelReason    String?
+  errorCode       String?
+  errorMessage    String?
+  idempotencyKey  String         @unique
+  threadId        String?
+  messageId       String?
+  senderAccountId String?
+  createdAt       DateTime       @default(now())
+  updatedAt       DateTime       @updatedAt
+
+  campaign        Campaign       @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  lead            Lead           @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  message         Message?       @relation(fields: [messageId], references: [id], onDelete: SetNull)
+
+  @@unique([campaignId, leadId, step])
+  @@index([status, dueAt])
+  @@index([campaignId, status])
+  @@index([leadId])
+}
+

@@ -16,6 +16,7 @@ import {
   createSenderAccountRecord,
   deleteSenderAccountRecord,
   findConnectedSenderForUser,
+  findConnectedSendersForUser,
   findSenderAccountOwned,
   findSenderByUsername,
   listSenderAccountsForUser,
@@ -45,6 +46,13 @@ import {
   getUnipileAccountUsername,
 } from "../unipile";
 
+import {
+  calculateWarmupCap,
+  getSenderDailyHardMax,
+  getSenderHourlyCap,
+  getSenderHourlyHardMax,
+} from "../messaging/send-gate";
+
 const MAX_DISPLAY_NAME_LENGTH = 100;
 const INSTAGRAM_USERNAME_PATTERN =
   /^(?!\.)(?!.*\.\.)(?!.*\.$)[A-Za-z0-9._]{1,30}$/;
@@ -65,12 +73,51 @@ export type SenderAccountDto = {
   updatedAt: string;
   /** Live, non-secret browser diagnostics; null when no browser is open. */
   sessionDiagnostics: SenderSessionDiagnostics | null;
+  sentToday: number;
+  sentThisHour: number;
+  totalSent: number;
+  dailyCap: number | null;
+  effectiveDailyCap: number;
+  hourlyCap: number | null;
+  effectiveHourlyCap: number;
+  warmupStage: string;
+  warmupStartedAt: string | null;
+  pausedUntil: string | null;
+  lastSentAt: string | null;
+  lastErrorCode: string | null;
+  consecutiveErrors: number;
+  customMinGapSeconds: number | null;
+  customMaxGapSeconds: number | null;
+  timezone: string;
+  workingHoursStart: number;
+  workingHoursEnd: number;
+  nextAllowedSendAt: string | null;
 };
 
 export function toSenderAccountDto(
   record: SenderAccountRecord,
   diagnostics: SenderSessionDiagnostics | null = null,
 ): SenderAccountDto {
+  const warmup = calculateWarmupCap({
+    warmupStartedAt: record.warmupStartedAt,
+    configuredDailyCap: record.dailyCap,
+  });
+  const hourlyHardMax = getSenderHourlyHardMax();
+  const effectiveHourlyCap =
+    record.hourlyCap && record.hourlyCap > 0
+      ? Math.min(record.hourlyCap, hourlyHardMax)
+      : getSenderHourlyCap();
+
+  const isConnected =
+    record.status === "CONNECTED" ||
+    record.status === "ACTIVE" ||
+    record.status === "WARMING";
+
+  let nextAllowedSendAt: string | null = null;
+  if (record.pausedUntil && record.pausedUntil > new Date()) {
+    nextAllowedSendAt = record.pausedUntil.toISOString();
+  }
+
   return {
     id: record.id,
     username: record.username,
@@ -81,10 +128,29 @@ export function toSenderAccountDto(
     status: record.status,
     lastVerifiedAt: record.lastVerifiedAt ? record.lastVerifiedAt.toISOString() : null,
     lastError: record.lastError,
-    isConnected: record.status === "CONNECTED",
+    isConnected,
     createdAt: record.createdAt.toISOString(),
     updatedAt: record.updatedAt.toISOString(),
     sessionDiagnostics: diagnostics,
+    sentToday: record.sentToday ?? 0,
+    sentThisHour: record.sentThisHour ?? 0,
+    totalSent: record.totalSent ?? 0,
+    dailyCap: record.dailyCap ?? null,
+    effectiveDailyCap: warmup.dailyCap,
+    hourlyCap: record.hourlyCap ?? null,
+    effectiveHourlyCap,
+    warmupStage: warmup.stage,
+    warmupStartedAt: record.warmupStartedAt ? record.warmupStartedAt.toISOString() : null,
+    pausedUntil: record.pausedUntil ? record.pausedUntil.toISOString() : null,
+    lastSentAt: record.lastSentAt ? record.lastSentAt.toISOString() : null,
+    lastErrorCode: record.lastErrorCode ?? null,
+    consecutiveErrors: record.consecutiveErrors ?? 0,
+    customMinGapSeconds: record.customMinGapSeconds ?? null,
+    customMaxGapSeconds: record.customMaxGapSeconds ?? null,
+    timezone: record.timezone ?? "UTC",
+    workingHoursStart: record.workingHoursStart ?? 9,
+    workingHoursEnd: record.workingHoursEnd ?? 18,
+    nextAllowedSendAt,
   };
 }
 
@@ -102,70 +168,98 @@ async function syncUnipileSenders(
       return prov === "INSTAGRAM" || prov === "" || prov === "MESSAGING";
     });
 
-    const active = instagramAccounts.find((acc) => isUnipileAccountActive(acc));
-    if (!active) return records;
+    if (instagramAccounts.length === 0) return records;
 
-    const detectedUsername = getUnipileAccountUsername(active);
-    if (!detectedUsername) return records;
+    const prisma = getPrismaClient();
 
-    // Check if any record matches this unipile account id or username
-    let matched =
-      records.find((r) => r.unipileAccountId === active.id || r.sessionPath === `unipile:${active.id}`) ||
-      records.find((r) => r.username.toLowerCase() === detectedUsername.toLowerCase());
+    for (const acc of instagramAccounts) {
+      const detectedUsername = getUnipileAccountUsername(acc);
+      if (!detectedUsername) continue;
+      const isActive = isUnipileAccountActive(acc);
 
-    if (!matched) {
-      // Check if any sender account in the entire DB already has this unipileAccountId
-      const existingGlobal = await getPrismaClient().instagramSenderAccount.findUnique({
-        where: { unipileAccountId: active.id },
-      });
-      if (existingGlobal) {
-        matched = existingGlobal;
+      // Check if any record matches this unipile account id or username
+      let matched: SenderAccountRecord | null | undefined =
+        records.find((r) => r.unipileAccountId === acc.id || r.sessionPath === `unipile:${acc.id}`) ||
+        records.find((r) => r.username.toLowerCase() === detectedUsername.toLowerCase());
+
+      if (!matched) {
+        matched = await prisma.instagramSenderAccount.findFirst({
+          where: {
+            OR: [
+              { unipileAccountId: acc.id },
+              { sessionPath: `unipile:${acc.id}` },
+              { username: detectedUsername },
+            ],
+          },
+        });
       }
-    }
 
-    if (!matched) {
-      // Pick any CONNECTING record or pending record for this user
-      matched =
-        records.find((r) => r.status === "CONNECTING") ||
-        records.find((r) => r.username.startsWith("pending_")) ||
-        records[0];
-    }
+      if (!matched) {
+        matched = await prisma.instagramSenderAccount.findFirst({
+          where: {
+            userId,
+            status: "CONNECTING",
+            unipileAccountId: null,
+          },
+          orderBy: { createdAt: "asc" },
+        });
+      }
 
-    if (matched) {
-      await updateSenderAccountRecord(matched.id, {
-        userId,
-        status: "CONNECTED",
-        connectionMethod: "UNIPILE",
-        unipileAccountId: active.id,
-        username: detectedUsername,
-        sessionPath: `unipile:${active.id}`,
-        lastVerifiedAt: new Date(),
-        lastError: null,
-      });
-    } else {
-      await createSenderAccountRecord({
-        userId,
-        username: detectedUsername,
-        displayName: detectedUsername,
-        connectionMethod: "UNIPILE",
-        unipileAccountId: active.id,
-        sessionType: "PERSISTENT_PROFILE",
-        sessionPath: `unipile:${active.id}`,
-        status: "CONNECTED",
-      });
-    }
+      const targetStatus: InstagramSenderStatus = isActive ? "CONNECTED" : "AUTH_REQUIRED";
+      const targetError = isActive
+        ? null
+        : "Instagram session expired or requires authentication. Click Reconnect to restore access.";
 
-    // Clean up any extra pending records that were created during repeated connect attempts
-    const refreshed = await listSenderAccountsForUser(userId);
-    const extraPendings = refreshed.filter(
-      (r) =>
-        r.status === "CONNECTING" &&
-        r.username.startsWith("pending_") &&
-        r.unipileAccountId !== active.id &&
-        r.sessionPath !== `unipile:${active.id}`,
-    );
-    for (const extra of extraPendings) {
-      await deleteSenderAccountRecord(extra.id).catch(() => undefined);
+      if (matched) {
+        if (
+          matched.status !== targetStatus ||
+          matched.username !== detectedUsername ||
+          matched.unipileAccountId !== acc.id
+        ) {
+          await updateSenderAccountRecord(matched.id, {
+            status: targetStatus,
+            connectionMethod: "UNIPILE",
+            unipileAccountId: acc.id,
+            username: detectedUsername,
+            sessionPath: `unipile:${acc.id}`,
+            lastVerifiedAt: new Date(),
+            lastError: targetError,
+          });
+
+          if (matched.status !== targetStatus) {
+            await notifySenderStatusChange({
+              userId: matched.userId,
+              senderUsername: detectedUsername,
+              previousStatus: matched.status,
+              newStatus: targetStatus,
+              errorMessage: targetError || undefined,
+            }).catch(() => undefined);
+          }
+        }
+      } else {
+        const existingGlobal = await prisma.instagramSenderAccount.findFirst({
+          where: {
+            OR: [{ unipileAccountId: acc.id }, { sessionPath: `unipile:${acc.id}` }],
+          },
+        });
+
+        if (!existingGlobal) {
+          await prisma.instagramSenderAccount.create({
+            data: {
+              userId,
+              username: detectedUsername,
+              displayName: detectedUsername,
+              connectionMethod: "UNIPILE",
+              unipileAccountId: acc.id,
+              sessionType: "PERSISTENT_PROFILE",
+              sessionPath: `unipile:${acc.id}`,
+              status: targetStatus,
+              lastVerifiedAt: new Date(),
+              lastError: targetError,
+            },
+          });
+        }
+      }
     }
 
     return await listSenderAccountsForUser(userId);
@@ -184,14 +278,7 @@ export async function listSenderAccounts(userId: string): Promise<SenderAccountD
   let records = await listSenderAccountsForUser(userId);
 
   if (isUnipile) {
-    const needsSync =
-      records.length === 0 ||
-      records.some(
-        (r) => r.status === "CONNECTING" || r.username.startsWith("pending_"),
-      );
-    if (needsSync) {
-      records = await syncUnipileSenders(userId, records);
-    }
+    records = await syncUnipileSenders(userId, records);
   }
 
   return Promise.all(
@@ -321,20 +408,6 @@ export async function startSenderConnect(
 
   const manager = getSenderSessionManager();
 
-  // Already connected: never launch or navigate anything.
-  if (owned.status === "CONNECTED") {
-    logger.info("[SENDER SESSION] connect ignored; sender already connected", {
-      senderAccountId: owned.id,
-    });
-    return {
-      success: true,
-      status: "CONNECTED",
-      reusedExistingSession: true,
-      sender: await getSenderAccount(owned.id, userId),
-      instructions: "This Instagram sender account is already connected.",
-    };
-  }
-
   const isUnipile = getServerEnv("MESSAGING_PROVIDER")?.toLowerCase() !== "playwright";
   if (isUnipile) {
     const unipile = getUnipileClient();
@@ -343,6 +416,32 @@ export async function startSenderConnect(
         "AUTH_REQUIRED",
         "Unipile API credentials (UNIPILE_API_KEY and UNIPILE_DSN) are not configured in .env.",
       );
+    }
+
+    // Check if account in Unipile is actually still active
+    let accountIsActive = false;
+    if (owned.unipileAccountId) {
+      try {
+        const acc = await unipile.getAccount(owned.unipileAccountId);
+        if (acc && isUnipileAccountActive(acc)) {
+          accountIsActive = true;
+        }
+      } catch {
+        accountIsActive = false;
+      }
+    }
+
+    if (owned.status === "CONNECTED" && accountIsActive) {
+      logger.info("[SENDER SESSION] connect ignored; sender already connected and active", {
+        senderAccountId: owned.id,
+      });
+      return {
+        success: true,
+        status: "CONNECTED",
+        reusedExistingSession: true,
+        sender: await getSenderAccount(owned.id, userId),
+        instructions: "This Instagram sender account is already connected.",
+      };
     }
 
     const connecting =
@@ -354,9 +453,28 @@ export async function startSenderConnect(
           });
 
     try {
-      const link = await unipile.createHostedAuthLink({
-        name: userId,
-      });
+      let link: { url: string } | null = null;
+      if (owned.unipileAccountId) {
+        try {
+          link = await unipile.createHostedAuthLink({
+            type: "reconnect",
+            existingAccountId: owned.unipileAccountId,
+            name: userId,
+          });
+        } catch (reconnectErr) {
+          logger.warn("[SENDER] reconnect hosted link failed, falling back to create", {
+            senderAccountId: owned.id,
+            error: reconnectErr instanceof Error ? reconnectErr.message : String(reconnectErr),
+          });
+        }
+      }
+
+      if (!link) {
+        link = await unipile.createHostedAuthLink({
+          type: "create",
+          name: userId,
+        });
+      }
 
       return {
         success: true,
@@ -375,6 +493,20 @@ export async function startSenderConnect(
       });
       throw new BadRequestError("UNIPILE_ERROR", msg);
     }
+  }
+
+  // Playwright mode: Already connected: never launch or navigate anything.
+  if (owned.status === "CONNECTED") {
+    logger.info("[SENDER SESSION] connect ignored; sender already connected", {
+      senderAccountId: owned.id,
+    });
+    return {
+      success: true,
+      status: "CONNECTED",
+      reusedExistingSession: true,
+      sender: await getSenderAccount(owned.id, userId),
+      instructions: "This Instagram sender account is already connected.",
+    };
   }
 
   // A manual-login browser is already open: reuse it, do NOT launch another.
@@ -828,6 +960,40 @@ export async function disconnectSenderAccount(
   return toSenderAccountDto(disconnected);
 }
 
+export async function deleteSenderAccount(
+  senderAccountId: string,
+  userId: string,
+): Promise<{ success: true; id: string }> {
+  const owned = await findSenderAccountOwned(senderAccountId, userId);
+  if (!owned) {
+    throw new NotFoundError(
+      "SENDER_NOT_FOUND",
+      `Instagram sender account "${senderAccountId}" was not found.`,
+    );
+  }
+
+  const manager = getSenderSessionManager();
+  await manager.closeSession(owned.id, "disconnect").catch(() => undefined);
+  removeSenderSessionDir(owned.sessionPath);
+
+  if (owned.unipileAccountId) {
+    const unipile = getUnipileClient();
+    if (unipile.isConfigured) {
+      await unipile.deleteAccount(owned.unipileAccountId).catch(() => undefined);
+    }
+  }
+
+  await deleteSenderAccountRecord(owned.id);
+
+  logger.info("[SENDER] account permanently deleted", {
+    senderAccountId: owned.id,
+    userId,
+    username: owned.username,
+  });
+
+  return { success: true, id: owned.id };
+}
+
 // ---------------------------------------------------------------------------
 // Dispatch-time resolution (used by the message dispatcher / bulk worker)
 // ---------------------------------------------------------------------------
@@ -860,7 +1026,11 @@ export async function resolveSenderForDispatch(
         `Instagram sender account "${senderAccountId}" was not found.`,
       );
     }
-    if (owned.status !== "CONNECTED") {
+    const isEligible =
+      owned.status === "CONNECTED" ||
+      owned.status === "ACTIVE" ||
+      owned.status === "WARMING";
+    if (!isEligible) {
       return {
         kind: "not_ready",
         sender: owned,
@@ -971,7 +1141,11 @@ export async function diagnoseSenderDm(
   }
   const targetProfileUrl = resolveDiagnosticTarget(input);
 
-  if (owned.status !== "CONNECTED") {
+  const isEligible =
+    owned.status === "CONNECTED" ||
+    owned.status === "ACTIVE" ||
+    owned.status === "WARMING";
+  if (!isEligible) {
     throw new BadRequestError(
       owned.status === "AUTH_REQUIRED" || owned.status === "EXPIRED"
         ? "AUTH_REQUIRED"
@@ -1101,4 +1275,109 @@ export async function findConnectedSenderForDispatch(
   userId: string,
 ): Promise<SenderAccountRecord | null> {
   return findConnectedSenderForUser(userId);
+}
+
+export async function findConnectedSendersForDispatch(
+  userId: string,
+): Promise<SenderAccountRecord[]> {
+  return findConnectedSendersForUser(userId);
+}
+
+export async function updateSenderSettings(
+  senderAccountId: string,
+  userId: string,
+  input: {
+    dailyCap?: number | null;
+    hourlyCap?: number | null;
+    customMinGapSeconds?: number | null;
+    customMaxGapSeconds?: number | null;
+    timezone?: string;
+    workingHoursStart?: number;
+    workingHoursEnd?: number;
+  },
+): Promise<SenderAccountDto> {
+  const owned = await findSenderAccountOwned(senderAccountId, userId);
+  if (!owned) {
+    throw new NotFoundError(
+      "SENDER_NOT_FOUND",
+      `Instagram sender account "${senderAccountId}" was not found.`,
+    );
+  }
+
+  const hardMax = getSenderDailyHardMax();
+  if (input.dailyCap !== undefined && input.dailyCap !== null) {
+    if (typeof input.dailyCap !== "number" || input.dailyCap < 1 || input.dailyCap > hardMax) {
+      throw new BadRequestError(
+        "INVALID_DAILY_CAP",
+        `Daily cap must be between 1 and ${hardMax}.`,
+      );
+    }
+  }
+
+  const hourlyHardMax = getSenderHourlyHardMax();
+  if (input.hourlyCap !== undefined && input.hourlyCap !== null) {
+    if (typeof input.hourlyCap !== "number" || input.hourlyCap < 1 || input.hourlyCap > hourlyHardMax) {
+      throw new BadRequestError(
+        "INVALID_HOURLY_CAP",
+        `Hourly cap must be between 1 and ${hourlyHardMax}.`,
+      );
+    }
+  }
+
+  const updated = await updateSenderAccountRecord(senderAccountId, {
+    dailyCap: input.dailyCap,
+    hourlyCap: input.hourlyCap,
+    customMinGapSeconds: input.customMinGapSeconds,
+    customMaxGapSeconds: input.customMaxGapSeconds,
+    timezone: input.timezone,
+    workingHoursStart: input.workingHoursStart,
+    workingHoursEnd: input.workingHoursEnd,
+  });
+
+  const diagnostics = await getSenderSessionManager().getSessionDiagnostics(updated.id);
+  return toSenderAccountDto(updated, diagnostics);
+}
+
+export async function pauseSenderAccount(
+  senderAccountId: string,
+  userId: string,
+): Promise<SenderAccountDto> {
+  const owned = await findSenderAccountOwned(senderAccountId, userId);
+  if (!owned) {
+    throw new NotFoundError(
+      "SENDER_NOT_FOUND",
+      `Instagram sender account "${senderAccountId}" was not found.`,
+    );
+  }
+
+  const updated = await updateSenderAccountRecord(senderAccountId, {
+    status: "PAUSED",
+  });
+  const diagnostics = await getSenderSessionManager().getSessionDiagnostics(updated.id);
+  return toSenderAccountDto(updated, diagnostics);
+}
+
+export async function resumeSenderAccount(
+  senderAccountId: string,
+  userId: string,
+): Promise<SenderAccountDto> {
+  const owned = await findSenderAccountOwned(senderAccountId, userId);
+  if (!owned) {
+    throw new NotFoundError(
+      "SENDER_NOT_FOUND",
+      `Instagram sender account "${senderAccountId}" was not found.`,
+    );
+  }
+
+  const isWarming = owned.warmupStartedAt !== null;
+  const newStatus: InstagramSenderStatus = isWarming ? "WARMING" : "ACTIVE";
+
+  const updated = await updateSenderAccountRecord(senderAccountId, {
+    status: newStatus,
+    pausedUntil: null,
+    lastErrorCode: null,
+    consecutiveErrors: 0,
+  });
+  const diagnostics = await getSenderSessionManager().getSessionDiagnostics(updated.id);
+  return toSenderAccountDto(updated, diagnostics);
 }

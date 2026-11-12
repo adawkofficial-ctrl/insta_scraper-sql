@@ -19,7 +19,7 @@ import {
 } from "../src/lib/services/execution/campaign-execution-service";
 import { classifyMessagingError } from "../src/lib/services/messaging/error-classifier";
 
-const BASE_URL = process.env.TEST_BASE_URL || "http://localhost:3001";
+const BASE_URL = process.env.TEST_BASE_URL || "http://localhost:3005";
 const prisma = getPrismaClient();
 
 let passed = 0;
@@ -180,7 +180,8 @@ async function runTests() {
     method: "POST",
     headers: { Cookie: userA.cookie },
   });
-  assert(pauseRes.ok, "Pause endpoint returns 200 OK");
+  const pauseBody = await pauseRes.clone().text();
+  assert(pauseRes.ok, "Pause endpoint returns 200 OK", `status=${pauseRes.status} body=${pauseBody}`);
   const pausedStatus = await getCampaignExecutionStatus(campaignA.id, userA.user.id);
   assert(pausedStatus.campaignStatus === "PAUSED", "Campaign status updated to PAUSED in DB");
   assert(pausedStatus.executionStatus === "PAUSED", "Execution status updated to PAUSED in DB");

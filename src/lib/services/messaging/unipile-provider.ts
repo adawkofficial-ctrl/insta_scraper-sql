@@ -57,11 +57,13 @@ export class UnipileMessagingProvider implements MessagingProvider {
       }
 
       if (instagramAccounts.length > 0) {
+        const firstIg = instagramAccounts[0];
+        const igUser = getUnipileAccountUsername(firstIg) || firstIg.name || firstIg.id;
         return {
           provider: this.name,
           authenticated: false,
           status: "AUTH_REQUIRED",
-          message: "Instagram account in Unipile requires re-authentication.",
+          message: `Instagram sender account (@${igUser}) requires authentication. Please reconnect in Settings > Instagram Senders.`,
         };
       }
 
@@ -69,7 +71,7 @@ export class UnipileMessagingProvider implements MessagingProvider {
         provider: this.name,
         authenticated: false,
         status: "AUTH_REQUIRED",
-        message: "No connected Instagram sender account found in Unipile. Please connect an account.",
+        message: "No connected Instagram sender account found in Unipile. Please connect an account in Settings.",
       };
     } catch (err) {
       const msg = err instanceof Error ? err.message : String(err);

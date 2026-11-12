@@ -19,6 +19,22 @@ export interface PersistInput {
   maxLeads: number;
 }
 
+/**
+ * Source stored on Lead.source. Instagram-only runs are labelled
+ * `instagram_scraper`; every other provider keeps the legacy `discovery` label.
+ */
+export function resolveDiscoveryPersistSource(
+  profiles: Array<Pick<LeadProfile, "source" | "sourceProvider">>,
+): string {
+  return profiles.some(
+    (profile) =>
+      profile.source === "instagram_scraper" ||
+      profile.sourceProvider === "instagram_scraper",
+  )
+    ? "instagram_scraper"
+    : "discovery";
+}
+
 export async function persistStage(
   input: PersistInput,
   context: PipelineStageContext,
@@ -177,14 +193,16 @@ export async function persistStage(
   }
 
   // 4. Upsert leads into database with multi-attribute deduplication
+  const persistSource = resolveDiscoveryPersistSource(toPersist);
   const persistResult = await persistCampaignLeads(
     context.campaign.id,
     toPersist,
     input.maxLeads,
     {
-      source: "discovery",
+      source: persistSource,
       scrapeJobId: context.jobId,
       userId: context.userId ?? context.campaign.userId,
+      isDryRun: context.isDryRun ?? false,
     },
   );
 

@@ -12,7 +12,7 @@ const ZERO_WIDTH = /[\u200b-\u200f\u202a-\u202e\u2060-\u206f\ufeff]/g;
 const CONTROL = /[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g;
 
 export type PromptLeadInput = {
-  username: string;
+  username?: string | null;
   fullName?: string | null;
   biography?: string | null;
   category?: string | null;
@@ -145,7 +145,7 @@ export function buildLeadContext(
   );
 
   const fields: Array<[string, string]> = [];
-  fields.push(["username", lead.username]);
+  if (lead.username) fields.push(["username", lead.username]);
   if (name) fields.push(["full_name", name]);
   if (bio) fields.push(["biography", bio]);
   if (category) fields.push(["category", category]);

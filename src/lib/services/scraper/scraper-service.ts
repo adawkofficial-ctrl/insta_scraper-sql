@@ -46,6 +46,8 @@ export type InstagramProfileScrapeResult = {
   skipped: SkippedScrapeProfile[];
   usageTotalUsd?: number;
   computeUnits?: number;
+  isTimedOut?: boolean;
+  isWasted?: boolean;
 };
 
 export async function scrapeInstagramProfiles(
@@ -74,7 +76,7 @@ export async function scrapeInstagramProfiles(
 
   const job = await scraper.startJob(input);
   const runId = job.status.providerJobId ?? job.jobId;
-  const { profiles, skipped, usageTotalUsd, computeUnits } = await scraper.getResults(runId);
+  const { profiles, skipped, usageTotalUsd, computeUnits, isTimedOut, isWasted } = await scraper.getResults(runId);
 
   return {
     provider: job.provider,
@@ -83,5 +85,7 @@ export async function scrapeInstagramProfiles(
     skipped,
     usageTotalUsd,
     computeUnits,
+    isTimedOut,
+    isWasted,
   };
 }

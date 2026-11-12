@@ -9,16 +9,80 @@ import {
   normalizePhone,
   computeAvailableChannels,
 } from "../contact/contact-parser";
+import { getEnrichmentProviderName } from "@/lib/env";
 
 export const INSTAGRAM_PROFILE_ACTOR_ID = "apify/instagram-profile-scraper";
 
+export type IgEnrichmentActorMode = "profile_scraper" | "instagram_scraper_details";
+
+export const DEFAULT_IG_ENRICHMENT_ACTOR: IgEnrichmentActorMode = "instagram_scraper_details";
+
+export function getIgEnrichmentActorMode(): IgEnrichmentActorMode {
+  const explicit = process.env.IG_ENRICHMENT_ACTOR?.trim().toLowerCase();
+  if (explicit === "instagram_scraper_details") {
+    return "instagram_scraper_details";
+  }
+  if (explicit === "profile_scraper") {
+    return "profile_scraper";
+  }
+  return getEnrichmentProviderName() === "instagram_scraper"
+    ? "instagram_scraper_details"
+    : "profile_scraper";
+}
+
+export function getActiveEnrichmentActorId(): string {
+  const mode = getIgEnrichmentActorMode();
+  if (mode === "instagram_scraper_details") {
+    const custom = process.env.APIFY_IG_SCRAPER_ACTOR_ID?.trim();
+    return custom && custom.length > 0 && custom !== "undefined"
+      ? custom
+      : "apify/instagram-scraper";
+  }
+  const custom = process.env.APIFY_PROFILE_ACTOR_ID?.trim();
+  return custom && custom.length > 0 && custom !== "undefined"
+    ? custom
+    : INSTAGRAM_PROFILE_ACTOR_ID;
+}
+
+export function buildInstagramProfileUrls(usernames: string[]): string[] {
+  return usernames.map((u) => {
+    const clean = normalizeInstagramUsername(u) ?? u.trim();
+    return clean.startsWith("http://") || clean.startsWith("https://")
+      ? clean
+      : `https://www.instagram.com/${clean}/`;
+  });
+}
+
 // The Actor's input schema only accepts a `usernames` array (verified against
 // apify/instagram-profile-scraper): there is no resultsLimit/resultsType field.
-// Batch size and the "Maximum Leads" cap are therefore enforced by this app.
-export const MAX_PROFILE_BATCH_SIZE = 100;
+export function getMaxLeadLimit(): number {
+  if (process.env.DISCOVERY_STAGE === "pilot_small") {
+    return 10;
+  }
+  const envVal = process.env.MAX_LEAD_LIMIT;
+  if (envVal) {
+    const parsed = Number.parseInt(envVal, 10);
+    if (!Number.isNaN(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+  return 100;
+}
+
+export function getMaxProfileBatchSize(): number {
+  const envVal = process.env.MAX_PROFILE_BATCH_SIZE;
+  if (envVal) {
+    const parsed = Number.parseInt(envVal, 10);
+    if (!Number.isNaN(parsed) && parsed > 0) {
+      return parsed;
+    }
+  }
+  return 1000;
+}
 
 export const MIN_LEAD_LIMIT = 1;
-export const MAX_LEAD_LIMIT = 100;
+export const MAX_LEAD_LIMIT = getMaxLeadLimit();
+export const MAX_PROFILE_BATCH_SIZE = getMaxProfileBatchSize();
 export const DEFAULT_LEAD_LIMIT = 10;
 
 const MAX_RELATED_PROFILES = 12;
@@ -62,13 +126,14 @@ export class ScrapeInputError extends Error {
  * Normalizes numeric strings, rejects non-integers, floats, NaN, and out-of-range (1-100).
  */
 export function parseLeadLimit(value: unknown, allowDefault = true): number {
+  const maxLimit = getMaxLeadLimit();
   if (value === undefined || value === null) {
     if (allowDefault) {
       return DEFAULT_LEAD_LIMIT;
     }
     throw new ScrapeInputError(
       "INVALID_LEAD_LIMIT",
-      `"maxLeads" is required and must be an integer between ${MIN_LEAD_LIMIT} and ${MAX_LEAD_LIMIT}.`,
+      `"maxLeads" is required and must be an integer between ${MIN_LEAD_LIMIT} and ${maxLimit}.`,
     );
   }
 
@@ -81,28 +146,28 @@ export function parseLeadLimit(value: unknown, allowDefault = true): number {
     if (!/^-?\d+$/.test(trimmed)) {
       throw new ScrapeInputError(
         "INVALID_LEAD_LIMIT",
-        `"maxLeads" must be an integer between ${MIN_LEAD_LIMIT} and ${MAX_LEAD_LIMIT}.`,
+        `"maxLeads" must be an integer between ${MIN_LEAD_LIMIT} and ${maxLimit}.`,
       );
     }
     numValue = Number.parseInt(trimmed, 10);
   } else {
     throw new ScrapeInputError(
       "INVALID_LEAD_LIMIT",
-      `"maxLeads" must be an integer between ${MIN_LEAD_LIMIT} and ${MAX_LEAD_LIMIT}.`,
+      `"maxLeads" must be an integer between ${MIN_LEAD_LIMIT} and ${maxLimit}.`,
     );
   }
 
   if (!Number.isInteger(numValue) || Number.isNaN(numValue)) {
     throw new ScrapeInputError(
       "INVALID_LEAD_LIMIT",
-      `"maxLeads" must be an integer between ${MIN_LEAD_LIMIT} and ${MAX_LEAD_LIMIT}.`,
+      `"maxLeads" must be an integer between ${MIN_LEAD_LIMIT} and ${maxLimit}.`,
     );
   }
 
-  if (numValue < MIN_LEAD_LIMIT || numValue > MAX_LEAD_LIMIT) {
+  if (numValue < MIN_LEAD_LIMIT || numValue > maxLimit) {
     throw new ScrapeInputError(
       "LEAD_LIMIT_OUT_OF_RANGE",
-      `"maxLeads" must be between ${MIN_LEAD_LIMIT} and ${MAX_LEAD_LIMIT}.`,
+      `"maxLeads" must be between ${MIN_LEAD_LIMIT} and ${maxLimit}.`,
     );
   }
 
@@ -136,10 +201,11 @@ export function parseScrapeRequest(body: unknown): string[] {
       "At least one username is required.",
     );
   }
-  if (raw.length > MAX_PROFILE_BATCH_SIZE) {
+  const maxBatch = getMaxProfileBatchSize();
+  if (raw.length > maxBatch) {
     throw new ScrapeInputError(
       "BATCH_TOO_LARGE",
-      `Too many usernames: ${raw.length}. The maximum for this batch is ${MAX_PROFILE_BATCH_SIZE}.`,
+      `Too many usernames: ${raw.length}. The maximum for this batch is ${maxBatch}.`,
     );
   }
 
@@ -212,9 +278,10 @@ export function normalizeInstagramProfileItem(
     return null;
   }
 
-  const itemUrl = readString(record.url);
+  const itemUrl = readString(record.url) ?? readString(record.inputUrl);
   const username = (
     readString(record.username) ??
+    readString(record.ownerUsername) ??
     (itemUrl === null ? null : extractUsernameFromUrl(itemUrl))
   )?.toLowerCase();
 
@@ -222,25 +289,58 @@ export function normalizeInstagramProfileItem(
     return null;
   }
 
-  const profilePicUrl = readString(record.profilePicUrl);
-  const profilePicUrlHD = readString(record.profilePicUrlHD);
-  const preferredPic = profilePicUrlHD ?? profilePicUrl;
+  const followersCount = readNumber(record.followersCount) ?? readNumber(record.followers);
+  const followsCount = readNumber(record.followsCount) ?? readNumber(record.following);
+  // Posts count: handle missing postsCount as null (never 0)
+  const postsCount =
+    record.postsCount !== undefined && record.postsCount !== null
+      ? readNumber(record.postsCount)
+      : record.mediaCount !== undefined && record.mediaCount !== null
+        ? readNumber(record.mediaCount)
+        : null;
 
-  const followersCount = readNumber(record.followersCount);
-  const followsCount = readNumber(record.followsCount);
-  const postsCount = readNumber(record.postsCount);
-  const verified = readBoolean(record.verified);
-  const isBusinessAccount = readBoolean(record.isBusinessAccount);
-  const businessCategoryName = readString(record.businessCategoryName);
-  const externalUrl = readString(record.externalUrl);
-  const location = readString(record.locationName) ?? readString(record.location);
+  const verified = readBoolean(record.verified) ?? readBoolean(record.isVerified) ?? readBoolean(record.is_verified);
+  const isBusinessAccount =
+    readBoolean(record.isBusinessAccount) ??
+    readBoolean(record.is_business_account) ??
+    readBoolean(record.isBusiness);
+  const businessCategoryName =
+    readString(record.businessCategoryName) ??
+    readString(record.categoryName) ??
+    readString(record.category);
+  const externalUrl = readString(record.externalUrl) ?? readString(record.external_url);
+  const businessAddressRaw = record.businessAddress ?? record.business_address_json;
+  const businessAddress =
+    businessAddressRaw !== null && typeof businessAddressRaw === "object" && !Array.isArray(businessAddressRaw)
+      ? (businessAddressRaw as Record<string, unknown>)
+      : null;
+  const businessCity =
+    readString(businessAddress?.city_name) ??
+    readString(businessAddress?.cityName) ??
+    readString(businessAddress?.city) ??
+    readString(record.city_name);
+  const location =
+    readString(record.locationName) ??
+    readString(record.location) ??
+    businessCity;
+  const isPrivate =
+    readBoolean(record.isPrivate) ??
+    readBoolean(record.private) ??
+    readBoolean(record.is_private);
 
-  const biography = readString(record.biography);
+  const biography = readString(record.biography) ?? readString(record.bio);
   const bioContact = extractContactFromBio(biography, externalUrl);
-  const email = readString(record.email) ?? readString(record.businessEmail) ?? bioContact.email;
+  const email =
+    readString(record.email) ??
+    readString(record.businessEmail) ??
+    readString(record.public_email) ??
+    readString(record.publicEmail) ??
+    bioContact.email;
   const phone =
     readString(record.phoneNumber) ??
     readString(record.contactPhoneNumber) ??
+    readString(record.public_phone_number) ??
+    readString(record.publicPhoneNumber) ??
     readString(record.phone) ??
     bioContact.phone;
   const phoneNormalized = normalizePhone(phone);
@@ -251,40 +351,73 @@ export function normalizeInstagramProfileItem(
     phone,
   });
 
+  let lastPostAt: string | null = null;
+  let recentLikesAvg: number | null = null;
+  let recentCommentsAvg: number | null = null;
+  const rawPosts = Array.isArray(record.latestPosts)
+    ? record.latestPosts
+    : Array.isArray(record.posts)
+      ? record.posts
+      : null;
+  if (rawPosts && rawPosts.length > 0) {
+    const likes: number[] = [];
+    const comments: number[] = [];
+    let latestMs = -1;
+    for (const post of rawPosts) {
+      if (post === null || typeof post !== "object" || Array.isArray(post)) continue;
+      const p = post as Record<string, unknown>;
+      const likesCount = readNumber(p.likesCount ?? p.likes);
+      const commentsCount = readNumber(p.commentsCount ?? p.comments);
+      if (likesCount !== null) likes.push(likesCount);
+      if (commentsCount !== null) comments.push(commentsCount);
+      const rawTs = p.timestamp ?? p.takenAt ?? p.date ?? p.takenAtTimestamp;
+      if (typeof rawTs === "string") {
+        const d = new Date(rawTs);
+        if (!Number.isNaN(d.getTime())) latestMs = Math.max(latestMs, d.getTime());
+      } else if (typeof rawTs === "number") {
+        const ms = rawTs < 10000000000 ? rawTs * 1000 : rawTs;
+        latestMs = Math.max(latestMs, ms);
+      }
+    }
+    if (latestMs >= 0) lastPostAt = new Date(latestMs).toISOString();
+    const avg = (values: number[]): number | null =>
+      values.length === 0 ? null : values.reduce((a, b) => a + b, 0) / values.length;
+    recentLikesAvg = avg(likes);
+    recentCommentsAvg = avg(comments);
+  }
+  const engagementRate =
+    followersCount !== null &&
+    followersCount > 0 &&
+    (recentLikesAvg !== null || recentCommentsAvg !== null)
+      ? ((recentLikesAvg ?? 0) + (recentCommentsAvg ?? 0)) / followersCount
+      : null;
+
   const rawProfileData: Record<string, unknown> = {
-    id: readId(record.id),
     username,
-    fullName: readString(record.fullName),
-    biography,
-    email,
-    phone,
-    phoneNormalized,
-    website: bioContact.website,
-    socialLink: bioContact.socialLink,
-    socialPlatform: bioContact.socialPlatform,
-    contactSource,
-    availableChannels,
-    externalUrl,
+    fullName: readString(record.fullName) ?? readString(record.name),
     followersCount,
     followsCount,
     postsCount,
+    lastPostAt,
+    recentLikesAvg,
+    recentCommentsAvg,
+    engagementRate,
+    biography,
+    externalUrl,
+    ...(record.externalUrls !== undefined ? { externalUrls: record.externalUrls } : {}),
     isBusinessAccount,
     businessCategoryName,
+    isPrivate,
+    private: isPrivate,
     verified,
-    profilePicUrl,
-    profilePicUrlHD,
-    highlightReelCount: readNumber(record.highlightReelCount),
-    isPrivate: readBoolean(record.isPrivate),
-    location,
-    joinedRecently: readBoolean(record.joinedRecently),
-    hasChannel: readBoolean(record.hasChannel),
+    enrichmentStatus: "ENRICHED",
   };
 
   return {
     username,
     profileUrl: itemUrl ?? `https://www.instagram.com/${username}/`,
     instagramId: readId(record.id),
-    fullName: readString(record.fullName),
+    fullName: readString(record.fullName) ?? readString(record.name),
     biography,
     email,
     phone,
@@ -299,9 +432,9 @@ export function normalizeInstagramProfileItem(
     followersCount,
     followsCount,
     postsCount,
-    profilePictureUrl: preferredPic,
-    profilePicUrl,
-    profilePicUrlHD,
+    profilePictureUrl: null, // Dropped to minimize payload
+    profilePicUrl: null,     // Dropped to minimize payload
+    profilePicUrlHD: null,   // Dropped to minimize payload
     isVerified: verified,
     verified,
     isBusiness: isBusinessAccount,
@@ -309,14 +442,47 @@ export function normalizeInstagramProfileItem(
     category: businessCategoryName,
     businessCategoryName,
     externalUrl,
-    // The Actor only returns a location-ish value when present; otherwise null.
     location,
-    relatedProfiles: normalizeRelatedProfiles(record.relatedProfiles),
-    latestPosts: normalizeLatestPosts(record.latestPosts),
+    isPrivate,
+    relatedProfiles: null, // Dropped to minimize stored payload
+    latestPosts: null,     // Dropped to minimize stored payload
+    lastPostAt,
     rawProfileData,
     source: "apify",
     scrapedAt,
   };
+}
+
+export const WHITELISTED_PROFILE_ENRICHMENT_FIELDS = [
+  "username",
+  "fullName",
+  "followersCount",
+  "followsCount",
+  "postsCount",
+  "biography",
+  "externalUrl",
+  "externalUrls",
+  "isBusinessAccount",
+  "businessCategoryName",
+  "isPrivate",
+  "private",
+  "verified",
+] as const;
+
+/**
+ * Strips all non-whitelisted profile-actor fields (posts, likes, comments, images, related profiles)
+ * from an Apify profile scraper record.
+ */
+export function filterProfileActorPayload(
+  record: Record<string, unknown>,
+): Record<string, unknown> {
+  const sanitized: Record<string, unknown> = {};
+  for (const key of WHITELISTED_PROFILE_ENRICHMENT_FIELDS) {
+    if (key in record && record[key] !== undefined) {
+      sanitized[key] = record[key];
+    }
+  }
+  return sanitized;
 }
 
 /**
@@ -346,7 +512,7 @@ export function extractActorError(
   };
 }
 
-function normalizeRelatedProfiles(
+export function normalizeRelatedProfiles(
   value: unknown,
 ): LeadRelatedProfile[] | null {
   if (!Array.isArray(value)) {
@@ -381,7 +547,7 @@ function normalizeRelatedProfiles(
   return profiles;
 }
 
-function normalizeLatestPosts(value: unknown): LeadLatestPost[] | null {
+export function normalizeLatestPosts(value: unknown): LeadLatestPost[] | null {
   if (!Array.isArray(value)) {
     return null;
   }

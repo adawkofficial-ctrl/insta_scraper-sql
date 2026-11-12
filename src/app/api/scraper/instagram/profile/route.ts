@@ -11,6 +11,7 @@ import { requireAuth } from "@/lib/services/auth";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
+export const maxDuration = 900;
 
 export async function POST(request: Request): Promise<Response> {
   try {

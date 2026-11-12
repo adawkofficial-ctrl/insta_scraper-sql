@@ -314,7 +314,7 @@ async function main() {
           userId: testUserA.id,
           channel: DncChannel.ALL,
           identifierType: DncIdentifierType.USERNAME,
-          identifierNormalized: leads[1].username.toLowerCase(),
+          identifierNormalized: leads[1].username!.toLowerCase(),
           source: DncSource.MANUAL,
         },
       });
@@ -323,7 +323,7 @@ async function main() {
           userId: testUserA.id,
           channel: DncChannel.ALL,
           identifierType: DncIdentifierType.USERNAME,
-          identifierNormalized: leads[3].username.toLowerCase(),
+          identifierNormalized: leads[3].username!.toLowerCase(),
           source: DncSource.MANUAL,
         },
       });
@@ -376,7 +376,7 @@ async function main() {
         entries: [
           {
             identifierType: DncIdentifierType.USERNAME,
-            value: `@${leadForDnc.username.toUpperCase()}`,
+            value: `@${leadForDnc.username!.toUpperCase()}`,
             channel: DncChannel.ALL,
             reason: "User requested opt out",
           },
@@ -408,7 +408,7 @@ async function main() {
         entries: [
           {
             identifierType: DncIdentifierType.USERNAME,
-            value: leadForDnc.username.toLowerCase(),
+            value: leadForDnc.username!.toLowerCase(),
             channel: DncChannel.ALL,
           },
         ],
@@ -572,7 +572,7 @@ async function main() {
         entries: [
           {
             identifierType: DncIdentifierType.USERNAME,
-            value: lateDncLead.username,
+            value: lateDncLead.username!,
             channel: DncChannel.ALL,
           },
         ],
@@ -701,7 +701,7 @@ async function main() {
         entries: [
           {
             identifierType: DncIdentifierType.USERNAME,
-            value: restorableLead.username,
+            value: restorableLead.username!,
             channel: DncChannel.ALL,
           },
         ],
@@ -712,7 +712,7 @@ async function main() {
       const dncEntry = await prisma.doNotContact.findFirst({
         where: {
           userId: testUserA.id,
-          identifierNormalized: restorableLead.username.toLowerCase(),
+          identifierNormalized: restorableLead.username!.toLowerCase(),
         },
       });
       assert(dncEntry, "DNC entry must exist");

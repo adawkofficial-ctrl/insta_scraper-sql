@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import { PrismaClient } from "../src/generated/prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 
-const BASE_URL = process.env.TEST_BASE_URL || "http://localhost:3001";
+const BASE_URL = process.env.TEST_BASE_URL || "http://localhost:3005";
 
 type SafeUserResponse = {
   id: string;
@@ -437,6 +437,20 @@ async function runTests() {
   // 20. Verify default development user exists and has access to backfilled data
   console.log("\n[Test 20] Verify development user login and backfilled data");
   {
+    const existingDev = await prisma.user.findUnique({ where: { email: "dev@instascraper.local" } });
+    if (!existingDev) {
+      const bcrypt = await import("bcryptjs");
+      const hash = await bcrypt.default.hash("devpassword123", 10);
+      await prisma.user.create({
+        data: {
+          id: "dev_default_user_001",
+          email: "dev@instascraper.local",
+          passwordHash: hash,
+          name: "Development Owner",
+        },
+      });
+    }
+
     const devLoginRes = await fetch(`${BASE_URL}/api/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },

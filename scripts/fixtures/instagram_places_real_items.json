@@ -1,0 +1,137 @@
+[
+  {
+    "searchTerm": "teeth whitening clinic canada",
+    "searchSource": "google",
+    "inputUrl": "https://www.instagram.com/explore/locations/467031620510557/bright-smiles-clinic/",
+    "name": "Bright Smiles Clinic",
+    "phone": "",
+    "category": "Teeth Whitening Service",
+    "media_count": 33,
+    "price_range": -1,
+    "lat": 51.91581,
+    "lng": -8.17435,
+    "slug": "bright-smiles-clinic",
+    "location_id": "467031620510557",
+    "location_address": "",
+    "location_city": "",
+    "location_zip": "",
+    "ig_business": {
+      "profile": {
+        "profile_pic_url": "https://instagram.example.com/pic_1.jpg",
+        "username": "brightsmilesclinic",
+        "id": "15913506433"
+      }
+    },
+    "hours": {
+      "status": "Closed until 10:00 AM"
+    }
+  },
+  {
+    "searchTerm": "teeth whitening clinic canada",
+    "searchSource": "google",
+    "inputUrl": "https://www.instagram.com/explore/locations/1957803151122190/sonrisa-british-dental-clinic/",
+    "name": "Sonrisa British Dental Clinic",
+    "phone": "",
+    "category": "Cosmetic Dentist",
+    "media_count": 431,
+    "price_range": 2,
+    "lat": 36.488846720863,
+    "lng": -4.7282785177231,
+    "slug": "sonrisa-british-dental-clinic",
+    "location_id": "1957803151122190",
+    "location_address": "",
+    "location_city": "",
+    "location_zip": "",
+    "ig_business": {
+      "profile": {
+        "profile_pic_url": "https://instagram.example.com/pic_2.jpg",
+        "username": "sonrisabritish_dentalclinic",
+        "id": "20570792385"
+      }
+    },
+    "hours": {
+      "status": "Closed until 9:30 AM"
+    }
+  },
+  {
+    "searchTerm": "teeth whitening clinic canada",
+    "searchSource": "google",
+    "inputUrl": "https://www.instagram.com/explore/locations/567993279727587/lumino-dental-aesthetics-clinic/",
+    "name": "Lumino Dental & Aesthetics Clinic",
+    "phone": "",
+    "category": "Dental Clinic",
+    "media_count": 36,
+    "price_range": 0,
+    "lat": 33.710351395036,
+    "lng": 73.040133530414,
+    "slug": "lumino-dental-aesthetics-clinic",
+    "location_id": "567993279727587",
+    "location_address": "",
+    "location_city": "",
+    "location_zip": "",
+    "ig_business": {
+      "profile": {
+        "profile_pic_url": "https://instagram.example.com/pic_3.jpg",
+        "username": "luminodentalclinicf8",
+        "id": "71950759586"
+      }
+    },
+    "hours": {
+      "status": "Open until 10:00 PM"
+    }
+  },
+  {
+    "searchTerm": "teeth whitening clinic canada",
+    "searchSource": "google",
+    "inputUrl": "https://www.instagram.com/explore/locations/102464012001831/novus-aesthetic-medical-clinic-llc/",
+    "name": "Novus Aesthetic Medical Clinic LLC",
+    "phone": "",
+    "category": "Medical & health",
+    "media_count": 181,
+    "price_range": 0,
+    "lat": 25.268984689229,
+    "lng": 55.294631123106,
+    "slug": "novus-aesthetic-medical-clinic-llc",
+    "location_id": "102464012001831",
+    "location_address": "",
+    "location_city": "",
+    "location_zip": "",
+    "ig_business": {
+      "profile": {
+        "profile_pic_url": "https://instagram.example.com/pic_4.jpg",
+        "username": "novusclinic.ae",
+        "id": "47790929435"
+      }
+    },
+    "hours": {
+      "status": "Open until 9:00 PM"
+    }
+  },
+  {
+    "searchTerm": "teeth whitening clinic canada",
+    "searchSource": "google",
+    "inputUrl": "https://www.instagram.com/explore/locations/941057835768657/jan-dental-aesthetic-clinic/",
+    "name": "Jan Dental & Aesthetic Clinic",
+    "phone": "",
+    "category": "Dentist & Dental Office",
+    "media_count": 7,
+    "price_range": 0,
+    "lat": 51.58751,
+    "lng": -0.04308,
+    "slug": "jan-dental-aesthetic-clinic",
+    "location_id": "941057835768657",
+    "location_address": "",
+    "location_city": "",
+    "location_zip": "",
+    "ig_business": {
+      "profile": {
+        "profile_pic_url": "https://instagram.example.com/pic_5.jpg",
+        "username": "jandentalclinic",
+        "id": "65596350743"
+      }
+    },
+    "hours": {
+      "status": "Open 24 hours"
+    }
+  }
+]

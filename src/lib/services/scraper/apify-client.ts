@@ -31,3 +31,17 @@ export function getApifyClient(): ApifyClient {
 
   return client;
 }
+
+let isMockClientSet = false;
+
+export function setApifyClientForTesting(mockClient: ApifyClient | null): void {
+  if (process.env.NODE_ENV !== "test") {
+    return;
+  }
+  client = mockClient;
+  isMockClientSet = mockClient !== null;
+}
+
+export function hasMockApifyClient(): boolean {
+  return isMockClientSet;
+}

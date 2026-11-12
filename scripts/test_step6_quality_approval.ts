@@ -7,6 +7,10 @@ import "./preload_server_only.cjs";
  * approval, stats, auto mode and the draft send path.
  */
 import "dotenv/config";
+process.env.WORKING_HOURS_START = "0";
+process.env.WORKING_HOURS_END = "24";
+process.env.SKIP_WEEKENDS = "0";
+process.env.SKIP_SEND_DELAYS = "1";
 import { Prisma } from "../src/generated/prisma/client";
 import { getPrismaClient } from "../src/lib/db/prisma";
 import { LeadStatus } from "../src/generated/prisma/enums";
@@ -32,8 +36,11 @@ import { createDraftSendJob } from "../src/lib/services/drafts/draft-send-servic
 import { evaluateDraftDispatch } from "../src/lib/services/messaging/draft-dispatch-guard";
 import { dispatchBulkJobQueue } from "../src/lib/services/messaging/bulk-messaging-service";
 import { sendSingleMessage, setMessagingProvider } from "../src/lib/services/messaging/messaging-service";
+import { setSendGateClock } from "../src/lib/services/messaging/send-gate";
 import type { MessagingProvider } from "../src/lib/services/messaging/messaging-provider";
 import { QualityBlockedError } from "../src/lib/errors";
+
+setSendGateClock(() => new Date("2026-06-10T14:00:00Z"));
 
 let passed = 0;
 let failed = 0;

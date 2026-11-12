@@ -13,7 +13,7 @@ export interface FetchPlacesInput {
   limit: number;
   location?: string;
   category?: string;
-  providerType: "google_maps" | "instagram_search" | "instagram_places";
+  providerType: "google_maps" | "instagram_search" | "instagram_places" | "instagram_all_in_one";
 }
 
 export async function fetchPlacesStage(

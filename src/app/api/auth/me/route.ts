@@ -17,6 +17,7 @@ export async function GET(request: Request): Promise<Response> {
       email: user.email,
       name: user.name,
       image: user.image,
+      role: user.role,
       createdAt: user.createdAt,
     });
   } catch (error) {

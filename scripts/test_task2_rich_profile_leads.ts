@@ -222,10 +222,10 @@ async function main() {
   };
 
   const leadInDb = await prisma.lead.upsert({
-    where: { campaignId_username: { campaignId, username: normalized!.username } },
+    where: { campaignId_username: { campaignId, username: normalized!.username! } },
     create: {
       campaignId,
-      username: normalized!.username,
+      username: normalized!.username!,
       ...leadDataToPersist,
     },
     update: leadDataToPersist,
@@ -242,10 +242,10 @@ async function main() {
 
   // Re-persist same username (duplicate test)
   await prisma.lead.upsert({
-    where: { campaignId_username: { campaignId, username: normalized!.username } },
+    where: { campaignId_username: { campaignId, username: normalized!.username! } },
     create: {
       campaignId,
-      username: normalized!.username,
+      username: normalized!.username!,
       ...leadDataToPersist,
     },
     update: leadDataToPersist,
@@ -281,10 +281,10 @@ async function main() {
       biography: "Updated Bio: Over 50K athletes coached!",
     };
     await prisma.lead.upsert({
-      where: { campaignId_username: { campaignId, username: normalized!.username } },
+      where: { campaignId_username: { campaignId, username: normalized!.username! } },
       create: {
         campaignId,
-        username: normalized!.username,
+        username: normalized!.username!,
         ...updatedLeadData,
       },
       update: updatedLeadData,

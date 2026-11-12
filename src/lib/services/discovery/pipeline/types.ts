@@ -55,6 +55,7 @@ export interface PipelineStageContext {
   requestedLimit: number;
   existingLeadCount: number;
   remainingCapacity: number;
+  isDryRun?: boolean;
   criteria: EnrichmentCriteria;
   caches: {
     seenCandidates: Set<string>;

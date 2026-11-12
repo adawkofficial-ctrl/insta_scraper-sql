@@ -10,6 +10,7 @@ import {
   type CompanyProfilesListItem,
 } from "@/lib/api/company-profile";
 import { ApiClientError } from "@/lib/api/client";
+import { MAX_MAX_LEADS } from "@/lib/api/scraper";
 
 type CreateCampaignModalProps = {
   isOpen: boolean;
@@ -139,8 +140,8 @@ export function CreateCampaignModal({
     let parsedLeadLimit: number | null = null;
     if (leadLimit.trim()) {
       const parsed = parseInt(leadLimit.trim(), 10);
-      if (isNaN(parsed) || parsed < 1 || parsed > 100) {
-        setError("Lead limit must be a number between 1 and 100.");
+      if (isNaN(parsed) || parsed < 1 || parsed > MAX_MAX_LEADS) {
+        setError(`Lead limit must be a number between 1 and ${MAX_MAX_LEADS}.`);
         return;
       }
       parsedLeadLimit = parsed;
@@ -607,13 +608,13 @@ export function CreateCampaignModal({
 
             <div>
               <label htmlFor="campaign-lead-limit" className="block text-[11px] font-medium text-zinc-400">
-                Lead Limit <span className="text-zinc-500">(max leads per run, 1-100)</span>
+                Lead Limit <span className="text-zinc-500">(max leads per run, 1-{MAX_MAX_LEADS})</span>
               </label>
               <input
                 id="campaign-lead-limit"
                 type="number"
                 min={1}
-                max={100}
+                max={MAX_MAX_LEADS}
                 disabled={isSubmitting}
                 value={leadLimit}
                 onChange={(e) => setLeadLimit(e.target.value)}

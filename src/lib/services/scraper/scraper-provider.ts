@@ -11,6 +11,8 @@ export type ScrapeResults = {
   skipped: SkippedScrapeProfile[];
   usageTotalUsd?: number;
   computeUnits?: number;
+  isTimedOut?: boolean;
+  isWasted?: boolean;
 };
 
 export interface ScraperProvider {

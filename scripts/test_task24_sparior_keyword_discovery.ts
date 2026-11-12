@@ -67,6 +67,7 @@ async function runTests() {
       "healthcare clinics",
       "private",
       "diagnostic technology",
+      "Healthcare",
     ]);
 
     // New per-keyword search queries append location to each individual keyword:
@@ -77,12 +78,13 @@ async function runTests() {
     });
     console.log(`     New per-keyword search queries:`, searchQueries);
 
-    assert.equal(searchQueries.length, 5);
+    assert.equal(searchQueries.length, 6);
     assert.equal(searchQueries[0], "hospitals Rawalpindi");
     assert.equal(searchQueries[1], "medical centers Rawalpindi");
     assert.equal(searchQueries[2], "healthcare clinics Rawalpindi");
     assert.equal(searchQueries[3], "private Rawalpindi");
     assert.equal(searchQueries[4], "diagnostic technology Rawalpindi");
+    assert.equal(searchQueries[5], "Healthcare Rawalpindi");
 
     // Verify none of them is the 8+ term combined phrase
     for (const q of searchQueries) {
@@ -103,7 +105,8 @@ async function runTests() {
 
     assert.ok(queries.includes("fitness gyms Rawalpindi"));
     assert.ok(queries.includes("fitness businesses Rawalpindi"));
-    assert.equal(queries.length, 2);
+    assert.ok(queries.includes("Fitness Rawalpindi"));
+    assert.equal(queries.length, 3);
 
     const singlePhrase = buildPerKeywordSearchQueries({
       query: "fitness trainer",

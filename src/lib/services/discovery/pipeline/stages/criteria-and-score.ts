@@ -108,6 +108,9 @@ export async function criteriaAndScoreStage(
       followers: profile.followers,
       isBusinessAccount: profile.isBusiness,
       isPrivate: profile.isPrivate,
+      recentLikesAvg: (rawData.recentLikesAvg as number | null | undefined) ?? null,
+      recentCommentsAvg: (rawData.recentCommentsAvg as number | null | undefined) ?? null,
+      engagementRate: (rawData.engagementRate as number | null | undefined) ?? null,
       email: profile.email,
       availableChannels: profile.availableChannels,
       hasWhatsApp: Boolean(

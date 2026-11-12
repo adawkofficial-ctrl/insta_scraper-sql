@@ -1,6 +1,9 @@
 import "dotenv/config";
+import { assertScriptSafeForApify } from "../src/lib/services/scraper/apify-cost-guard";
 import { getPrismaClient } from "../src/lib/db/prisma";
 import { runDiscovery } from "../src/lib/services/discovery/discovery-service";
+
+assertScriptSafeForApify();
 
 async function main() {
   const prisma = getPrismaClient();

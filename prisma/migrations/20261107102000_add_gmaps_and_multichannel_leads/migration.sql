@@ -1,0 +1,18 @@
+-- AlterEnum
+ALTER TYPE "DncIdentifierType" ADD VALUE IF NOT EXISTS 'PHONE';
+ALTER TYPE "DncChannel" ADD VALUE IF NOT EXISTS 'PHONE';
+
+-- AlterTable
+ALTER TABLE "Lead" ALTER COLUMN "username" DROP NOT NULL;
+ALTER TABLE "Lead" ALTER COLUMN "profileUrl" DROP NOT NULL;
+ALTER TABLE "Lead" ADD COLUMN IF NOT EXISTS "instagramUsername" TEXT;
+ALTER TABLE "Lead" ADD COLUMN IF NOT EXISTS "gmapsPlaceId" TEXT;
+ALTER TABLE "Lead" ADD COLUMN IF NOT EXISTS "rating" DOUBLE PRECISION;
+ALTER TABLE "Lead" ADD COLUMN IF NOT EXISTS "reviewCount" INTEGER;
+ALTER TABLE "Lead" ADD COLUMN IF NOT EXISTS "city" TEXT;
+ALTER TABLE "Lead" ADD COLUMN IF NOT EXISTS "handleSource" TEXT;
+ALTER TABLE "Lead" ADD COLUMN IF NOT EXISTS "handleConfidence" TEXT;
+
+-- CreateIndex
+CREATE INDEX IF NOT EXISTS "Lead_gmapsPlaceId_idx" ON "Lead"("gmapsPlaceId");
+CREATE INDEX IF NOT EXISTS "Lead_userId_gmapsPlaceId_idx" ON "Lead"("userId", "gmapsPlaceId");

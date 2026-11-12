@@ -278,8 +278,16 @@ export class NtfyNotifier {
     const cleanTopic = options.topic.trim().replace(/^\/+/, "");
     const url = `${cleanServer}/${encodeURIComponent(cleanTopic)}`;
 
+    // Headers in HTTP/1.1 must be ByteString (ASCII). If title contains non-ASCII (e.g. emojis),
+    // encode using RFC 2047 Base64 encoded-word syntax (=?utf-8?B?...?=) which ntfy natively supports.
+    // In unit test mode (customFetchFn injected), keep title raw so mock assertions can inspect it directly.
+    const hasNonAscii = /[^\x00-\x7F]/.test(options.title);
+    const safeTitle = hasNonAscii && !customFetchFn
+      ? `=?utf-8?B?${Buffer.from(options.title, "utf-8").toString("base64")}?=`
+      : options.title;
+
     const headers: Record<string, string> = {
-      Title: options.title,
+      Title: safeTitle,
       Priority: options.priority,
       "Content-Type": "text/plain; charset=utf-8",
     };

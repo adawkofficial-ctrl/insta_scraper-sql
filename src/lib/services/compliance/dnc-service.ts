@@ -16,6 +16,7 @@ import { getPrismaClient } from "@/lib/db/prisma";
 import { BadRequestError, NotFoundError } from "@/lib/errors";
 import { logger } from "@/lib/logger";
 import { transitionLeadStatus } from "../lead/lead-status-service";
+import { normalizePhone } from "../contact/contact-parser";
 
 export { DncChannel, DncIdentifierType, DncSource };
 
@@ -113,6 +114,8 @@ export function normalizeIdentifier(type: DncIdentifierType, value: string): str
       return normalizeDomain(value);
     case DncIdentifierType.INSTAGRAM_ID:
       return value.trim();
+    case DncIdentifierType.PHONE:
+      return normalizePhone(value) ?? value.trim();
     default:
       return value.trim().toLowerCase();
   }
@@ -129,6 +132,8 @@ export type LeadIdentifiers = {
   emailNormalized?: string;
   websiteDomain?: string;
   emailDomain?: string;
+  phone?: string;
+  phoneNormalized?: string;
 };
 
 export function getLeadIdentifiers(lead: {
@@ -138,6 +143,8 @@ export function getLeadIdentifiers(lead: {
   emailNormalized?: string | null;
   website?: string | null;
   websiteDomain?: string | null;
+  phone?: string | null;
+  phoneNormalized?: string | null;
 }): LeadIdentifiers {
   const result: LeadIdentifiers = {};
 
@@ -167,6 +174,15 @@ export function getLeadIdentifiers(lead: {
   if (rawDomain) {
     const normDomain = normalizeDomain(rawDomain);
     if (normDomain) result.websiteDomain = normDomain;
+  }
+
+  const rawPhone = lead.phoneNormalized || lead.phone;
+  if (rawPhone) {
+    const normPhone = normalizePhone(rawPhone);
+    if (normPhone) {
+      result.phone = normPhone;
+      result.phoneNormalized = normPhone;
+    }
   }
 
   return result;
@@ -200,6 +216,8 @@ export type CheckLeadSuppressionInput = {
     emailNormalized?: string | null;
     website?: string | null;
     websiteDomain?: string | null;
+    phone?: string | null;
+    phoneNormalized?: string | null;
   };
   channel?: DncChannel;
   tx?: Prisma.TransactionClient;
@@ -211,6 +229,7 @@ export type CheckLeadSuppressionInput = {
  * Matching rules:
  * - USERNAME / INSTAGRAM_ID match the lead's username / instagramUserId.
  * - EMAIL entries match the lead's email.
+ * - PHONE entries match the lead's phone.
  * - DOMAIN entries match the lead's email domain ONLY when outreach channel is EMAIL (or entry channel is ALL).
  *   (A domain entry must NOT block Instagram DMs to a lead that merely lists that website in their bio, unless the entry is channel ALL).
  * - Entry with channel ALL applies to every outreach channel. Entry with INSTAGRAM applies only to Instagram; EMAIL only to email.
@@ -266,6 +285,14 @@ export async function checkLeadSuppression(
     orConditions.push({
       identifierType: DncIdentifierType.EMAIL,
       identifierNormalized: ids.email,
+      channel: { in: applicableChannels },
+    });
+  }
+
+  if (ids.phoneNormalized) {
+    orConditions.push({
+      identifierType: DncIdentifierType.PHONE,
+      identifierNormalized: ids.phoneNormalized,
       channel: { in: applicableChannels },
     });
   }
@@ -334,6 +361,8 @@ export async function checkManySuppression(input: {
     emailNormalized?: string | null;
     website?: string | null;
     websiteDomain?: string | null;
+    phone?: string | null;
+    phoneNormalized?: string | null;
   }>;
   channel?: DncChannel;
   tx?: Prisma.TransactionClient;
@@ -354,6 +383,7 @@ export async function checkManySuppression(input: {
   const emails: string[] = [];
   const emailDomains: string[] = [];
   const websiteDomains: string[] = [];
+  const phones: string[] = [];
 
   const leadIdToIdentifiers = new Map<string, LeadIdentifiers>();
 
@@ -383,6 +413,7 @@ export async function checkManySuppression(input: {
     if (ids.email) emails.push(ids.email);
     if (ids.emailDomain) emailDomains.push(ids.emailDomain);
     if (ids.websiteDomain) websiteDomains.push(ids.websiteDomain);
+    if (ids.phoneNormalized) phones.push(ids.phoneNormalized);
   }
 
   // Build batch query conditions
@@ -408,6 +439,14 @@ export async function checkManySuppression(input: {
     orConditions.push({
       identifierType: DncIdentifierType.EMAIL,
       identifierNormalized: { in: Array.from(new Set(emails)) },
+      channel: { in: applicableChannels },
+    });
+  }
+
+  if (phones.length > 0) {
+    orConditions.push({
+      identifierType: DncIdentifierType.PHONE,
+      identifierNormalized: { in: Array.from(new Set(phones)) },
       channel: { in: applicableChannels },
     });
   }
@@ -466,6 +505,8 @@ export async function checkManySuppression(input: {
       } else if (type === DncIdentifierType.INSTAGRAM_ID && ids.instagramUserId === norm) {
         isMatch = true;
       } else if (type === DncIdentifierType.EMAIL && ids.email === norm) {
+        isMatch = true;
+      } else if (type === DncIdentifierType.PHONE && ids.phoneNormalized === norm) {
         isMatch = true;
       } else if (type === DncIdentifierType.DOMAIN) {
         if (entChannel === DncChannel.ALL) {
@@ -915,12 +956,14 @@ export async function removeDoNotContact(input: {
     let candidateLeads: Array<{
       id: string;
       status: LeadStatus;
-      username: string;
+      username: string | null;
       instagramUserId: string | null;
       email: string | null;
       emailNormalized: string | null;
       website: string | null;
       websiteDomain: string | null;
+      phone: string | null;
+      phoneNormalized: string | null;
     }> = [];
 
     if (campaignIds.length > 0) {
@@ -943,6 +986,11 @@ export async function removeDoNotContact(input: {
           { websiteDomain: entry.identifierNormalized },
           { website: { contains: entry.identifierNormalized, mode: "insensitive" } },
         ];
+      } else if (entry.identifierType === DncIdentifierType.PHONE) {
+        filter.OR = [
+          { phone: { equals: entry.identifierNormalized } },
+          { phoneNormalized: entry.identifierNormalized },
+        ];
       }
 
       candidateLeads = await prisma.lead.findMany({
@@ -956,6 +1004,8 @@ export async function removeDoNotContact(input: {
           emailNormalized: true,
           website: true,
           websiteDomain: true,
+          phone: true,
+          phoneNormalized: true,
         },
       });
     }

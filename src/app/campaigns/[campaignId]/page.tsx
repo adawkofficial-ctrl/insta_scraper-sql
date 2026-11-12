@@ -5,8 +5,18 @@ import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
 import { deleteCampaign, getCampaign, updateCampaign, type CampaignDetail } from "@/lib/api/campaigns";
 import { listCompanyProfiles, type CompanyProfilesListItem } from "@/lib/api/company-profile";
-import { getCampaignLeads, type Lead, type PaginatedLeads } from "@/lib/api/leads";
+import { getCampaignLeads, enrichLeads, enrichLeadHandle, findLeadContacts, deleteLead, deleteLeadsBulk, deleteDryRunLeadsApi, type Lead, type PaginatedLeads } from "@/lib/api/leads";
 import { getCampaignScrapeJobs, type ScrapeJobItem } from "@/lib/api/scraper";
+
+function isLeadDryRun(lead: { isDryRun?: boolean | null; source?: string | null; username?: string | null; website?: string | null; phone?: string | null }): boolean {
+  if (!lead) return false;
+  if (lead.isDryRun === true) return true;
+  if (lead.source === "dry_run" || lead.source === "sample") return true;
+  if (typeof lead.username === "string" && (lead.username.startsWith("sample_") || lead.username.startsWith("sample-"))) return true;
+  if (typeof lead.website === "string" && (lead.website.includes("example.com") || lead.website.includes(".example"))) return true;
+  if (typeof lead.phone === "string" && (lead.phone.includes("555-01") || lead.phone.includes("55501"))) return true;
+  return false;
+}
 import { ApiClientError } from "@/lib/api/client";
 import { Navbar } from "@/components/navbar";
 import { ScrapeLeadsModal } from "@/components/scrape-leads-modal";
@@ -18,13 +28,17 @@ import { CampaignApprovalCard } from "@/components/campaign-approval-card";
 import { CampaignExecutionTab } from "@/components/campaign-execution-tab";
 import { CampaignAnalyticsTab } from "@/components/campaign-analytics-tab";
 import { CampaignReviewQueueTab } from "@/components/campaign-review-queue-tab";
+import { CampaignEmailTab } from "@/components/campaign-email-tab";
 import { LeadAvatar } from "@/components/lead-avatar";
 import { SocialPlatformIcon, getLeadLinkClassification } from "@/components/social-platform-icon";
 import { BulkMessageModal } from "@/components/bulk-message-modal";
 import { BulkJobProgressPanel } from "@/components/bulk-job-progress-panel";
 import { CampaignExecutionControlPanel } from "@/components/campaign-execution-control-panel";
+import { EditCampaignModal } from "@/components/edit-campaign-modal";
+import { CsvUploadModal } from "@/components/csv-upload-modal";
 import { getCampaignAnalytics, type CampaignAnalytics } from "@/lib/api/analytics";
 import { isTerminalBulkJobStatus } from "@/lib/polling/job-polling";
+import { useSendingStatus } from "@/components/sending-banner";
 
 export default function CampaignDetailPage() {
   const params = useParams();
@@ -32,9 +46,11 @@ export default function CampaignDetailPage() {
   const campaignId = params.campaignId as string;
 
   const [, startTransition] = useTransition();
+  const { sendingEnabled } = useSendingStatus();
 
   // Campaign State
   const [campaign, setCampaign] = useState<CampaignDetail | null>(null);
+  const [isEditModalOpen, setIsEditModalOpen] = useState(false);
   const [overviewStats, setOverviewStats] = useState<CampaignAnalytics | null>(null);
   const [isCampaignLoading, setIsCampaignLoading] = useState(true);
   const [campaignError, setCampaignError] = useState<string | null>(null);
@@ -76,8 +92,9 @@ export default function CampaignDetailPage() {
       setIsSavingProfileChange(false);
     }
   };
-  const [activeTab, setActiveTab] = useState<"leads" | "history" | "templates" | "execution" | "analytics" | "review">("leads");
+  const [activeTab, setActiveTab] = useState<"leads" | "history" | "templates" | "execution" | "analytics" | "review" | "email">("leads");
   const [isScrapeModalOpen, setIsScrapeModalOpen] = useState(false);
+  const [isCsvUploadModalOpen, setIsCsvUploadModalOpen] = useState(false);
   const [showDeleteCampaignModal, setShowDeleteCampaignModal] = useState(false);
   const [isDeletingCampaign, setIsDeletingCampaign] = useState(false);
   const [activeLeadId, setActiveLeadId] = useState<string | null>(null);
@@ -92,6 +109,18 @@ export default function CampaignDetailPage() {
   const [bulkSelectionMode, setBulkSelectionMode] = useState<"selected" | "allEligible">("selected");
   const [isBulkModalOpen, setIsBulkModalOpen] = useState(false);
   const [activeBulkJobId, setActiveBulkJobId] = useState<string | null>(null);
+
+  // Lead Deletion State
+  const [isDeletingLeads, setIsDeletingLeads] = useState(false);
+  const [leadPendingDelete, setLeadPendingDelete] = useState<Lead | null>(null);
+  const [showBulkDeleteConfirm, setShowBulkDeleteConfirm] = useState(false);
+  const [deleteNotice, setDeleteNotice] = useState<{ type: "success" | "error" | "info"; message: string } | null>(null);
+
+  // Dry-run Filter & Admin Action State
+  const [hideDryRun, setHideDryRun] = useState(false);
+  const [showDeleteDryRunConfirm, setShowDeleteDryRunConfirm] = useState(false);
+  const [isDeletingDryRunLeads, setIsDeletingDryRunLeads] = useState(false);
+  const [expandedJobId, setExpandedJobId] = useState<string | null>(null);
 
   const selectedLeadIdSet = new Set(selectedLeadIds);
   const selectedLeads = (leadsData?.items ?? []).filter((l) => selectedLeadIdSet.has(l.id));
@@ -220,6 +249,30 @@ export default function CampaignDetailPage() {
     return "all";
   });
 
+  const [enrichmentFilter, setEnrichmentFilter] = useState<string>(() => {
+    if (typeof window !== "undefined") {
+      const e = new URLSearchParams(window.location.search).get("enrichment");
+      if (e && ["all", "enriched", "not_enriched"].includes(e.toLowerCase())) {
+        return e.toLowerCase();
+      }
+    }
+    return "all";
+  });
+
+  const [isBulkEnriching, setIsBulkEnriching] = useState(false);
+  const [enrichingLeadId, setEnrichingLeadId] = useState<string | null>(null);
+  const [enrichNotice, setEnrichNotice] = useState<{
+    type: "success" | "error" | "info";
+    message: string;
+  } | null>(null);
+
+  const [isBulkFindingContacts, setIsBulkFindingContacts] = useState(false);
+  const [findingContactsLeadId, setFindingContactsLeadId] = useState<string | null>(null);
+  const [contactsNotice, setContactsNotice] = useState<{
+    type: "success" | "error" | "info";
+    message: string;
+  } | null>(null);
+
   // Synchronize state with URL query parameters without reloading
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -232,11 +285,12 @@ export default function CampaignDetailPage() {
     if (businessFilter !== "all") params.set("business", businessFilter);
     if (statusFilter !== "all") params.set("status", statusFilter);
     if (channelFilter !== "all") params.set("channel", channelFilter);
+    if (enrichmentFilter !== "all") params.set("enrichment", enrichmentFilter);
 
     const qs = params.toString();
     const newUrl = qs ? `${window.location.pathname}?${qs}` : window.location.pathname;
     window.history.replaceState(null, "", newUrl);
-  }, [page, limit, searchQuery, categoryFilter, verifiedFilter, businessFilter, statusFilter, channelFilter]);
+  }, [page, limit, searchQuery, categoryFilter, verifiedFilter, businessFilter, statusFilter, channelFilter, enrichmentFilter]);
 
   // Fetch campaign info
   const fetchCampaignInfo = useCallback(async (showLoading = false) => {
@@ -269,15 +323,15 @@ export default function CampaignDetailPage() {
         verifiedFilter === "verified"
           ? true
           : verifiedFilter === "unverified"
-          ? false
-          : undefined;
+            ? false
+            : undefined;
 
       const isBusiness =
         businessFilter === "business"
           ? true
           : businessFilter === "personal"
-          ? false
-          : undefined;
+            ? false
+            : undefined;
 
       const status = statusFilter !== "all" ? statusFilter : undefined;
 
@@ -290,6 +344,7 @@ export default function CampaignDetailPage() {
         isBusiness,
         status,
         channel: channelFilter !== "all" ? channelFilter : undefined,
+        enrichmentStatus: enrichmentFilter !== "all" ? (enrichmentFilter as "enriched" | "not_enriched") : undefined,
         excludeDuplicates: !showDuplicates,
       });
       setLeadsData(data);
@@ -300,7 +355,7 @@ export default function CampaignDetailPage() {
     } finally {
       setIsLeadsLoading(false);
     }
-  }, [campaignId, page, limit, searchQuery, categoryFilter, verifiedFilter, businessFilter, statusFilter, channelFilter, showDuplicates]);
+  }, [campaignId, page, limit, searchQuery, categoryFilter, verifiedFilter, businessFilter, statusFilter, channelFilter, enrichmentFilter, showDuplicates]);
 
   // Fetch scrape jobs
   const fetchJobs = useCallback(async () => {
@@ -395,7 +450,129 @@ export default function CampaignDetailPage() {
     setBusinessFilter("all");
     setStatusFilter("all");
     setChannelFilter("all");
+    setEnrichmentFilter("all");
     setPage(1);
+  };
+
+  const handleBulkEnrich = async () => {
+    if (selectedLeadIds.length === 0) return;
+    if (selectedLeadIds.length > 20) {
+      alert("Cannot enrich more than 20 leads per click to protect your budget.");
+      return;
+    }
+    setIsBulkEnriching(true);
+    setEnrichNotice(null);
+    try {
+      const res = await enrichLeads(selectedLeadIds);
+      const cachedText = res.cachedCount > 0 ? ` (${res.cachedCount} from 30-day cache, $0.00)` : "";
+      setEnrichNotice({
+        type: "success",
+        message: `Enriched ${res.enrichedCount} profile(s)${cachedText}. Real Apify cost: $${res.apifyCostUsd.toFixed(4)}. Remaining budget: $${res.remainingBudgetUsd.toFixed(2)}.`,
+      });
+      fetchLeads();
+      fetchCampaignInfo();
+    } catch (err) {
+      setEnrichNotice({
+        type: "error",
+        message: err instanceof ApiClientError ? err.message : "Failed to enrich selected profiles.",
+      });
+    } finally {
+      setIsBulkEnriching(false);
+    }
+  };
+
+  const handleEnrichHandleSingle = async (leadId: string) => {
+    setEnrichingLeadId(leadId);
+    setEnrichNotice(null);
+    try {
+      const res = await enrichLeadHandle(leadId);
+      setEnrichNotice({
+        type: res.outcome === "found" ? "success" : "info",
+        message: res.message,
+      });
+      fetchLeads();
+      fetchCampaignInfo();
+    } catch (err) {
+      setEnrichNotice({
+        type: "error",
+        message: err instanceof ApiClientError ? err.message : "Failed to run handle waterfall.",
+      });
+    } finally {
+      setEnrichingLeadId(null);
+    }
+  };
+
+  const handleEnrichSingle = async (leadId: string) => {
+    const targetLead = leadsData?.items.find((l) => l.id === leadId);
+    if (targetLead && (!targetLead.username || targetLead.username.trim() === "")) {
+      return handleEnrichHandleSingle(leadId);
+    }
+
+    setEnrichingLeadId(leadId);
+    setEnrichNotice(null);
+    try {
+      const res = await enrichLeads([leadId]);
+      const cachedText = res.cachedCount > 0 ? " (from 30-day cache, $0.00)" : "";
+      setEnrichNotice({
+        type: "success",
+        message: `Profile enriched successfully${cachedText}! Real Apify cost: $${res.apifyCostUsd.toFixed(4)}. Remaining budget: $${res.remainingBudgetUsd.toFixed(2)}.`,
+      });
+      fetchLeads();
+      fetchCampaignInfo();
+    } catch (err) {
+      setEnrichNotice({
+        type: "error",
+        message: err instanceof ApiClientError ? err.message : "Failed to enrich profile.",
+      });
+    } finally {
+      setEnrichingLeadId(null);
+    }
+  };
+
+  const handleBulkFindContacts = async () => {
+    if (selectedLeadIds.length === 0) return;
+    setIsBulkFindingContacts(true);
+    setContactsNotice(null);
+    try {
+      const res = await findLeadContacts(selectedLeadIds);
+      setContactsNotice({
+        type: "success",
+        message: `Extracted contacts for ${res.count} lead(s).`,
+      });
+      fetchLeads();
+    } catch (err) {
+      setContactsNotice({
+        type: "error",
+        message: err instanceof ApiClientError ? err.message : "Failed to extract contacts.",
+      });
+    } finally {
+      setIsBulkFindingContacts(false);
+    }
+  };
+
+  const handleFindContactsSingle = async (leadId: string) => {
+    setFindingContactsLeadId(leadId);
+    setContactsNotice(null);
+    try {
+      const res = await findLeadContacts([leadId]);
+      const leadItem = res.leads[0];
+      const count =
+        (leadItem?.contacts?.emails?.length ?? 0) +
+        (leadItem?.contacts?.phones?.length ?? 0) +
+        (leadItem?.contacts?.whatsapps?.length ?? 0);
+      setContactsNotice({
+        type: "success",
+        message: `Contacts extraction completed: found ${count} contact detail(s).`,
+      });
+      fetchLeads();
+    } catch (err) {
+      setContactsNotice({
+        type: "error",
+        message: err instanceof ApiClientError ? err.message : "Failed to extract contacts.",
+      });
+    } finally {
+      setFindingContactsLeadId(null);
+    }
   };
 
   const [analyticsRefreshTrigger, setAnalyticsRefreshTrigger] = useState(0);
@@ -415,6 +592,78 @@ export default function CampaignDetailPage() {
     fetchLeads();
     fetchJobs();
     setAnalyticsRefreshTrigger((prev) => prev + 1);
+  };
+
+  const handleConfirmSingleDelete = async () => {
+    if (!leadPendingDelete) return;
+    setIsDeletingLeads(true);
+    setDeleteNotice(null);
+    try {
+      await deleteLead(leadPendingDelete.id);
+      setSelectedLeadIds((prev) => prev.filter((id) => id !== leadPendingDelete.id));
+      setDeleteNotice({
+        type: "success",
+        message: `Lead @${leadPendingDelete.username} was permanently deleted.`,
+      });
+      setLeadPendingDelete(null);
+      fetchLeads();
+      fetchCampaignInfo();
+    } catch (err) {
+      setDeleteNotice({
+        type: "error",
+        message: err instanceof ApiClientError ? err.message : "Failed to delete lead.",
+      });
+    } finally {
+      setIsDeletingLeads(false);
+    }
+  };
+
+  const handleConfirmBulkDelete = async () => {
+    if (selectedLeadIds.length === 0) return;
+    setIsDeletingLeads(true);
+    setDeleteNotice(null);
+    try {
+      const res = await deleteLeadsBulk(campaignId, selectedLeadIds);
+      const count = res.deletedCount;
+      setSelectedLeadIds([]);
+      setBulkSelectionMode("selected");
+      setShowBulkDeleteConfirm(false);
+      setDeleteNotice({
+        type: "success",
+        message: `Successfully deleted ${count} lead${count === 1 ? "" : "s"}.`,
+      });
+      fetchLeads();
+      fetchCampaignInfo();
+    } catch (err) {
+      setDeleteNotice({
+        type: "error",
+        message: err instanceof ApiClientError ? err.message : "Failed to delete selected leads.",
+      });
+    } finally {
+      setIsDeletingLeads(false);
+    }
+  };
+
+  const handleConfirmDeleteDryRun = async () => {
+    setIsDeletingDryRunLeads(true);
+    setDeleteNotice(null);
+    try {
+      const res = await deleteDryRunLeadsApi(campaignId);
+      setShowDeleteDryRunConfirm(false);
+      setDeleteNotice({
+        type: "success",
+        message: `Successfully deleted ${res.deletedCount} dry-run / sample lead${res.deletedCount === 1 ? "" : "s"}.`,
+      });
+      fetchLeads();
+      fetchCampaignInfo();
+    } catch (err) {
+      setDeleteNotice({
+        type: "error",
+        message: err instanceof Error ? err.message : "Failed to delete dry-run leads.",
+      });
+    } finally {
+      setIsDeletingDryRunLeads(false);
+    }
   };
 
   const handleDeleteCampaign = async () => {
@@ -587,10 +836,31 @@ export default function CampaignDetailPage() {
 
           <div className="flex items-center gap-3">
             <button
+              type="button"
+              id="edit-campaign-btn"
+              onClick={() => setIsEditModalOpen(true)}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-900 px-3.5 py-2 text-xs font-semibold text-zinc-200 hover:border-zinc-600 hover:bg-zinc-800 hover:text-white transition shadow-xs"
+            >
+              <svg className="h-3.5 w-3.5 text-zinc-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" />
+              </svg>
+              <span>Edit Campaign</span>
+            </button>
+            <button
               onClick={() => setShowDeleteCampaignModal(true)}
               className="rounded-lg border border-zinc-700 bg-zinc-900 px-3.5 py-2 text-xs font-medium text-zinc-300 hover:border-rose-900/50 hover:bg-rose-950/30 hover:text-rose-300 transition"
             >
               Delete Campaign
+            </button>
+            <button
+              onClick={() => setIsCsvUploadModalOpen(true)}
+              id="upload-csv-leads-header-btn"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-900 px-3.5 py-2 text-xs font-semibold text-zinc-200 hover:border-zinc-600 hover:bg-zinc-800 hover:text-white transition shadow-xs"
+            >
+              <svg className="h-3.5 w-3.5 text-zinc-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+              </svg>
+              <span>Upload CSV</span>
             </button>
             <button
               onClick={() => setIsScrapeModalOpen(true)}
@@ -601,7 +871,7 @@ export default function CampaignDetailPage() {
               }
               title={
                 campaign.leadLimit != null &&
-                (leadsData?.pagination.total ?? campaign.leadCount ?? 0) >= campaign.leadLimit
+                  (leadsData?.pagination.total ?? campaign.leadCount ?? 0) >= campaign.leadLimit
                   ? "Campaign has reached its configured lead limit"
                   : undefined
               }
@@ -612,7 +882,7 @@ export default function CampaignDetailPage() {
               </svg>
               <span>
                 {campaign.leadLimit != null &&
-                (leadsData?.pagination.total ?? campaign.leadCount ?? 0) >= campaign.leadLimit
+                  (leadsData?.pagination.total ?? campaign.leadCount ?? 0) >= campaign.leadLimit
                   ? "Lead Limit Reached"
                   : "Scrape Leads"}
               </span>
@@ -644,11 +914,22 @@ export default function CampaignDetailPage() {
               </div>
             </div>
             <div className="flex items-center gap-2">
+              <button
+                type="button"
+                id="intent-card-edit-btn"
+                onClick={() => setIsEditModalOpen(true)}
+                className="inline-flex items-center gap-1.5 rounded-lg border border-zinc-700/80 bg-zinc-800/80 px-2.5 py-1 text-xs font-medium text-zinc-300 hover:border-zinc-600 hover:bg-zinc-700/80 hover:text-white transition"
+              >
+                <svg className="h-3.5 w-3.5 text-zinc-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10" />
+                </svg>
+                <span>Edit</span>
+              </button>
               <span className="rounded-full bg-zinc-800/80 px-2.5 py-1 text-[11px] font-mono text-zinc-400 border border-zinc-700/60">
                 Step 14 Intent
               </span>
               {campaign.leadLimit != null &&
-              (leadsData?.pagination.total ?? campaign.leadCount ?? 0) >= campaign.leadLimit ? (
+                (leadsData?.pagination.total ?? campaign.leadCount ?? 0) >= campaign.leadLimit ? (
                 <span
                   id="intent-card-capacity-reached"
                   className="inline-flex items-center gap-1.5 rounded-lg bg-amber-500/10 border border-amber-500/30 px-2.5 py-1 text-xs font-semibold text-amber-300"
@@ -759,6 +1040,51 @@ export default function CampaignDetailPage() {
               </div>
             </div>
           </div>
+
+          {/* Follow-up Campaign Summary & Settings */}
+          {campaign.followUpEnabled ? (
+            <div className="mt-4 pt-3.5 border-t border-zinc-800/80 flex flex-wrap items-center justify-between gap-3 text-xs">
+              <div className="flex items-center gap-2">
+                <span className="flex h-2 w-2 rounded-full bg-emerald-400" />
+                <span className="font-semibold text-zinc-200">Scheduled Follow-ups Active:</span>
+                <span className="text-zinc-400">
+                  {campaign.followUpCount ?? 1} follow-up{(campaign.followUpCount ?? 1) > 1 ? "s" : ""} (after {campaign.followUpDelayDays?.join(", ") ?? "3, 5"} days)
+                </span>
+              </div>
+              <div className="flex items-center gap-3">
+                <div className="flex items-center gap-1.5 rounded-lg border border-sky-500/20 bg-sky-500/10 px-2.5 py-1 text-[11px] text-sky-300">
+                  <span className="font-medium">Scheduled:</span>
+                  <span className="font-bold">{campaign.followUpSummary?.scheduled ?? 0}</span>
+                </div>
+                <div className="flex items-center gap-1.5 rounded-lg border border-emerald-500/20 bg-emerald-500/10 px-2.5 py-1 text-[11px] text-emerald-300">
+                  <span className="font-medium">Sent:</span>
+                  <span className="font-bold">{campaign.followUpSummary?.sent ?? 0}</span>
+                </div>
+                <div className="flex items-center gap-1.5 rounded-lg border border-purple-500/20 bg-purple-500/10 px-2.5 py-1 text-[11px] text-purple-300">
+                  <span className="font-medium">Cancelled:</span>
+                  <span className="font-bold">{campaign.followUpSummary?.cancelled ?? 0}</span>
+                </div>
+                <div className="flex items-center gap-1.5 rounded-lg border border-indigo-500/20 bg-indigo-500/10 px-2.5 py-1 text-[11px] text-indigo-300">
+                  <span className="font-medium">Replies after Follow-up:</span>
+                  <span className="font-bold">{campaign.followUpSummary?.repliesAfterFollowUp ?? 0}</span>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="mt-4 pt-3.5 border-t border-zinc-800/80 flex items-center justify-between text-xs text-zinc-500">
+              <div className="flex items-center gap-2">
+                <span className="flex h-2 w-2 rounded-full bg-zinc-600" />
+                <span>Follow-ups: Disabled</span>
+              </div>
+              <button
+                type="button"
+                onClick={() => setIsEditModalOpen(true)}
+                className="text-zinc-400 hover:text-zinc-300 underline text-[11px]"
+              >
+                Enable in Edit Campaign
+              </button>
+            </div>
+          )}
         </div>
 
         {/* Change Profile Modal */}
@@ -862,66 +1188,70 @@ export default function CampaignDetailPage() {
           <button
             onClick={() => setActiveTab("leads")}
             id="tab-leads"
-            className={`pb-3 text-sm font-semibold transition border-b-2 whitespace-nowrap ${
-              activeTab === "leads"
+            className={`pb-3 text-sm font-semibold transition border-b-2 whitespace-nowrap ${activeTab === "leads"
                 ? "border-rose-500 text-rose-400"
                 : "border-transparent text-zinc-400 hover:text-zinc-200"
-            }`}
+              }`}
           >
             Leads Directory ({leadsData?.pagination.total ?? campaign.leadCount ?? 0})
           </button>
           <button
             onClick={() => setActiveTab("analytics")}
             id="tab-analytics"
-            className={`pb-3 text-sm font-semibold transition border-b-2 whitespace-nowrap ${
-              activeTab === "analytics"
+            className={`pb-3 text-sm font-semibold transition border-b-2 whitespace-nowrap ${activeTab === "analytics"
                 ? "border-rose-500 text-rose-400"
                 : "border-transparent text-zinc-400 hover:text-zinc-200"
-            }`}
+              }`}
           >
             Analytics
           </button>
           <button
             onClick={() => setActiveTab("review")}
             id="tab-review"
-            className={`pb-3 text-sm font-semibold transition border-b-2 whitespace-nowrap ${
-              activeTab === "review"
+            className={`pb-3 text-sm font-semibold transition border-b-2 whitespace-nowrap ${activeTab === "review"
                 ? "border-rose-500 text-rose-400"
                 : "border-transparent text-zinc-400 hover:text-zinc-200"
-            }`}
+              }`}
           >
             Review Queue
           </button>
           <button
             onClick={() => setActiveTab("templates")}
             id="tab-templates"
-            className={`pb-3 text-sm font-semibold transition border-b-2 whitespace-nowrap ${
-              activeTab === "templates"
+            className={`pb-3 text-sm font-semibold transition border-b-2 whitespace-nowrap ${activeTab === "templates"
                 ? "border-rose-500 text-rose-400"
                 : "border-transparent text-zinc-400 hover:text-zinc-200"
-            }`}
+              }`}
           >
             Message Templates
           </button>
           <button
             onClick={() => setActiveTab("execution")}
             id="tab-execution"
-            className={`pb-3 text-sm font-semibold transition border-b-2 whitespace-nowrap ${
-              activeTab === "execution"
+            className={`pb-3 text-sm font-semibold transition border-b-2 whitespace-nowrap ${activeTab === "execution"
                 ? "border-rose-500 text-rose-400"
                 : "border-transparent text-zinc-400 hover:text-zinc-200"
-            }`}
+              }`}
           >
             Campaign Execution
           </button>
           <button
-            onClick={() => setActiveTab("history")}
-            id="tab-history"
-            className={`pb-3 text-sm font-semibold transition border-b-2 whitespace-nowrap ${
-              activeTab === "history"
+            onClick={() => setActiveTab("email")}
+            id="tab-email"
+            className={`pb-3 text-sm font-semibold transition border-b-2 whitespace-nowrap ${activeTab === "email"
                 ? "border-rose-500 text-rose-400"
                 : "border-transparent text-zinc-400 hover:text-zinc-200"
-            }`}
+              }`}
+          >
+            Email
+          </button>
+          <button
+            onClick={() => setActiveTab("history")}
+            id="tab-history"
+            className={`pb-3 text-sm font-semibold transition border-b-2 whitespace-nowrap ${activeTab === "history"
+                ? "border-rose-500 text-rose-400"
+                : "border-transparent text-zinc-400 hover:text-zinc-200"
+              }`}
           >
             Scrape History ({scrapeJobs.length})
           </button>
@@ -952,7 +1282,7 @@ export default function CampaignDetailPage() {
           <div className="mt-6 space-y-4">
             {/* Filter Toolbar */}
             <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4 space-y-3">
-              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-6">
+              <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-7">
                 {/* Search */}
                 <div className="lg:col-span-2">
                   <label htmlFor="search-leads" className="block text-[11px] font-semibold uppercase text-zinc-400">Search</label>
@@ -1048,6 +1378,24 @@ export default function CampaignDetailPage() {
                   </select>
                 </div>
 
+                {/* Enrichment Filter */}
+                <div>
+                  <label htmlFor="filter-enrichment" className="block text-[11px] font-semibold uppercase text-zinc-400">Enrichment</label>
+                  <select
+                    id="filter-enrichment"
+                    value={enrichmentFilter}
+                    onChange={(e) => {
+                      setEnrichmentFilter(e.target.value);
+                      handleFilterChange();
+                    }}
+                    className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-1.5 text-xs text-zinc-200 focus:border-rose-500 focus:outline-none"
+                  >
+                    <option value="all">All Profiles</option>
+                    <option value="enriched">Enriched Only</option>
+                    <option value="not_enriched">Not Enriched</option>
+                  </select>
+                </div>
+
                 {/* Channel Filter (Part E) */}
                 <div>
                   <label htmlFor="filter-channel" className="block text-[11px] font-semibold uppercase text-zinc-400">Channel</label>
@@ -1068,23 +1416,38 @@ export default function CampaignDetailPage() {
                 </div>
               </div>
 
-              <div className="mt-3 flex items-center gap-2">
-                <input
-                  id="show-duplicates"
-                  type="checkbox"
-                  checked={showDuplicates}
-                  onChange={(e) => {
-                    setShowDuplicates(e.target.checked);
-                    setPage(1);
-                  }}
-                  className="h-3.5 w-3.5 rounded border-zinc-600 bg-zinc-950"
-                />
-                <label htmlFor="show-duplicates" className="text-[11px] text-zinc-400">
-                  Show duplicates (duplicate-linked leads are hidden by default)
-                </label>
+              <div className="mt-3 flex flex-wrap items-center gap-4">
+                <div className="flex items-center gap-2">
+                  <input
+                    id="show-duplicates"
+                    type="checkbox"
+                    checked={showDuplicates}
+                    onChange={(e) => {
+                      setShowDuplicates(e.target.checked);
+                      setPage(1);
+                    }}
+                    className="h-3.5 w-3.5 rounded border-zinc-600 bg-zinc-950"
+                  />
+                  <label htmlFor="show-duplicates" className="text-[11px] text-zinc-400">
+                    Show duplicates (duplicate-linked leads are hidden by default)
+                  </label>
+                </div>
+
+                <div className="flex items-center gap-2">
+                  <input
+                    id="hide-dry-run"
+                    type="checkbox"
+                    checked={hideDryRun}
+                    onChange={(e) => setHideDryRun(e.target.checked)}
+                    className="h-3.5 w-3.5 rounded border-zinc-600 bg-zinc-950 accent-amber-500"
+                  />
+                  <label htmlFor="hide-dry-run" className="text-[11px] text-zinc-300 font-medium">
+                    Hide dry-run / sample leads
+                  </label>
+                </div>
               </div>
 
-              {(searchQuery || categoryFilter || verifiedFilter !== "all" || businessFilter !== "all" || statusFilter !== "all" || channelFilter !== "all") && (
+              {(searchQuery || categoryFilter || verifiedFilter !== "all" || businessFilter !== "all" || statusFilter !== "all" || channelFilter !== "all" || enrichmentFilter !== "all") && (
                 <div className="flex items-center justify-between border-t border-zinc-800/80 pt-2 text-xs">
                   <span className="text-zinc-400">Active filters applied</span>
                   <button
@@ -1121,13 +1484,12 @@ export default function CampaignDetailPage() {
                   id="btn-select-all-visible"
                   onClick={selectAllVisibleLeads}
                   disabled={!leadsData || leadsData.items.length === 0}
-                  className={`rounded-lg border px-3 py-1.5 font-medium transition disabled:opacity-40 ${
-                    bulkSelectionMode === "selected" &&
-                    selectedLeadIds.length > 0 &&
-                    leadsData?.items.length === selectedLeadIds.length
+                  className={`rounded-lg border px-3 py-1.5 font-medium transition disabled:opacity-40 ${bulkSelectionMode === "selected" &&
+                      selectedLeadIds.length > 0 &&
+                      leadsData?.items.length === selectedLeadIds.length
                       ? "border-rose-500/60 bg-rose-500/20 text-rose-200"
                       : "border-zinc-700 bg-zinc-800 text-zinc-200 hover:bg-zinc-700"
-                  }`}
+                    }`}
                 >
                   Select Visible ({leadsData?.items.length ?? 0})
                 </button>
@@ -1136,11 +1498,10 @@ export default function CampaignDetailPage() {
                   id="btn-select-all-campaign"
                   onClick={selectAllCampaignLeads}
                   disabled={!campaign || (leadsData?.pagination.total ?? campaign.leadCount ?? 0) === 0}
-                  className={`rounded-lg border px-3 py-1.5 font-medium transition disabled:opacity-40 ${
-                    bulkSelectionMode === "allEligible"
+                  className={`rounded-lg border px-3 py-1.5 font-medium transition disabled:opacity-40 ${bulkSelectionMode === "allEligible"
                       ? "border-rose-500/60 bg-rose-500/20 text-rose-200"
                       : "border-zinc-700 bg-zinc-800 text-zinc-200 hover:bg-zinc-700"
-                  }`}
+                    }`}
                 >
                   Select All in Campaign ({leadsData?.pagination.total ?? campaign.leadCount ?? 0})
                 </button>
@@ -1152,6 +1513,17 @@ export default function CampaignDetailPage() {
                   className="rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-1.5 font-medium text-zinc-300 transition hover:bg-zinc-800 disabled:opacity-40"
                 >
                   Clear Selection
+                </button>
+                <button
+                  type="button"
+                  id="btn-upload-csv-toolbar"
+                  onClick={() => setIsCsvUploadModalOpen(true)}
+                  className="rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-1.5 font-medium text-zinc-300 transition hover:bg-zinc-800 hover:text-white flex items-center gap-1.5"
+                >
+                  <svg className="h-3.5 w-3.5 text-zinc-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-8l-4-4m0 0L8 8m4-4v12" />
+                  </svg>
+                  <span>Upload CSV</span>
                 </button>
               </div>
 
@@ -1167,7 +1539,8 @@ export default function CampaignDetailPage() {
                 <button
                   type="button"
                   id="btn-open-bulk-messaging"
-                  disabled={selectedLeadIds.length === 0 && bulkSelectionMode !== "allEligible"}
+                  disabled={!sendingEnabled || (selectedLeadIds.length === 0 && bulkSelectionMode !== "allEligible")}
+                  title={!sendingEnabled ? "Sending is disabled (SENDING_DISABLED)" : undefined}
                   onClick={() => setIsBulkModalOpen(true)}
                   className="rounded-lg bg-rose-600 px-3.5 py-1.5 font-semibold text-white shadow-md shadow-rose-950/40 transition hover:bg-rose-500 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
                 >
@@ -1180,8 +1553,184 @@ export default function CampaignDetailPage() {
                     </span>
                   )}
                 </button>
+
+                {selectedLeadIds.length > 0 && (
+                  <button
+                    type="button"
+                    id="btn-enrich-selected"
+                    disabled={selectedLeadIds.length > 20 || isBulkEnriching}
+                    onClick={handleBulkEnrich}
+                    className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3.5 py-1.5 font-semibold text-amber-200 shadow-md transition hover:bg-amber-500/20 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
+                    title={
+                      selectedLeadIds.length > 20
+                        ? "Max 20 leads per enrichment batch"
+                        : `Enrich ${selectedLeadIds.length} profiles (Est. ~$${(selectedLeadIds.length * 0.0026).toFixed(4)})`
+                    }
+                  >
+                    {isBulkEnriching ? (
+                      <>
+                        <svg className="h-3.5 w-3.5 animate-spin text-amber-400" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                        </svg>
+                        <span>Enriching...</span>
+                      </>
+                    ) : (
+                      <>
+                        <span>⚡ Enrich Selected ({selectedLeadIds.length})</span>
+                        <span className="text-[10px] text-amber-400/80 font-normal">
+                          {selectedLeadIds.length > 20 ? "(Max 20)" : `~$${(selectedLeadIds.length * 0.0026).toFixed(4)}`}
+                        </span>
+                      </>
+                    )}
+                  </button>
+                )}
+
+                {selectedLeadIds.length > 0 && (
+                  <button
+                    type="button"
+                    id="btn-find-contacts-selected"
+                    disabled={isBulkFindingContacts}
+                    onClick={handleBulkFindContacts}
+                    className="rounded-lg border border-emerald-500/40 bg-emerald-500/10 px-3.5 py-1.5 font-semibold text-emerald-200 shadow-md transition hover:bg-emerald-500/20 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
+                    title={`Find contacts for ${selectedLeadIds.length} lead(s) (Free Stage 3 extractor)`}
+                  >
+                    {isBulkFindingContacts ? (
+                      <>
+                        <svg className="h-3.5 w-3.5 animate-spin text-emerald-400" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                        </svg>
+                        <span>Finding Contacts...</span>
+                      </>
+                    ) : (
+                      <>
+                        <span>🔍 Find Contacts ({selectedLeadIds.length})</span>
+                        <span className="text-[10px] text-emerald-400/80 font-normal">(Free)</span>
+                      </>
+                    )}
+                  </button>
+                )}
+                {selectedLeadIds.length > 0 && (
+                  <button
+                    type="button"
+                    id="btn-delete-selected-leads"
+                    disabled={isDeletingLeads}
+                    onClick={() => setShowBulkDeleteConfirm(true)}
+                    className="rounded-lg border border-rose-500/40 bg-rose-500/10 px-3.5 py-1.5 font-semibold text-rose-300 shadow-md transition hover:bg-rose-500/20 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
+                    title={`Delete ${selectedLeadIds.length} selected lead(s)`}
+                  >
+                    {isDeletingLeads ? (
+                      <>
+                        <svg className="h-3.5 w-3.5 animate-spin text-rose-400" fill="none" viewBox="0 0 24 24">
+                          <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                          <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                        </svg>
+                        <span>Deleting...</span>
+                      </>
+                    ) : (
+                      <>
+                        <svg className="h-4 w-4 text-rose-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                        </svg>
+                        <span>Delete Selected ({selectedLeadIds.length})</span>
+                      </>
+                    )}
+                  </button>
+                )}
+                <button
+                  type="button"
+                  id="btn-delete-dry-run-leads"
+                  disabled={isDeletingDryRunLeads}
+                  onClick={() => setShowDeleteDryRunConfirm(true)}
+                  className="rounded-lg border border-amber-500/40 bg-amber-500/10 px-3 py-1.5 font-semibold text-amber-300 shadow-md transition hover:bg-amber-500/20 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
+                  title="Delete all dry-run and sample leads in this campaign"
+                >
+                  {isDeletingDryRunLeads ? (
+                    <>
+                      <svg className="h-3.5 w-3.5 animate-spin text-amber-400" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                      </svg>
+                      <span>Deleting Dry-Run...</span>
+                    </>
+                  ) : (
+                    <>
+                      <svg className="h-4 w-4 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                      </svg>
+                      <span>Delete Dry-Run Leads</span>
+                    </>
+                  )}
+                </button>
               </div>
             </div>
+
+            {/* Enrich Notice Banner */}
+            {enrichNotice && (
+              <div
+                className={`rounded-lg border p-3 text-xs flex items-center justify-between ${enrichNotice.type === "success"
+                    ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                    : "border-rose-500/30 bg-rose-500/10 text-rose-300"
+                  }`}
+              >
+                <div className="flex items-center gap-2">
+                  <span className="text-sm">{enrichNotice.type === "success" ? "✓" : "⚠"}</span>
+                  <span>{enrichNotice.message}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setEnrichNotice(null)}
+                  className="hover:opacity-75 ml-2 font-bold"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
+
+            {/* Contacts Notice Banner */}
+            {contactsNotice && (
+              <div
+                className={`rounded-lg border p-3 text-xs flex items-center justify-between ${contactsNotice.type === "success"
+                    ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                    : "border-rose-500/30 bg-rose-500/10 text-rose-300"
+                  }`}
+              >
+                <div className="flex items-center gap-2">
+                  <span className="text-sm">{contactsNotice.type === "success" ? "✓" : "⚠"}</span>
+                  <span>{contactsNotice.message}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setContactsNotice(null)}
+                  className="hover:opacity-75 ml-2 font-bold"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
+
+            {/* Delete Notice Banner */}
+            {deleteNotice && (
+              <div
+                className={`rounded-lg border p-3 text-xs flex items-center justify-between ${deleteNotice.type === "success"
+                    ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                    : "border-rose-500/30 bg-rose-500/10 text-rose-300"
+                  }`}
+              >
+                <div className="flex items-center gap-2">
+                  <span className="text-sm">{deleteNotice.type === "success" ? "✓" : "⚠"}</span>
+                  <span>{deleteNotice.message}</span>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setDeleteNotice(null)}
+                  className="hover:opacity-75 ml-2 font-bold"
+                >
+                  ✕
+                </button>
+              </div>
+            )}
 
             {/* Leads Table */}
             <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 overflow-hidden shadow-xs">
@@ -1215,38 +1764,40 @@ export default function CampaignDetailPage() {
                       <th className="py-3 px-4">Following</th>
                       <th className="py-3 px-4">Posts</th>
                       <th className="py-3 px-4">Category</th>
-                      <th className="hidden py-3 px-4 lg:table-cell">Location</th>
+                      <th className="py-3 px-4">Score</th>
+                      <th className="hidden py-3 px-4 lg:table-cell">City / Location</th>
+                      <th className="hidden py-3 px-4 md:table-cell">Contact &amp; Socials</th>
                       <th className="hidden py-3 px-4 xl:table-cell">Bio</th>
-                      <th className="hidden py-3 px-4 md:table-cell">Scraped</th>
+                      <th className="hidden py-3 px-4 lg:table-cell">Scraped</th>
                       <th className="py-3 px-4 text-right">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-zinc-800/60 text-zinc-300">
                     {isLeadsLoading ? (
                       <tr>
-                        <td colSpan={10} className="py-12 text-center text-zinc-500 animate-pulse">
+                        <td colSpan={12} className="py-12 text-center text-zinc-500 animate-pulse">
                           Loading leads from PostgreSQL...
                         </td>
                       </tr>
                     ) : leadsData?.items.length === 0 ? (
                       <tr>
-                        <td colSpan={10} className="py-12 text-center">
+                        <td colSpan={12} className="py-12 text-center">
                           {(() => {
                             const isDiscoveryRunning =
                               campaign.status === "RUNNING" ||
                               scrapeJobs.some((j) => j.status === "RUNNING");
                             const hasActiveFilters = Boolean(
                               searchQuery ||
-                                categoryFilter ||
-                                verifiedFilter !== "all" ||
-                                businessFilter !== "all" ||
-                                statusFilter !== "all",
+                              categoryFilter ||
+                              verifiedFilter !== "all" ||
+                              businessFilter !== "all" ||
+                              statusFilter !== "all",
                             );
                             const isLimitReached = Boolean(
                               campaign.leadLimit &&
-                                (leadsData?.pagination.total ??
-                                  campaign.leadCount ??
-                                  0) >= campaign.leadLimit,
+                              (leadsData?.pagination.total ??
+                                campaign.leadCount ??
+                                0) >= campaign.leadLimit,
                             );
 
                             return (
@@ -1275,19 +1826,19 @@ export default function CampaignDetailPage() {
                                   {isDiscoveryRunning
                                     ? "Lead discovery is in progress."
                                     : hasActiveFilters
-                                    ? "No leads match your current search or filters."
-                                    : isLimitReached
-                                    ? "Lead limit reached."
-                                    : "No leads yet."}
+                                      ? "No leads match your current search or filters."
+                                      : isLimitReached
+                                        ? "Lead limit reached."
+                                        : "No leads yet."}
                                 </p>
                                 <p className="text-xs text-zinc-500 mt-1 max-w-sm mx-auto">
                                   {isDiscoveryRunning
                                     ? "Profiles are being discovered, enriched, and saved. Leads will appear here automatically."
                                     : hasActiveFilters
-                                    ? "Try adjusting your search query or reset filters to see all leads."
-                                    : isLimitReached
-                                    ? `This campaign has reached its configured lead limit of ${campaign.leadLimit} leads.`
-                                    : "Click 'Scrape Leads' to discover and import Instagram profiles into this campaign."}
+                                      ? "Try adjusting your search query or reset filters to see all leads."
+                                      : isLimitReached
+                                        ? `This campaign has reached its configured lead limit of ${campaign.leadLimit} leads.`
+                                        : "Click 'Scrape Leads' to discover and import Instagram profiles into this campaign."}
                                 </p>
                                 {hasActiveFilters ? (
                                   <button
@@ -1315,8 +1866,16 @@ export default function CampaignDetailPage() {
                           })()}
                         </td>
                       </tr>
+                    ) : (leadsData?.items ?? []).filter((l) => !hideDryRun || !isLeadDryRun(l)).length === 0 ? (
+                      <tr>
+                        <td colSpan={12} className="py-12 text-center text-zinc-500">
+                          {hideDryRun ? "All visible leads are dry-run/sample leads. Uncheck 'Hide dry-run / sample leads' to view them." : "No leads found."}
+                        </td>
+                      </tr>
                     ) : (
-                      leadsData?.items.map((lead: Lead) => (
+                      (leadsData?.items ?? [])
+                        .filter((lead) => !hideDryRun || !isLeadDryRun(lead))
+                        .map((lead: Lead) => (
                         <tr
                           key={lead.id}
                           className="hover:bg-zinc-800/30 transition group"
@@ -1326,11 +1885,9 @@ export default function CampaignDetailPage() {
                             <input
                               type="checkbox"
                               aria-label={`Select @${lead.username}`}
-                              disabled={lead.status === "DO_NOT_CONTACT"}
                               checked={selectedLeadIdSet.has(lead.id)}
                               onChange={() => toggleLeadSelection(lead.id)}
                               className="h-3.5 w-3.5 rounded border-zinc-600 bg-zinc-900 accent-rose-500 disabled:opacity-30 disabled:cursor-not-allowed"
-                              title={lead.status === "DO_NOT_CONTACT" ? "Lead is in Do Not Contact list" : undefined}
                             />
                           </td>
 
@@ -1347,12 +1904,72 @@ export default function CampaignDetailPage() {
 
                               <div className="min-w-0">
                                 <div className="flex items-center gap-1.5 flex-wrap">
-                                  <button
-                                    onClick={() => setActiveLeadId(lead.id)}
-                                    className="font-semibold text-zinc-100 hover:text-rose-400 transition truncate text-left"
-                                  >
-                                    @{lead.username}
-                                  </button>
+                                  {lead.username ? (
+                                    <button
+                                      onClick={() => setActiveLeadId(lead.id)}
+                                      className="font-semibold text-zinc-100 hover:text-rose-400 transition truncate text-left"
+                                    >
+                                      @{lead.username}
+                                    </button>
+                                  ) : (
+                                    <button
+                                      onClick={() => setActiveLeadId(lead.id)}
+                                      className="font-semibold text-zinc-100 hover:text-rose-400 transition truncate text-left inline-flex items-center gap-1.5"
+                                    >
+                                      <span>{lead.fullName || "Unnamed Lead"}</span>
+                                      <span className="shrink-0 rounded bg-zinc-800 px-1.5 py-0.5 text-[9px] font-semibold text-zinc-400 border border-zinc-700">
+                                        No Instagram
+                                      </span>
+                                    </button>
+                                  )}
+                                  {lead.email && (
+                                    <span
+                                      className="shrink-0 rounded bg-sky-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-sky-300 border border-sky-500/20"
+                                      title={lead.email}
+                                    >
+                                      Email
+                                    </span>
+                                  )}
+                                  {isLeadDryRun(lead) ? (
+                                    <span
+                                      className="shrink-0 rounded bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-amber-400 border border-amber-500/20"
+                                      title="Dry-run / sample lead (messaging blocked)"
+                                    >
+                                      Mode: DRY-RUN
+                                    </span>
+                                  ) : (
+                                    <span
+                                      className="shrink-0 rounded bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-400 border border-emerald-500/20"
+                                      title="Real discovered lead"
+                                    >
+                                      Mode: REAL
+                                    </span>
+                                  )}
+                                  {lead.isGroup && (
+                                    <span
+                                      className="shrink-0 rounded bg-sky-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-sky-300 border border-sky-500/20"
+                                      title={`Multi-location group${lead.groupKey ? ` (${lead.groupKey})` : ""}`}
+                                    >
+                                      GROUP
+                                    </span>
+                                  )}
+                                  {lead.scoreFlags?.includes("NAME_WEBSITE_MISMATCH") && (
+                                    <span
+                                      className="shrink-0 rounded bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-amber-300 border border-amber-500/20"
+                                      title="Business name does not match website domain"
+                                    >
+                                      NAME/SITE MISMATCH
+                                    </span>
+                                  )}
+                                  {lead.handleSource && (
+                                    <span
+                                      className="shrink-0 rounded bg-indigo-500/10 px-1.5 py-0.5 text-[9px] font-medium text-indigo-300 border border-indigo-500/20"
+                                      title={`Handle source: ${lead.handleSource}${lead.handleConfidence ? ` (${lead.handleConfidence})` : ""}`}
+                                    >
+                                      {lead.handleSource}
+                                      {lead.handleConfidence ? ` · ${lead.handleConfidence}` : ""}
+                                    </span>
+                                  )}
                                   {lead.duplicateOfLeadId && (
                                     <span
                                       className="shrink-0 rounded bg-rose-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-rose-400 border border-rose-500/20"
@@ -1387,73 +2004,357 @@ export default function CampaignDetailPage() {
                                       BUSINESS
                                     </span>
                                   )}
-                                  {lead.status === "DO_NOT_CONTACT" && (
-                                    <span className="shrink-0 rounded bg-rose-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-rose-400 border border-rose-500/20">
-                                      DO NOT CONTACT
-                                    </span>
-                                  )}
                                 </div>
-                                {lead.fullName && (
+                                {lead.fullName && lead.username && (
                                   <div className="text-[11px] text-zinc-400 truncate">{lead.fullName}</div>
+                                )}
+                                {!lead.username && (
+                                  <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                                    <span className="text-[10px] text-zinc-500">Channels:</span>
+                                    {lead.email && <span className="text-[9px] rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/20 px-1 font-medium truncate max-w-[140px]" title={lead.email}>{lead.email}</span>}
+                                    {lead.phone && <span className="text-[9px] rounded bg-blue-500/10 text-blue-300 border border-blue-500/20 px-1 font-medium">{lead.phone}</span>}
+                                    {lead.website && <span className="text-[9px] rounded bg-purple-500/10 text-purple-300 border border-purple-500/20 px-1 font-medium truncate max-w-[120px]" title={lead.website}>{lead.website.replace(/^https?:\/\//, "")}</span>}
+                                  </div>
                                 )}
                               </div>
                             </div>
                           </td>
 
                           {/* Followers */}
-                          <td className="py-3 px-4 font-semibold text-zinc-200">
-                            {formatNumber(lead.followersCount ?? lead.followers)}
+                          <td className="py-3 px-4">
+                            {(() => {
+                              if (!lead.username) {
+                                return (
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] font-semibold text-zinc-400 border border-zinc-700 whitespace-nowrap">
+                                      No handle
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleEnrichHandleSingle(lead.id)}
+                                      disabled={enrichingLeadId === lead.id}
+                                      className="rounded bg-sky-600/20 px-1.5 py-0.5 text-[10px] font-semibold text-sky-300 border border-sky-500/30 hover:bg-sky-600/30 transition disabled:opacity-50"
+                                      title="Discover Instagram handle from website (homepage, /contact, link hubs)"
+                                    >
+                                      {enrichingLeadId === lead.id ? "..." : "⚡ Find IG"}
+                                    </button>
+                                  </div>
+                                );
+                              }
+                              const isNotEnriched =
+                                (lead.rawProfileData as { enrichmentStatus?: string } | undefined)?.enrichmentStatus === "NOT_ENRICHED" ||
+                                (!lead.followersCount && !lead.followers && !lead.biography);
+                              if (isNotEnriched) {
+                                return (
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-amber-400 border border-amber-500/20 whitespace-nowrap">
+                                      Not enriched
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleEnrichSingle(lead.id)}
+                                      disabled={enrichingLeadId === lead.id}
+                                      className="rounded bg-rose-600/20 px-1.5 py-0.5 text-[10px] font-semibold text-rose-300 border border-rose-500/30 hover:bg-rose-600/30 transition disabled:opacity-50"
+                                      title="Enrich Profile (Est. ~$0.0026)"
+                                    >
+                                      {enrichingLeadId === lead.id ? "..." : "Enrich"}
+                                    </button>
+                                  </div>
+                                );
+                              }
+                              return (
+                                <span className="font-semibold text-zinc-200">
+                                  {formatNumber(lead.followersCount ?? lead.followers)}
+                                </span>
+                              );
+                            })()}
                           </td>
 
                           {/* Following */}
                           <td className="py-3 px-4 text-zinc-400">
-                            {formatNumber(lead.followsCount ?? lead.following)}
+                            {(() => {
+                              const isNotEnriched =
+                                (lead.rawProfileData as { enrichmentStatus?: string } | undefined)?.enrichmentStatus === "NOT_ENRICHED" ||
+                                (!lead.followersCount && !lead.followers && !lead.biography);
+                              return isNotEnriched ? "—" : formatNumber(lead.followsCount ?? lead.following);
+                            })()}
                           </td>
 
                           {/* Posts */}
                           <td className="py-3 px-4 text-zinc-400">
-                            {formatNumber(lead.postsCount)}
+                            {(() => {
+                              const isNotEnriched =
+                                (lead.rawProfileData as { enrichmentStatus?: string } | undefined)?.enrichmentStatus === "NOT_ENRICHED" ||
+                                (!lead.followersCount && !lead.followers && !lead.biography);
+                              return isNotEnriched ? "—" : formatNumber(lead.postsCount);
+                            })()}
                           </td>
 
                           {/* Category */}
                           <td className="py-3 px-4">
-                            {lead.businessCategoryName || lead.category ? (
+                            {lead.businessCategoryName || lead.category || (lead.rawProfileData as { mapsCategory?: string } | undefined)?.mapsCategory ? (
                               <span className="rounded bg-zinc-800 px-2 py-0.5 text-[11px] text-zinc-300 font-medium">
-                                {lead.businessCategoryName || lead.category}
+                                {lead.businessCategoryName || lead.category || (lead.rawProfileData as { mapsCategory?: string } | undefined)?.mapsCategory}
                               </span>
                             ) : (
                               <span className="text-zinc-600">—</span>
                             )}
                           </td>
 
-                          {/* Location */}
+                          {/* Score */}
+                          <td className="py-3 px-4">
+                            {(() => {
+                              if (typeof lead.qualityScore === "number") {
+                                const tier =
+                                  lead.qualityTier ||
+                                  (lead.qualityScore >= 75
+                                    ? "A"
+                                    : lead.qualityScore >= 55
+                                      ? "B"
+                                      : lead.qualityScore >= 35
+                                        ? "C"
+                                        : "D");
+                                const tierStyles: Record<string, string> = {
+                                  A: "bg-emerald-500/10 text-emerald-400 border-emerald-500/25",
+                                  B: "bg-sky-500/10 text-sky-400 border-sky-500/25",
+                                  C: "bg-amber-500/10 text-amber-400 border-amber-500/25",
+                                  D: "bg-rose-500/10 text-rose-400 border-rose-500/25",
+                                };
+                                const badgeStyle = tierStyles[tier] ?? "bg-zinc-800 text-zinc-300 border-zinc-700";
+                                const flagsList =
+                                  Array.isArray(lead.scoreFlags) && lead.scoreFlags.length > 0
+                                    ? lead.scoreFlags.join(", ")
+                                    : "None";
+                                let breakdownTooltip = "";
+                                if (Array.isArray(lead.scoreBreakdown)) {
+                                  breakdownTooltip =
+                                    "\n\nBreakdown:\n" +
+                                    (lead.scoreBreakdown as Array<{ displayName: string; points: number; maxPoints: number; skipped: boolean }>)
+                                      .map((b) => `• ${b.displayName}: ${b.skipped ? "Omitted (no IG)" : `${b.points}/${b.maxPoints} pts`}`)
+                                      .join("\n");
+                                }
+                                const tooltip = `Lead Quality Score: ${lead.qualityScore}/100 (Tier ${tier})\nFlags: ${flagsList}${lead.isChain ? "\n• Flagged as multi-location chain" : ""}${!lead.username ? "\n• Tier capped at B (no IG handle for Instagram DM)" : ""}${breakdownTooltip}`;
+
+                                return (
+                                  <div className="flex flex-col gap-1 items-start">
+                                    <div className="flex items-center gap-1.5 flex-wrap">
+                                      <span
+                                        className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-bold border ${badgeStyle} cursor-help`}
+                                        title={tooltip}
+                                      >
+                                        <span>Tier {tier}</span>
+                                        <span className="opacity-60">•</span>
+                                        <span>{lead.qualityScore}</span>
+                                      </span>
+                                      {lead.isChain && (
+                                        <span
+                                          className="shrink-0 rounded bg-red-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-red-400 border border-red-500/20"
+                                          title="Corporate chain / franchise detected"
+                                        >
+                                          CHAIN
+                                        </span>
+                                      )}
+                                    </div>
+                                    {Array.isArray(lead.scoreFlags) && lead.scoreFlags.length > 0 && (
+                                      <span className="text-[10px] text-zinc-500 truncate max-w-[120px]" title={flagsList}>
+                                        {lead.scoreFlags[0].replace(/_/g, " ")}
+                                        {lead.scoreFlags.length > 1 ? ` +${lead.scoreFlags.length - 1}` : ""}
+                                      </span>
+                                    )}
+                                  </div>
+                                );
+                              }
+
+                              const scoreVal =
+                                lead.leadScore ??
+                                lead.aiScore ??
+                                (lead.rawProfileData as { aiAnalysis?: { score?: number } } | undefined)?.aiAnalysis?.score;
+                              if (typeof scoreVal === "number") {
+                                const badgeColor =
+                                  scoreVal >= 80
+                                    ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
+                                    : scoreVal >= 70
+                                      ? "bg-blue-500/10 text-blue-400 border-blue-500/20"
+                                      : "bg-amber-500/10 text-amber-400 border-amber-500/20";
+                                return (
+                                  <span
+                                    className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-semibold border ${badgeColor}`}
+                                    title={`AI Relevance Score: ${scoreVal}/100`}
+                                  >
+                                    <span>★</span>
+                                    <span>{scoreVal}</span>
+                                  </span>
+                                );
+                              }
+                              return <span className="text-zinc-600">—</span>;
+                            })()}
+                          </td>
+
+                          {/* City / Location */}
                           <td className="hidden py-3 px-4 text-zinc-400 lg:table-cell">
-                            {lead.location ? (
-                              <span className="text-[11px]">{lead.location}</span>
+                            {lead.location || (lead.rawProfileData as { city?: string; address?: string } | undefined)?.city || (lead.rawProfileData as { address?: string } | undefined)?.address ? (
+                              <span className="text-[11px] truncate max-w-[140px] block" title={lead.location || (lead.rawProfileData as { address?: string } | undefined)?.address}>
+                                {lead.location || (lead.rawProfileData as { city?: string; address?: string } | undefined)?.city || (lead.rawProfileData as { address?: string } | undefined)?.address}
+                              </span>
                             ) : (
                               <span className="text-zinc-600">—</span>
                             )}
+                          </td>
+
+                          {/* Contact & Socials */}
+                          <td className="hidden py-3 px-4 md:table-cell">
+                            {(() => {
+                              const contactsData = (lead.rawProfileData as { contacts?: { whatsapps?: Array<{ url: string; phone?: string }> } } | undefined)?.contacts;
+                              const whatsapps = contactsData?.whatsapps ?? [];
+                              const hasEmail = Boolean(lead.email);
+                              const hasPhone = Boolean(lead.phone || (lead.rawProfileData as { phone?: string } | undefined)?.phone);
+                              const hasWebsite = Boolean(lead.website || (lead.rawProfileData as { website?: string } | undefined)?.website);
+                              const hasWhatsapp = whatsapps.length > 0;
+                              const socials = (lead.rawProfileData as { socialLinks?: Record<string, string | null> } | undefined)?.socialLinks;
+                              const socialEntries = socials ? Object.entries(socials).filter((entry) => Boolean(entry[1])) : [];
+                              const hasAnySocial = socialEntries.length > 0 || Boolean(lead.socialLink);
+
+                              if (!hasEmail && !hasPhone && !hasWebsite && !hasWhatsapp && !hasAnySocial) {
+                                return (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleFindContactsSingle(lead.id)}
+                                    disabled={findingContactsLeadId === lead.id}
+                                    className="rounded bg-emerald-600/10 px-2 py-0.5 text-[10px] font-medium text-emerald-300 border border-emerald-500/20 hover:bg-emerald-600/20 transition disabled:opacity-50"
+                                    title="Extract contacts from bio and website"
+                                  >
+                                    {findingContactsLeadId === lead.id ? "Searching..." : "🔍 Find contacts"}
+                                  </button>
+                                );
+                              }
+
+                              return (
+                                <div className="flex flex-col gap-1 text-[11px]">
+                                  {hasEmail && (
+                                    <a
+                                      href={`mailto:${lead.email}`}
+                                      className="text-zinc-300 hover:text-emerald-400 inline-flex items-center gap-1 truncate max-w-[130px]"
+                                      title={lead.email ?? ""}
+                                    >
+                                      <span className="text-xs">✉️</span>
+                                      <span className="truncate">{lead.email}</span>
+                                    </a>
+                                  )}
+                                  {hasPhone && (
+                                    <a
+                                      href={`tel:${lead.phoneNormalized || lead.phone || (lead.rawProfileData as { phone?: string } | undefined)?.phone}`}
+                                      className="text-zinc-300 hover:text-emerald-400 inline-flex items-center gap-1 truncate max-w-[130px]"
+                                      title={lead.phone || (lead.rawProfileData as { phone?: string } | undefined)?.phone}
+                                    >
+                                      <span className="text-xs">📞</span>
+                                      <span className="truncate">{lead.phone || (lead.rawProfileData as { phone?: string } | undefined)?.phone}</span>
+                                    </a>
+                                  )}
+                                  {hasWhatsapp && (
+                                    <a
+                                      href={whatsapps[0].url}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="text-emerald-400 hover:text-emerald-300 inline-flex items-center gap-1 truncate max-w-[130px]"
+                                      title={whatsapps[0].url}
+                                    >
+                                      <span className="text-xs">💬</span>
+                                      <span className="truncate">{whatsapps[0].phone ? `WA: ${whatsapps[0].phone}` : "WhatsApp"}</span>
+                                    </a>
+                                  )}
+                                  {hasWebsite && (
+                                    <a
+                                      href={(() => {
+                                        const w = lead.website || (lead.rawProfileData as { website?: string } | undefined)?.website || "";
+                                        return w.startsWith("http") ? w : `https://${w}`;
+                                      })()}
+                                      target="_blank"
+                                      rel="noopener noreferrer"
+                                      className="text-zinc-400 hover:text-sky-400 inline-flex items-center gap-1 truncate max-w-[130px]"
+                                      title={lead.website || (lead.rawProfileData as { website?: string } | undefined)?.website}
+                                    >
+                                      <span className="text-xs">🌐</span>
+                                      <span className="truncate">{(lead.website || (lead.rawProfileData as { website?: string } | undefined)?.website || "").replace(/^https?:\/\/(www\.)?/, "")}</span>
+                                    </a>
+                                  )}
+                                  {hasAnySocial && (
+                                    <div className="flex items-center gap-1.5 mt-0.5">
+                                      {socialEntries.map(([platform, url]) => (
+                                        <a
+                                          key={platform}
+                                          href={url!.startsWith("http") ? url! : `https://${url}`}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          className="text-zinc-400 hover:text-rose-400 transition"
+                                          title={`Open ${platform}`}
+                                        >
+                                          <SocialPlatformIcon platform={platform} className="h-3.5 w-3.5" />
+                                        </a>
+                                      ))}
+                                      {lead.socialLink && !socialEntries.some(([p]) => p.toLowerCase() === (lead.socialPlatform || "").toLowerCase()) && (
+                                        <a
+                                          href={lead.socialLink.startsWith("http") ? lead.socialLink : `https://${lead.socialLink}`}
+                                          target="_blank"
+                                          rel="noopener noreferrer"
+                                          className="text-zinc-400 hover:text-sky-400 transition"
+                                          title={`Open ${lead.socialPlatform || "social"}`}
+                                        >
+                                          <SocialPlatformIcon platform={lead.socialPlatform || "social"} className="h-3.5 w-3.5" />
+                                        </a>
+                                      )}
+                                    </div>
+                                  )}
+                                </div>
+                              );
+                            })()}
                           </td>
 
                           {/* Bio */}
                           <td className="hidden py-3 px-4 xl:table-cell">
-                            {lead.biography ? (
-                              <span className="block max-w-[220px] truncate text-[11px] text-zinc-400" title={lead.biography}>
-                                {lead.biography}
-                              </span>
-                            ) : (
-                              <span className="text-zinc-600">—</span>
-                            )}
+                            {(() => {
+                              const isNotEnriched =
+                                (lead.rawProfileData as { enrichmentStatus?: string } | undefined)?.enrichmentStatus === "NOT_ENRICHED" ||
+                                (!lead.followersCount && !lead.followers && !lead.biography);
+                              if (isNotEnriched) {
+                                return <span className="text-zinc-500 italic text-[11px]">Not enriched</span>;
+                              }
+                              return lead.biography ? (
+                                <span className="block max-w-[220px] truncate text-[11px] text-zinc-400" title={lead.biography}>
+                                  {lead.biography}
+                                </span>
+                              ) : (
+                                <span className="text-zinc-600">—</span>
+                              );
+                            })()}
                           </td>
 
                           {/* Scraped At */}
-                          <td className="hidden py-3 px-4 text-[11px] text-zinc-400 md:table-cell">
+                          <td className="hidden py-3 px-4 text-[11px] text-zinc-400 lg:table-cell">
                             {lead.scrapedAt ? new Date(lead.scrapedAt).toLocaleDateString() : "—"}
                           </td>
 
                           {/* Actions */}
                           <td className="py-3 px-4 text-right">
                             <div className="flex items-center justify-end gap-2">
+                              {(() => {
+                                const isNotEnriched =
+                                  (lead.rawProfileData as { enrichmentStatus?: string } | undefined)?.enrichmentStatus === "NOT_ENRICHED" ||
+                                  (!lead.followersCount && !lead.followers && !lead.biography);
+                                if (isNotEnriched) {
+                                  return (
+                                    <button
+                                      type="button"
+                                      onClick={() => handleEnrichSingle(lead.id)}
+                                      disabled={enrichingLeadId === lead.id}
+                                      className="rounded bg-rose-600/20 px-2 py-1 text-xs font-semibold text-rose-300 border border-rose-500/30 hover:bg-rose-600/30 transition disabled:opacity-50"
+                                      title="Enrich Profile (Est. ~$0.0026)"
+                                    >
+                                      {enrichingLeadId === lead.id ? "..." : "⚡ Enrich"}
+                                    </button>
+                                  );
+                                }
+                                return null;
+                              })()}
                               <a
                                 href={lead.profileUrl}
                                 target="_blank"
@@ -1504,23 +2405,7 @@ export default function CampaignDetailPage() {
                                   </>
                                 );
                               })()}
-                              {lead.status === "DO_NOT_CONTACT" ? (
-                                <button
-                                  type="button"
-                                  id={`btn-message-${lead.id}`}
-                                  onClick={() => {
-                                    setDrawerInitialTab("profile");
-                                    setActiveLeadId(lead.id);
-                                  }}
-                                  className="inline-flex items-center gap-1 rounded bg-zinc-800/80 px-2.5 py-1 text-xs font-semibold text-zinc-400 border border-zinc-700/60 hover:bg-zinc-800 hover:text-zinc-300 transition"
-                                  title={`@${lead.username} is marked Do Not Contact`}
-                                >
-                                  <svg className="h-3.5 w-3.5 text-rose-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636" />
-                                  </svg>
-                                  <span>DNC</span>
-                                </button>
-                              ) : (
+                              {lead.username ? (
                                 <button
                                   type="button"
                                   id={`btn-message-${lead.id}`}
@@ -1536,6 +2421,13 @@ export default function CampaignDetailPage() {
                                   </svg>
                                   <span>Message</span>
                                 </button>
+                              ) : (
+                                <span
+                                  className="inline-flex items-center gap-1 rounded bg-zinc-800/60 px-2.5 py-1 text-xs font-medium text-zinc-500 border border-zinc-700/50 cursor-not-allowed"
+                                  title="Instagram DM unavailable: Lead has no Instagram handle"
+                                >
+                                  No IG DM
+                                </span>
                               )}
                               <button
                                 type="button"
@@ -1546,6 +2438,18 @@ export default function CampaignDetailPage() {
                                 className="rounded bg-zinc-800 px-2.5 py-1 text-xs font-medium text-zinc-300 hover:bg-zinc-700 hover:text-white transition"
                               >
                                 View
+                              </button>
+                              <button
+                                type="button"
+                                id={`btn-delete-lead-${lead.id}`}
+                                onClick={() => setLeadPendingDelete(lead)}
+                                className="rounded p-1.5 text-zinc-500 hover:text-rose-400 hover:bg-rose-500/10 transition"
+                                title={`Delete @${lead.username}`}
+                                aria-label={`Delete @${lead.username}`}
+                              >
+                                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                </svg>
                               </button>
                             </div>
                           </td>
@@ -1578,13 +2482,25 @@ export default function CampaignDetailPage() {
                             size="md"
                           />
                           <div className="min-w-0">
-                            <div className="flex items-center gap-1.5">
-                              <button
-                                onClick={() => setActiveLeadId(lead.id)}
-                                className="font-semibold text-zinc-100 hover:text-rose-400 transition truncate text-left text-sm"
-                              >
-                                @{lead.username}
-                              </button>
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              {lead.username ? (
+                                <button
+                                  onClick={() => setActiveLeadId(lead.id)}
+                                  className="font-semibold text-zinc-100 hover:text-rose-400 transition truncate text-left text-sm"
+                                >
+                                  @{lead.username}
+                                </button>
+                              ) : (
+                                <button
+                                  onClick={() => setActiveLeadId(lead.id)}
+                                  className="font-semibold text-zinc-100 hover:text-rose-400 transition truncate text-left text-sm inline-flex items-center gap-1.5"
+                                >
+                                  <span>{lead.fullName || "Unnamed Lead"}</span>
+                                  <span className="shrink-0 rounded bg-zinc-800 px-1.5 py-0.5 text-[9px] font-semibold text-zinc-400 border border-zinc-700">
+                                    No Instagram
+                                  </span>
+                                </button>
+                              )}
                               {(lead.verified ?? lead.isVerified) && (
                                 <svg
                                   className="h-3.5 w-3.5 fill-sky-400 shrink-0"
@@ -1594,6 +2510,37 @@ export default function CampaignDetailPage() {
                                   <path d="M9 16.17L4.83 12l-1.42 1.41L9 19 21 7l-1.41-1.41L9 16.17z" />
                                 </svg>
                               )}
+                              {isLeadDryRun(lead) ? (
+                                <span
+                                  className="shrink-0 rounded bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-amber-400 border border-amber-500/20"
+                                  title="Dry-run / sample lead (messaging blocked)"
+                                >
+                                  Mode: DRY-RUN
+                                </span>
+                              ) : (
+                                <span
+                                  className="shrink-0 rounded bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-400 border border-emerald-500/20"
+                                  title="Real discovered lead"
+                                >
+                                  Mode: REAL
+                                </span>
+                              )}
+                              {lead.isGroup && (
+                                <span
+                                  className="shrink-0 rounded bg-sky-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-sky-300 border border-sky-500/20"
+                                  title={`Multi-location group${lead.groupKey ? ` (${lead.groupKey})` : ""}`}
+                                >
+                                  GROUP
+                                </span>
+                              )}
+                              {lead.scoreFlags?.includes("NAME_WEBSITE_MISMATCH") && (
+                                <span
+                                  className="shrink-0 rounded bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-amber-300 border border-amber-500/20"
+                                  title="Business name does not match website domain"
+                                >
+                                  NAME/SITE MISMATCH
+                                </span>
+                              )}
                             </div>
                             {lead.fullName && (
                               <p className="text-xs text-zinc-400 truncate">{lead.fullName}</p>
@@ -1601,49 +2548,136 @@ export default function CampaignDetailPage() {
                           </div>
                         </div>
 
-                        {(lead.isBusinessAccount ?? lead.isBusiness) && (
-                          <span className="shrink-0 rounded bg-purple-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-purple-400 border border-purple-500/20">
-                            BUSINESS
-                          </span>
-                        )}
+                        <div className="flex items-center gap-1.5 flex-wrap justify-end">
+                          {typeof lead.qualityScore === "number" && (
+                            <span
+                              className={`shrink-0 rounded-full px-2 py-0.5 text-[10px] font-bold border ${lead.qualityTier === "A" || lead.qualityScore >= 75
+                                  ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/25"
+                                  : lead.qualityTier === "B" || lead.qualityScore >= 55
+                                    ? "bg-sky-500/10 text-sky-400 border-sky-500/25"
+                                    : lead.qualityTier === "C" || lead.qualityScore >= 35
+                                      ? "bg-amber-500/10 text-amber-400 border-amber-500/25"
+                                      : "bg-rose-500/10 text-rose-400 border-rose-500/25"
+                                }`}
+                            >
+                              Tier {lead.qualityTier ?? (lead.qualityScore >= 75 ? "A" : lead.qualityScore >= 55 ? "B" : "C")} • {lead.qualityScore}
+                            </span>
+                          )}
+                          {lead.isChain && (
+                            <span className="shrink-0 rounded bg-red-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-red-400 border border-red-500/20">
+                              CHAIN
+                            </span>
+                          )}
+                          {(lead.isBusinessAccount ?? lead.isBusiness) && (
+                            <span className="shrink-0 rounded bg-purple-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-purple-400 border border-purple-500/20">
+                              BUSINESS
+                            </span>
+                          )}
+                        </div>
                       </div>
 
                       {/* Stats */}
-                      <div className="grid grid-cols-3 gap-2 rounded-lg bg-zinc-900/60 p-2 text-center text-xs">
-                        <div>
-                          <span className="text-[10px] text-zinc-500 block">Followers</span>
-                          <span className="font-bold text-zinc-200">{formatNumber(lead.followersCount ?? lead.followers)}</span>
-                        </div>
-                        <div className="border-x border-zinc-800">
-                          <span className="text-[10px] text-zinc-500 block">Following</span>
-                          <span className="font-bold text-zinc-200">{formatNumber(lead.followsCount ?? lead.following)}</span>
-                        </div>
-                        <div>
-                          <span className="text-[10px] text-zinc-500 block">Posts</span>
-                          <span className="font-bold text-zinc-200">{formatNumber(lead.postsCount)}</span>
-                        </div>
-                      </div>
+                      {(() => {
+                        const isNotEnriched =
+                          (lead.rawProfileData as { enrichmentStatus?: string } | undefined)?.enrichmentStatus === "NOT_ENRICHED" ||
+                          (!lead.followersCount && !lead.followers && !lead.biography);
+                        if (isNotEnriched) {
+                          return (
+                            <div className="flex items-center justify-between rounded-lg bg-zinc-900/60 p-2.5 text-xs border border-zinc-800">
+                              <div className="flex items-center gap-1.5">
+                                <span className="rounded bg-amber-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-amber-400 border border-amber-500/20">
+                                  Not enriched
+                                </span>
+                                <span className="text-zinc-500 text-[11px]">Followers &amp; bio lazy</span>
+                              </div>
+                              <button
+                                type="button"
+                                onClick={() => handleEnrichSingle(lead.id)}
+                                disabled={enrichingLeadId === lead.id}
+                                className="rounded bg-rose-600/20 px-2.5 py-1 text-xs font-semibold text-rose-300 border border-rose-500/30 hover:bg-rose-600/30 transition disabled:opacity-50"
+                                title="Enrich Profile (Est. ~$0.0026)"
+                              >
+                                {enrichingLeadId === lead.id ? "..." : "⚡ Enrich (~$0.0026)"}
+                              </button>
+                            </div>
+                          );
+                        }
+                        return (
+                          <div className="grid grid-cols-3 gap-2 rounded-lg bg-zinc-900/60 p-2 text-center text-xs">
+                            <div>
+                              <span className="text-[10px] text-zinc-500 block">Followers</span>
+                              <span className="font-bold text-zinc-200">{formatNumber(lead.followersCount ?? lead.followers)}</span>
+                            </div>
+                            <div className="border-x border-zinc-800">
+                              <span className="text-[10px] text-zinc-500 block">Following</span>
+                              <span className="font-bold text-zinc-200">{formatNumber(lead.followsCount ?? lead.following)}</span>
+                            </div>
+                            <div>
+                              <span className="text-[10px] text-zinc-500 block">Posts</span>
+                              <span className="font-bold text-zinc-200">{formatNumber(lead.postsCount)}</span>
+                            </div>
+                          </div>
+                        );
+                      })()}
 
                       {/* Bio */}
-                      {lead.biography && (
+                      {lead.biography ? (
                         <p className="text-xs text-zinc-300 line-clamp-2 leading-relaxed">
                           {lead.biography}
                         </p>
+                      ) : (
+                        (lead.rawProfileData as { enrichmentStatus?: string } | undefined)?.enrichmentStatus === "NOT_ENRICHED" && (
+                          <p className="text-xs text-zinc-500 italic">Bio not enriched yet</p>
+                        )
                       )}
 
-                      {/* Category & Location */}
+                      {/* Category & Location & Phone */}
                       <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
-                        {(lead.businessCategoryName || lead.category) && (
+                        {(lead.businessCategoryName || lead.category || (lead.rawProfileData as { mapsCategory?: string } | undefined)?.mapsCategory) && (
                           <span className="rounded bg-zinc-800 px-2 py-0.5 text-zinc-300 font-medium">
-                            {lead.businessCategoryName || lead.category}
+                            {lead.businessCategoryName || lead.category || (lead.rawProfileData as { mapsCategory?: string } | undefined)?.mapsCategory}
                           </span>
                         )}
-                        {lead.location && (
+                        {(lead.location || (lead.rawProfileData as { city?: string } | undefined)?.city) && (
                           <span className="rounded bg-zinc-800/60 px-2 py-0.5 text-zinc-400">
-                            📍 {lead.location}
+                            📍 {lead.location || (lead.rawProfileData as { city?: string } | undefined)?.city}
                           </span>
+                        )}
+                        {(lead.phone || (lead.rawProfileData as { phone?: string } | undefined)?.phone) && (
+                          <a
+                            href={`tel:${lead.phoneNormalized || lead.phone || (lead.rawProfileData as { phone?: string } | undefined)?.phone}`}
+                            className="rounded bg-zinc-800/60 px-2 py-0.5 text-zinc-300 hover:text-emerald-400"
+                          >
+                            📞 {lead.phone || (lead.rawProfileData as { phone?: string } | undefined)?.phone}
+                          </a>
                         )}
                       </div>
+
+                      {/* Other Social Links on Mobile */}
+                      {(() => {
+                        const socials = (lead.rawProfileData as { socialLinks?: Record<string, string | null> } | undefined)?.socialLinks;
+                        const entries = socials ? Object.entries(socials).filter((entry) => Boolean(entry[1])) : [];
+                        if (entries.length === 0) return null;
+                        return (
+                          <div className="flex items-center gap-2 pt-0.5">
+                            <span className="text-[10px] text-zinc-500 uppercase font-semibold">Socials:</span>
+                            <div className="flex items-center gap-1.5 flex-wrap">
+                              {entries.map(([platform, url]) => (
+                                <a
+                                  key={platform}
+                                  href={url!.startsWith("http") ? url! : `https://${url}`}
+                                  target="_blank"
+                                  rel="noopener noreferrer"
+                                  className="text-zinc-400 hover:text-rose-400"
+                                  title={platform}
+                                >
+                                  <SocialPlatformIcon platform={platform} className="h-3.5 w-3.5" />
+                                </a>
+                              ))}
+                            </div>
+                          </div>
+                        );
+                      })()}
 
                       {/* Actions */}
                       <div className="flex items-center justify-between pt-1 border-t border-zinc-800/60 text-xs">
@@ -1690,19 +2724,58 @@ export default function CampaignDetailPage() {
                         </div>
 
                         <div className="flex items-center gap-2">
-                          <button
-                            type="button"
-                            onClick={() => {
-                              setDrawerInitialTab("message");
-                              setActiveLeadId(lead.id);
-                            }}
-                            className="inline-flex items-center gap-1 rounded-lg bg-rose-600/20 px-2.5 py-1 text-xs font-semibold text-rose-400 border border-rose-500/30 hover:bg-rose-600/30 transition"
-                          >
-                            <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
-                            </svg>
-                            <span>Message</span>
-                          </button>
+                          {(() => {
+                            if (!lead.username) {
+                              return (
+                                <button
+                                  type="button"
+                                  onClick={() => handleEnrichHandleSingle(lead.id)}
+                                  disabled={enrichingLeadId === lead.id}
+                                  className="rounded bg-sky-600/20 px-2 py-1 text-xs font-semibold text-sky-300 border border-sky-500/30 hover:bg-sky-600/30 transition disabled:opacity-50"
+                                >
+                                  {enrichingLeadId === lead.id ? "..." : "⚡ Find IG"}
+                                </button>
+                              );
+                            }
+                            const isNotEnriched =
+                              (lead.rawProfileData as { enrichmentStatus?: string } | undefined)?.enrichmentStatus === "NOT_ENRICHED" ||
+                              (!lead.followersCount && !lead.followers && !lead.biography);
+                            if (isNotEnriched) {
+                              return (
+                                <button
+                                  type="button"
+                                  onClick={() => handleEnrichSingle(lead.id)}
+                                  disabled={enrichingLeadId === lead.id}
+                                  className="rounded bg-rose-600/20 px-2 py-1 text-xs font-semibold text-rose-300 border border-rose-500/30 hover:bg-rose-600/30 transition disabled:opacity-50"
+                                >
+                                  {enrichingLeadId === lead.id ? "..." : "Enrich"}
+                                </button>
+                              );
+                            }
+                            return null;
+                          })()}
+                          {lead.username ? (
+                            <button
+                              type="button"
+                              onClick={() => {
+                                setDrawerInitialTab("message");
+                                setActiveLeadId(lead.id);
+                              }}
+                              className="inline-flex items-center gap-1 rounded-lg bg-rose-600/20 px-2.5 py-1 text-xs font-semibold text-rose-400 border border-rose-500/30 hover:bg-rose-600/30 transition"
+                            >
+                              <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                              </svg>
+                              <span>Message</span>
+                            </button>
+                          ) : (
+                            <span
+                              className="inline-flex items-center gap-1 rounded-lg bg-zinc-800/60 px-2 py-1 text-xs font-medium text-zinc-500 border border-zinc-700/50 cursor-not-allowed"
+                              title="Instagram DM unavailable: Lead has no Instagram handle"
+                            >
+                              No IG DM
+                            </span>
+                          )}
                           <button
                             type="button"
                             onClick={() => {
@@ -1712,6 +2785,17 @@ export default function CampaignDetailPage() {
                             className="rounded-lg bg-zinc-800 px-3 py-1 text-xs font-semibold text-zinc-200 hover:bg-zinc-700 transition"
                           >
                             View
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => setLeadPendingDelete(lead)}
+                            className="rounded-lg p-1.5 text-zinc-500 hover:text-rose-400 hover:bg-rose-500/10 transition"
+                            title={`Delete @${lead.username}`}
+                            aria-label={`Delete @${lead.username}`}
+                          >
+                            <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                            </svg>
                           </button>
                         </div>
                       </div>
@@ -1790,11 +2874,10 @@ export default function CampaignDetailPage() {
                             key={`page-btn-${pageNum}`}
                             onClick={() => setPage(pageNum)}
                             disabled={isLeadsLoading}
-                            className={`min-w-[28px] h-7 rounded px-2 text-xs font-medium transition ${
-                              pageNum === page
+                            className={`min-w-[28px] h-7 rounded px-2 text-xs font-medium transition ${pageNum === page
                                 ? "bg-rose-500/20 text-rose-300 border border-rose-500/40"
                                 : "border border-zinc-800 bg-zinc-900 text-zinc-400 hover:bg-zinc-800 hover:text-zinc-200"
-                            }`}
+                              }`}
                           >
                             {pageNum}
                           </button>
@@ -1849,49 +2932,196 @@ export default function CampaignDetailPage() {
                         </td>
                       </tr>
                     ) : (
-                      scrapeJobs.map((job) => (
-                        <tr key={job.id} className="hover:bg-zinc-800/30">
-                          <td className="py-3 px-4">{getStatusBadge(job.status)}</td>
-                          <td className="py-3 px-4 font-mono uppercase text-zinc-300">{job.provider}</td>
-                          <td className="py-3 px-4 font-medium text-zinc-200">{job.inputCount}</td>
-                          <td className="py-3 px-4 font-medium text-emerald-400">{job.processedCount}</td>
-                          <td className="py-3 px-4 text-zinc-400">
-                            {job.startedAt ? new Date(job.startedAt).toLocaleString() : "—"}
-                          </td>
-                          <td className="py-3 px-4 text-zinc-400">
-                            {job.completedAt ? new Date(job.completedAt).toLocaleString() : "—"}
-                          </td>
-                          <td className="py-3 px-4">
-                            {job.errorMessage ? (
-                              <span className="text-rose-400 text-xs font-mono">{job.errorMessage}</span>
-                            ) : (
-                              <span className="text-emerald-400 text-xs font-medium">Completed without errors</span>
-                            )}
-                            {job.query && (
-                              <div className="mt-1 text-[11px] text-zinc-400 space-y-0.5">
-                                <div>
-                                  <span className="text-zinc-300 font-medium">Intent:</span> {job.query}
-                                  {job.location && <span className="ml-2"><span className="text-zinc-300 font-medium">Loc:</span> {job.location}</span>}
-                                  {job.category && <span className="ml-2"><span className="text-zinc-300 font-medium">Cat:</span> {job.category}</span>}
-                                  {job.requestedLimit !== undefined && job.requestedLimit !== null && (
-                                    <span className="ml-2"><span className="text-zinc-300 font-medium">Limit:</span> {job.requestedLimit}</span>
-                                  )}
-                                </div>
-                                <div className="text-[10px] text-zinc-500">
-                                  <span>Discovered: {job.candidatesDiscovered ?? 0}</span> &bull;{" "}
-                                  <span>Enriched: {job.candidatesEnriched ?? 0}</span> &bull;{" "}
-                                  <span>Skipped: {job.candidatesSkipped ?? 0}</span>
-                                </div>
-                                {(job.discoveryActor || job.enrichmentActor) && (
-                                  <div className="text-[10px] font-mono text-zinc-500 truncate" title={`${job.discoveryActor ?? ""} -> ${job.enrichmentActor ?? ""}`}>
-                                    <span>Actors: {job.discoveryActor ?? "—"} &rarr; {job.enrichmentActor ?? "—"}</span>
-                                  </div>
+                      scrapeJobs.map((job) => {
+                        const runIds: string[] = Array.isArray(job.usage?.runIds) ? (job.usage.runIds as string[]) : [];
+                        const hasRealRunId = runIds.length > 0 && runIds.some(
+                          (id) => typeof id === "string" && id.trim().length > 0 && !id.startsWith("dry_run_") && id !== "unknown"
+                        );
+
+                        // Refuse to label REAL if runs = 0 or no real Apify run ID exists (or if run ID is dry_run_* or unknown)
+                        const isDry = Boolean(
+                          job.isDryRun === true ||
+                          job.usage?.isDryRun ||
+                          job.provider?.toLowerCase().includes("dry") ||
+                          job.provider?.toLowerCase().includes("mock") ||
+                          !hasRealRunId ||
+                          (job.costUsd === 0 && job.status === "COMPLETED" && (job.usage?.placesFetched ?? 0) === 0)
+                        );
+
+                        return (
+                          <tr key={job.id} className="hover:bg-zinc-800/30">
+                            <td className="py-3 px-4">{getStatusBadge(job.status)}</td>
+                            <td className="py-3 px-4">
+                              <div className="flex items-center gap-1.5 flex-wrap">
+                                <span className="font-mono uppercase text-zinc-300">{job.provider}</span>
+                                {isDry ? (
+                                  <span className="rounded bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-amber-400 border border-amber-500/20">
+                                    Mode: DRY-RUN
+                                  </span>
+                                ) : (
+                                  <span className="rounded bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-400 border border-emerald-500/20">
+                                    Mode: REAL
+                                  </span>
                                 )}
                               </div>
-                            )}
-                          </td>
-                        </tr>
-                      ))
+                            </td>
+                            <td className="py-3 px-4 font-medium text-zinc-200">{job.inputCount}</td>
+                            <td className="py-3 px-4 font-medium text-emerald-400">{job.processedCount}</td>
+                            <td className="py-3 px-4 text-zinc-400">
+                              {job.startedAt ? new Date(job.startedAt).toLocaleString() : "—"}
+                            </td>
+                            <td className="py-3 px-4 text-zinc-400">
+                              {job.completedAt ? new Date(job.completedAt).toLocaleString() : "—"}
+                            </td>
+                            <td className="py-3 px-4">
+                              {job.errorMessage ? (
+                                <span className="text-rose-400 text-xs font-mono">{job.errorMessage}</span>
+                              ) : (
+                                <span className="text-emerald-400 text-xs font-medium">Completed without errors</span>
+                              )}
+                              {job.query && (
+                                <div className="mt-1 text-[11px] text-zinc-400 space-y-0.5">
+                                  <div>
+                                    <span className="text-zinc-300 font-medium">Intent:</span> {job.query}
+                                    {job.location && <span className="ml-2"><span className="text-zinc-300 font-medium">Loc:</span> {job.location}</span>}
+                                    {job.category && <span className="ml-2"><span className="text-zinc-300 font-medium">Cat:</span> {job.category}</span>}
+                                    {job.requestedLimit !== undefined && job.requestedLimit !== null && (
+                                      <span className="ml-2"><span className="text-zinc-300 font-medium">Limit:</span> {job.requestedLimit}</span>
+                                    )}
+                                  </div>
+                                  <div className="text-[10px] text-zinc-500">
+                                    <span>Discovered: {job.candidatesDiscovered ?? 0}</span> &bull;{" "}
+                                    <span>Enriched: {job.candidatesEnriched ?? 0}</span> &bull;{" "}
+                                    <span>Skipped: {job.candidatesSkipped ?? 0}</span>
+                                  </div>
+                                  {(job.discoveryActor || job.enrichmentActor) && (
+                                    <div className="text-[10px] font-mono text-zinc-500 truncate" title={`${job.discoveryActor ?? ""} -> ${job.enrichmentActor ?? ""}`}>
+                                      <span>Actors: {job.discoveryActor ?? "—"} &rarr; {job.enrichmentActor ?? "—"}</span>
+                                    </div>
+                                  )}
+                                </div>
+                              )}
+
+                              <div className="mt-2 flex items-center gap-2">
+                                <button
+                                  type="button"
+                                  onClick={() => setExpandedJobId(expandedJobId === job.id ? null : job.id)}
+                                  className="rounded bg-zinc-800 px-2 py-0.5 text-[10px] font-semibold text-indigo-300 hover:bg-zinc-700 transition"
+                                >
+                                  {expandedJobId === job.id ? "Hide Summary ▲" : "Job Summary ▼"}
+                                </button>
+                                {job.costUsd !== null && job.costUsd !== undefined && (
+                                  <span className="text-[10px] text-zinc-400 font-mono">
+                                    Spend: <strong className="text-zinc-200">${Number(job.costUsd).toFixed(3)}</strong>
+                                  </span>
+                                )}
+                                {job.stopReason && (
+                                  <span className="rounded bg-zinc-800/80 px-1.5 py-0.5 text-[9px] font-mono text-zinc-400">
+                                    {job.stopReason}
+                                  </span>
+                                )}
+                              </div>
+
+                              {expandedJobId === job.id && (
+                                <div className="mt-3 rounded-lg border border-zinc-800 bg-zinc-950/80 p-3 text-xs space-y-2.5 font-mono">
+                                  <div className="flex flex-wrap items-center justify-between text-zinc-300 pb-2 border-b border-zinc-800">
+                                    <div className="flex items-center gap-2">
+                                      <span className="font-semibold text-indigo-300">Funnel &amp; Spend Summary</span>
+                                      {isDry ? (
+                                        <span className="rounded bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-amber-400 border border-amber-500/20">
+                                          Mode: DRY-RUN
+                                        </span>
+                                      ) : (
+                                        <span className="rounded bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-400 border border-emerald-500/20">
+                                          Mode: REAL
+                                        </span>
+                                      )}
+                                    </div>
+                                    <span className="text-[11px] text-zinc-400">
+                                      Stop: <strong className="text-zinc-200">{job.stopReason || "COMPLETED"}</strong>
+                                    </span>
+                                  </div>
+
+                                  <div className="grid grid-cols-2 sm:grid-cols-4 lg:grid-cols-7 gap-2 text-[11px]">
+                                    <div className="bg-zinc-900/60 p-2 rounded border border-zinc-800/80">
+                                      <div className="text-zinc-500 uppercase text-[9px]">Places Fetched</div>
+                                      <div className="text-sm font-bold text-zinc-100">{job.usage?.placesFetched ?? job.candidatesDiscovered ?? 0}</div>
+                                    </div>
+                                    <div className="bg-zinc-900/60 p-2 rounded border border-zinc-800/80">
+                                      <div className="text-zinc-500 uppercase text-[9px]">Contactable (IG)</div>
+                                      <div className="text-sm font-bold text-sky-400">{job.usage?.contactableWithIg ?? job.candidatesEnriched ?? 0}</div>
+                                    </div>
+                                    <div className="bg-zinc-900/60 p-2 rounded border border-zinc-800/80">
+                                      <div className="text-zinc-500 uppercase text-[9px]">Handle Yield</div>
+                                      <div className="text-sm font-bold text-indigo-400">
+                                        {job.usage?.handleYieldPct !== undefined
+                                          ? `${job.usage.handleYieldPct}%`
+                                          : (job.usage?.placesFetched ?? 0) > 0
+                                            ? `${Math.round(((job.usage?.contactableWithIg ?? 0) / (job.usage?.placesFetched ?? 1)) * 100)}%`
+                                            : "0%"}
+                                      </div>
+                                    </div>
+                                    <div className="bg-zinc-900/60 p-2 rounded border border-zinc-800/80">
+                                      <div className="text-zinc-500 uppercase text-[9px]">Without IG (Contactable)</div>
+                                      <div className="text-sm font-bold text-zinc-300">{String((job.usage as Record<string, unknown> | null)?.noIgButContactableCount ?? (job.usage as Record<string, unknown> | null)?.contactableWithoutIg ?? 0)}</div>
+                                    </div>
+                                    <div className="bg-zinc-900/60 p-2 rounded border border-zinc-800/80">
+                                      <div className="text-zinc-500 uppercase text-[9px]">Name Mismatch</div>
+                                      <div className="text-sm font-bold text-amber-400">{String((job.usage as Record<string, unknown> | null)?.nameMismatchCount ?? 0)}</div>
+                                    </div>
+                                    <div className="bg-zinc-900/60 p-2 rounded border border-zinc-800/80">
+                                      <div className="text-zinc-500 uppercase text-[9px]">Group Members</div>
+                                      <div className="text-sm font-bold text-teal-400">{String((job.usage as Record<string, unknown> | null)?.groupDedupedCount ?? 0)}</div>
+                                    </div>
+                                    <div className="bg-zinc-900/60 p-2 rounded border border-zinc-800/80">
+                                      <div className="text-zinc-500 uppercase text-[9px]">Leads Saved</div>
+                                      <div className="text-sm font-bold text-emerald-400">{job.processedCount}</div>
+                                    </div>
+                                  </div>
+
+                                  {/* Dropped Reasons */}
+                                  <div className="pt-1">
+                                    <div className="text-[10px] text-zinc-500 uppercase font-semibold">Dropped Reasons</div>
+                                    <div className="flex flex-wrap gap-2 mt-1 text-[11px] text-zinc-400">
+                                      <span>Closed: <strong className="text-zinc-200">{job.usage?.droppedByReason?.closed ?? 0}</strong></span>
+                                      <span>•</span>
+                                      <span>Wrong city: <strong className="text-zinc-200">{job.usage?.droppedByReason?.wrong_city ?? 0}</strong></span>
+                                      <span>•</span>
+                                      <span>Chain: <strong className="text-zinc-200">{job.usage?.droppedByReason?.chain ?? 0}</strong></span>
+                                      <span>•</span>
+                                      <span>Negative kw: <strong className="text-zinc-200">{job.usage?.droppedByReason?.negative_keyword ?? 0}</strong></span>
+                                      <span>•</span>
+                                      <span>No contact: <strong className="text-zinc-200">{job.usage?.droppedByReason?.no_contact ?? 0}</strong></span>
+                                    </div>
+                                  </div>
+
+                                  {/* Tier Counts */}
+                                  <div className="pt-1 border-t border-zinc-800/80">
+                                    <div className="text-[10px] text-zinc-500 uppercase font-semibold">Lead Quality Tiers</div>
+                                    <div className="flex flex-wrap gap-3 mt-1 text-[11px]">
+                                      <span className="text-emerald-400">Tier A: <strong>{job.usage?.tierCounts?.A ?? 0}</strong></span>
+                                      <span className="text-sky-400">Tier B: <strong>{job.usage?.tierCounts?.B ?? 0}</strong></span>
+                                      <span className="text-amber-400">Tier C: <strong>{job.usage?.tierCounts?.C ?? 0}</strong></span>
+                                      <span className="text-rose-400">Tier D: <strong>{job.usage?.tierCounts?.D ?? 0}</strong></span>
+                                    </div>
+                                  </div>
+
+                                  {/* Spend By Stage */}
+                                  <div className="pt-1 border-t border-zinc-800/80">
+                                    <div className="text-[10px] text-zinc-500 uppercase font-semibold">Spend By Stage</div>
+                                    <div className="flex flex-wrap gap-3 mt-1 text-[11px] text-zinc-400">
+                                      <span>Maps: <strong className="text-zinc-200">${((job.usage?.spendByStage?.maps ?? (job.costBreakdown as { maps?: number })?.maps ?? 0)).toFixed(4)}</strong></span>
+                                      <span>Profiles: <strong className="text-zinc-200">${((job.usage?.spendByStage?.profiles ?? (job.costBreakdown as { profiles?: number })?.profiles ?? 0)).toFixed(4)}</strong></span>
+                                      <span>Gemini: <strong className="text-zinc-200">${((job.usage?.spendByStage?.gemini ?? (job.costBreakdown as { gemini?: number })?.gemini ?? 0)).toFixed(4)}</strong></span>
+                                      <span className="text-indigo-300 font-bold">Total: ${Number(job.costUsd ?? 0).toFixed(4)} USD</span>
+                                    </div>
+                                  </div>
+                                </div>
+                              )}
+                            </td>
+                          </tr>
+                        );
+                      })
                     )}
                   </tbody>
                 </table>
@@ -1928,6 +3158,13 @@ export default function CampaignDetailPage() {
               campaignId={campaign.id}
               campaignName={campaign.name}
             />
+          </div>
+        )}
+
+        {/* Email channel */}
+        {activeTab === "email" && campaign && (
+          <div className="mt-6">
+            <CampaignEmailTab campaignId={campaign.id} />
           </div>
         )}
 
@@ -2006,6 +3243,74 @@ export default function CampaignDetailPage() {
         onConfirm={handleDeleteCampaign}
         onCancel={() => setShowDeleteCampaignModal(false)}
       />
+
+      {/* Delete Single Lead Confirmation */}
+      <ConfirmModal
+        isOpen={Boolean(leadPendingDelete)}
+        title="Delete Lead"
+        message={
+          leadPendingDelete
+            ? `Are you sure you want to delete @${leadPendingDelete.username}? All associated outreach history, status logs, and messages will be permanently removed.`
+            : ""
+        }
+        confirmLabel="Delete Lead"
+        isDangerous={true}
+        isLoading={isDeletingLeads}
+        onConfirm={handleConfirmSingleDelete}
+        onCancel={() => setLeadPendingDelete(null)}
+      />
+
+      {/* Delete Selected Leads Confirmation */}
+      <ConfirmModal
+        isOpen={showBulkDeleteConfirm}
+        title="Delete Selected Leads"
+        message={`Are you sure you want to permanently delete ${selectedLeadIds.length} selected lead${selectedLeadIds.length === 1 ? "" : "s"} from "${campaign?.name || "this campaign"}"? This action cannot be undone.`}
+        confirmLabel={`Delete ${selectedLeadIds.length} Lead${selectedLeadIds.length === 1 ? "" : "s"}`}
+        isDangerous={true}
+        isLoading={isDeletingLeads}
+        onConfirm={handleConfirmBulkDelete}
+        onCancel={() => setShowBulkDeleteConfirm(false)}
+      />
+
+      {/* Delete Dry-Run Leads Confirmation */}
+      <ConfirmModal
+        isOpen={showDeleteDryRunConfirm}
+        title="Delete Dry-Run / Sample Leads"
+        message={`Are you sure you want to permanently delete all dry-run and sample leads in "${campaign?.name || "this campaign"}"? Real leads will be preserved. Make sure you have a database backup (e.g. pg_dump) before proceeding.`}
+        confirmLabel="Delete Dry-Run Leads"
+        isDangerous={true}
+        isLoading={isDeletingDryRunLeads}
+        onConfirm={handleConfirmDeleteDryRun}
+        onCancel={() => setShowDeleteDryRunConfirm(false)}
+      />
+
+
+      {/* Edit Campaign Modal */}
+      {isEditModalOpen && campaign && (
+        <EditCampaignModal
+          isOpen={isEditModalOpen}
+          campaign={campaign}
+          onClose={() => setIsEditModalOpen(false)}
+          onUpdated={(updated) => {
+            setCampaign((prev) => (prev ? { ...prev, ...updated } : null));
+            fetchCampaignInfo();
+          }}
+        />
+      )}
+
+      {/* CSV Lead Upload Modal */}
+      {isCsvUploadModalOpen && campaign && (
+        <CsvUploadModal
+          isOpen={isCsvUploadModalOpen}
+          campaignId={campaign.id}
+          campaignName={campaign.name}
+          onClose={() => setIsCsvUploadModalOpen(false)}
+          onSuccess={() => {
+            fetchLeads();
+            fetchCampaignInfo();
+          }}
+        />
+      )}
     </div>
   );
 }

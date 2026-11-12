@@ -18,7 +18,7 @@ import {
 } from "../src/lib/services/messaging/idempotency";
 import { renderTemplate } from "../src/lib/services/template/template-renderer";
 
-const BASE_URL = process.env.TEST_BASE_URL || "http://localhost:3001";
+const BASE_URL = process.env.TEST_BASE_URL || "http://localhost:3005";
 const prisma = getPrismaClient();
 
 let passed = 0;
@@ -621,11 +621,11 @@ async function main() {
 
   console.log("--- TEST 29: Existing Template Rendering Accuracy ---");
   const templateOutput = renderTemplate(templateA.body, {
-    username: lead1.username,
+    username: lead1.username!,
     category: lead1.category || "General",
   });
   assert(
-    templateOutput.includes(lead1.username) && templateOutput.includes("E-commerce"),
+    templateOutput.includes(lead1.username!) && templateOutput.includes("E-commerce"),
     "Template variables rendered accurately with lead data",
   );
 

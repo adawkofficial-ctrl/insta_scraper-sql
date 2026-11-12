@@ -125,13 +125,13 @@ export type BulkPreviewRequest = {
 
 export type BulkSkipReason = {
   leadId: string;
-  username: string;
+  username: string | null;
   reason: string;
 };
 
 export type BulkPreviewSample = {
   leadId: string;
-  username: string;
+  username: string | null;
   fullName: string | null;
   renderedMessage: string;
 };
@@ -197,7 +197,7 @@ export type BulkJobCreateResponse = {
 export type BulkJobItemRecord = {
   id: string;
   leadId: string;
-  username: string;
+  username: string | null;
   renderedMessage: string;
   status: BulkMessageItemStatus;
   attempts: number;

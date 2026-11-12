@@ -1,13 +1,183 @@
 import {
-  extractEmail,
-  extractPhone,
-  normalizeEmail,
-  normalizePhone,
   normalizeWebsite,
   computeAvailableChannels,
+  extractAllEmails,
+  extractAllPhones,
+  extractWhatsappLinks,
+  normalizePhoneToE164,
 } from "../contact/contact-parser";
-import { isSocialOrSharedPlatform } from "@/lib/constants/social-platforms";
+import {
+  isSocialOrSharedPlatform,
+  detectSocialPlatform,
+} from "@/lib/constants/social-platforms";
+import { resolveCountryCode } from "../discovery/country-cities";
+import { getPrismaClient } from "@/lib/db/prisma";
+import { Prisma } from "@/generated/prisma/client";
 import type { LeadProfile } from "@/lib/types";
+
+/**
+ * Checks if a URL points to localhost or private IP ranges (SSRF protection).
+ */
+export function isPrivateOrBlockedUrl(urlString: string): boolean {
+  try {
+    const parsed = new URL(urlString);
+    if (parsed.protocol !== "http:" && parsed.protocol !== "https:") {
+      return true;
+    }
+    const hostname = parsed.hostname.toLowerCase();
+    if (
+      hostname === "localhost" ||
+      hostname.endsWith(".localhost") ||
+      hostname.endsWith(".local") ||
+      hostname === "127.0.0.1" ||
+      hostname === "0.0.0.0" ||
+      hostname === "::1" ||
+      hostname === "[::1]"
+    ) {
+      return true;
+    }
+
+    // IPv4 private & loopback ranges:
+    // 10.0.0.0/8, 127.0.0.0/8, 169.254.0.0/16, 172.16.0.0/12, 192.168.0.0/16
+    const ipv4Match = hostname.match(
+      /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/,
+    );
+    if (ipv4Match) {
+      const b0 = parseInt(ipv4Match[1], 10);
+      const b1 = parseInt(ipv4Match[2], 10);
+      if (b0 === 10 || b0 === 127 || b0 === 0) return true;
+      if (b0 === 169 && b1 === 254) return true;
+      if (b0 === 192 && b1 === 168) return true;
+      if (b0 === 172 && b1 >= 16 && b1 <= 31) return true;
+    }
+
+    return false;
+  } catch {
+    return true;
+  }
+}
+
+/**
+ * Worker pool helper for bounded concurrency.
+ */
+export async function runWithConcurrency<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T) => Promise<R>,
+): Promise<R[]> {
+  const results: R[] = new Array(items.length);
+  let nextIndex = 0;
+
+  const workers = Array.from(
+    { length: Math.min(limit, items.length) },
+    async () => {
+      while (nextIndex < items.length) {
+        const currentIndex = nextIndex++;
+        results[currentIndex] = await fn(items[currentIndex]);
+      }
+    },
+  );
+
+  await Promise.all(workers);
+  return results;
+}
+
+export type ExtractedSocialLinks = {
+  instagram?: string | null;
+  facebook?: string | null;
+  tiktok?: string | null;
+  linkedin?: string | null;
+  youtube?: string | null;
+  whatsapp?: string | null;
+};
+
+export function extractSocialLinksFromHtml(html: string): ExtractedSocialLinks {
+  if (!html || typeof html !== "string") {
+    return {};
+  }
+
+  const result: ExtractedSocialLinks = {};
+
+  // Facebook
+  const fbRegex =
+    /href=["'](https?:\/\/(?:www\.)?(?:facebook\.com|fb\.com|fb\.me)\/[^"'#\s<>]+)["']/i;
+  const fbMatch = fbRegex.exec(html);
+  if (fbMatch) {
+    const raw = fbMatch[1].trim();
+    if (!raw.includes("/sharer") && !raw.includes("/share") && !raw.includes("/dialog")) {
+      result.facebook = raw;
+    }
+  }
+
+  // TikTok
+  const ttRegex =
+    /href=["'](https?:\/\/(?:www\.)?tiktok\.com\/@[^"'#\s<>]+)["']/i;
+  const ttMatch = ttRegex.exec(html);
+  if (ttMatch) {
+    result.tiktok = ttMatch[1].trim();
+  }
+
+  // LinkedIn
+  const liRegex =
+    /href=["'](https?:\/\/(?:www\.)?linkedin\.com\/(?:company|in)\/[^"'#\s<>]+)["']/i;
+  const liMatch = liRegex.exec(html);
+  if (liMatch) {
+    result.linkedin = liMatch[1].trim();
+  }
+
+  // YouTube
+  const ytRegex =
+    /href=["'](https?:\/\/(?:www\.)?(?:youtube\.com\/(?:c\/|user\/|@)?|youtu\.be\/)[^"'#\s<>]+)["']/i;
+  const ytMatch = ytRegex.exec(html);
+  if (ytMatch) {
+    const raw = ytMatch[1].trim();
+    if (!raw.includes("/watch?") && !raw.includes("/embed/")) {
+      result.youtube = raw;
+    }
+  }
+
+  // WhatsApp
+  const waRegex =
+    /href=["'](https?:\/\/(?:wa\.me|api\.whatsapp\.com\/send\?phone=)[^"'#\s<>]+)["']/i;
+  const waMatch = waRegex.exec(html);
+  if (waMatch) {
+    result.whatsapp = waMatch[1].trim();
+  }
+
+  return result;
+}
+
+export type ContactSourceType = "bio" | "website" | "maps";
+
+export type ExtractedEmailItem = {
+  value: string;
+  source: ContactSourceType;
+};
+
+export type ExtractedPhoneItem = {
+  value: string;
+  normalized: string;
+  source: ContactSourceType;
+};
+
+export type ExtractedWhatsappItem = {
+  url: string;
+  phone?: string;
+  source: ContactSourceType;
+};
+
+export type LeadContactsData = {
+  emails: ExtractedEmailItem[];
+  phones: ExtractedPhoneItem[];
+  whatsapps: ExtractedWhatsappItem[];
+  socialLinks: {
+    facebook?: string | null;
+    tiktok?: string | null;
+    linkedin?: string | null;
+    youtube?: string | null;
+  };
+  extractedAt: string;
+};
 
 export type WebsiteContactResult = {
   email: string | null;
@@ -19,7 +189,10 @@ export type WebsiteContactResult = {
   contactSource: "website_fallback" | null;
 };
 
-const DEFAULT_FETCH_TIMEOUT_MS = 8000;
+export const WEBSITE_EXTRACT_TIMEOUT_MS = 6000;
+export const WEBSITE_EXTRACT_MAX_BYTES = 1024 * 1024; // 1 MB
+export const WEBSITE_EXTRACT_CONCURRENCY = 5;
+
 const USER_AGENT =
   "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36";
 
@@ -85,73 +258,21 @@ export function findContactSubpageUrls(html: string, baseUrl: string): string[] 
 }
 
 /**
- * Extracts contacts from raw HTML content.
+ * Safely fetches a single webpage with SSRF guard, 6s timeout, and 1 MB stream cap.
  */
-export function extractContactsFromHtml(html: string): {
-  email: string | null;
-  phone: string | null;
-} {
-  // 1. Look for mailto: links in HTML
-  let email = extractEmail(html);
-  // 2. Look for tel: links in HTML
-  let phone = extractPhone(html);
-
-  // If not found in raw markup, try visible text
-  if (!email || !phone) {
-    const visibleText = extractTextFromHtml(html);
-    if (!email) {
-      email = extractEmail(visibleText);
-    }
-    if (!phone) {
-      phone = extractPhone(visibleText);
-    }
+export async function fetchPageSafe(
+  url: string,
+  timeoutMs = WEBSITE_EXTRACT_TIMEOUT_MS,
+): Promise<string | null> {
+  if (!url || isPrivateOrBlockedUrl(url)) {
+    return null;
   }
-
-  return { email, phone };
-}
-
-/**
- * Lightweight, reusable fallback contact scraper for external websites.
- * Bounded with short timeout (8-10s) and at most 1 homepage + 1 contact/about subpage fetch.
- */
-export async function extractContactsFromWebsite(
-  rawUrl: string,
-  options?: { timeoutMs?: number },
-): Promise<WebsiteContactResult> {
-  if (!rawUrl || isSocialOrSharedPlatform(rawUrl)) {
-    return {
-      email: null,
-      emailNormalized: null,
-      phone: null,
-      phoneNormalized: null,
-      website: rawUrl ?? "",
-      websiteDomain: null,
-      contactSource: null,
-    };
-  }
-
-  const norm = normalizeWebsite(rawUrl);
-  if (!norm || isSocialOrSharedPlatform(norm.domain)) {
-    return {
-      email: null,
-      emailNormalized: null,
-      phone: null,
-      phoneNormalized: null,
-      website: norm?.rootUrl ?? rawUrl,
-      websiteDomain: norm?.domain ?? null,
-      contactSource: null,
-    };
-  }
-
-  const timeoutMs = options?.timeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS;
-  let email: string | null = null;
-  let phone: string | null = null;
 
   try {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), timeoutMs);
 
-    const res = await fetch(norm.url, {
+    const res = await fetch(url, {
       signal: controller.signal,
       headers: {
         "User-Agent": USER_AGENT,
@@ -159,71 +280,553 @@ export async function extractContactsFromWebsite(
       },
       redirect: "follow",
     });
+
     clearTimeout(timer);
 
-    if (res.ok) {
-      const html = await res.text();
-      const extracted = extractContactsFromHtml(html);
-      email = extracted.email;
-      phone = extracted.phone;
+    if (!res.ok) {
+      return null;
+    }
 
-      // If either email or phone is missing, try 1 linked contact/about page
-      if (!email || !phone) {
-        const subpages = findContactSubpageUrls(html, norm.url);
-        if (subpages.length > 0) {
-          const subpageUrl = subpages[0];
-          try {
-            const subController = new AbortController();
-            const subTimer = setTimeout(() => subController.abort(), timeoutMs);
-            const subRes = await fetch(subpageUrl, {
-              signal: subController.signal,
-              headers: {
-                "User-Agent": USER_AGENT,
-                Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-              },
-              redirect: "follow",
-            });
-            clearTimeout(subTimer);
+    if (res.url && isPrivateOrBlockedUrl(res.url)) {
+      return null;
+    }
 
-            if (subRes.ok) {
-              const subHtml = await subRes.text();
-              const subExtracted = extractContactsFromHtml(subHtml);
-              if (!email && subExtracted.email) email = subExtracted.email;
-              if (!phone && subExtracted.phone) phone = subExtracted.phone;
-            }
-          } catch {
-            // subpage failure is non-fatal
+    const contentType = res.headers.get("content-type") || "";
+    if (
+      contentType &&
+      !contentType.includes("text/html") &&
+      !contentType.includes("application/xhtml") &&
+      !contentType.includes("text/plain")
+    ) {
+      return null;
+    }
+
+    const contentLength = res.headers.get("content-length");
+    if (contentLength && parseInt(contentLength, 10) > WEBSITE_EXTRACT_MAX_BYTES * 2) {
+      return null;
+    }
+
+    if (res.body && typeof res.body.getReader === "function") {
+      const reader = res.body.getReader();
+      const chunks: Uint8Array[] = [];
+      let totalBytes = 0;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        if (value) {
+          chunks.push(value);
+          totalBytes += value.length;
+          if (totalBytes >= WEBSITE_EXTRACT_MAX_BYTES) {
+            reader.cancel().catch(() => {});
+            break;
           }
         }
       }
+
+      const decoder = new TextDecoder("utf-8");
+      return decoder.decode(Buffer.concat(chunks.map((c) => Buffer.from(c))));
+    } else {
+      const text = await res.text();
+      return text.slice(0, WEBSITE_EXTRACT_MAX_BYTES);
     }
-  } catch (err) {
-    // Non-fatal: website might be unreachable, timed out, or blocked
-    if (process.env.NODE_ENV !== "production") {
-      console.log(`[WebsiteFallback] fetch failed for ${norm.url}:`, (err as Error).message);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Fetches homepage + contact page (at most 2 pages) for a clinic website.
+ */
+export async function fetchWebsiteContactPages(
+  websiteUrl: string,
+  timeoutMs = WEBSITE_EXTRACT_TIMEOUT_MS,
+): Promise<{
+  homeHtml: string | null;
+  contactHtml: string | null;
+  effectiveUrl: string | null;
+}> {
+  if (!websiteUrl || isSocialOrSharedPlatform(websiteUrl)) {
+    return { homeHtml: null, contactHtml: null, effectiveUrl: null };
+  }
+
+  const norm = normalizeWebsite(websiteUrl);
+  if (!norm || isSocialOrSharedPlatform(norm.domain)) {
+    return { homeHtml: null, contactHtml: null, effectiveUrl: null };
+  }
+
+  // 1. Homepage
+  const homeHtml = await fetchPageSafe(norm.url, timeoutMs);
+  let contactHtml: string | null = null;
+
+  if (homeHtml) {
+    // 2. Discover subpage from homepage HTML or fallback to /contact
+    const subpages = findContactSubpageUrls(homeHtml, norm.url);
+    const candidateSubpage =
+      subpages.length > 0
+        ? subpages[0]
+        : `${norm.rootUrl}/contact`;
+
+    if (candidateSubpage && candidateSubpage !== norm.url && candidateSubpage !== `${norm.rootUrl}/`) {
+      contactHtml = await fetchPageSafe(candidateSubpage, timeoutMs);
     }
   }
 
-  const emailNormalized = normalizeEmail(email);
-  const phoneNormalized = normalizePhone(phone);
-  const foundAny = Boolean(emailNormalized || phoneNormalized);
-
   return {
-    email: email ?? null,
-    emailNormalized,
-    phone: phone ?? null,
-    phoneNormalized,
-    website: norm.rootUrl ?? norm.url,
-    websiteDomain: norm.domain,
-    contactSource: foundAny ? "website_fallback" : null,
+    homeHtml,
+    contactHtml,
+    effectiveUrl: norm.rootUrl ?? norm.url,
   };
 }
 
 /**
- * Bounded orchestration for enriching a list of lead profiles with website fallback.
- * Only attempts fetch for leads that have a website but NO email and NO phone.
- * Enforces per-run cap (env WEBSITE_FALLBACK_MAX_PER_RUN or requestedLimit + buffer).
+ * Pure contact extractor across Instagram bio, externalUrl, and clinic website pages.
+ * Keeps source of each value: bio | website | maps.
  */
+export async function extractLeadContacts(input: {
+  bio?: string | null;
+  externalUrl?: string | null;
+  website?: string | null;
+  mapsPhone?: string | null;
+  mapsWebsite?: string | null;
+  countryCode?: string;
+  timeoutMs?: number;
+}): Promise<LeadContactsData> {
+  const country = (input.countryCode || "CA").toUpperCase();
+  const timeoutMs = input.timeoutMs ?? WEBSITE_EXTRACT_TIMEOUT_MS;
+
+  const emailsMap = new Map<string, ExtractedEmailItem>();
+  const phonesMap = new Map<string, ExtractedPhoneItem>(); // keyed by normalized E.164
+  const whatsappsMap = new Map<string, ExtractedWhatsappItem>(); // keyed by url
+  const socialLinks: {
+    facebook?: string | null;
+    tiktok?: string | null;
+    linkedin?: string | null;
+    youtube?: string | null;
+  } = {};
+
+  // 1. Google Maps phone
+  if (input.mapsPhone && typeof input.mapsPhone === "string" && input.mapsPhone.trim()) {
+    const normPhone = normalizePhoneToE164(input.mapsPhone, country);
+    if (normPhone) {
+      phonesMap.set(normPhone, {
+        value: input.mapsPhone.trim(),
+        normalized: normPhone,
+        source: "maps",
+      });
+    }
+  }
+
+  // 2. Instagram bio
+  if (input.bio && typeof input.bio === "string" && input.bio.trim()) {
+    const bioText = input.bio;
+
+    // Emails from bio
+    for (const em of extractAllEmails(bioText)) {
+      if (!emailsMap.has(em)) {
+        emailsMap.set(em, { value: em, source: "bio" });
+      }
+    }
+
+    // Phones from bio
+    for (const ph of extractAllPhones(bioText, country)) {
+      if (!phonesMap.has(ph.normalized)) {
+        phonesMap.set(ph.normalized, {
+          value: ph.raw,
+          normalized: ph.normalized,
+          source: "bio",
+        });
+      }
+    }
+
+    // WhatsApp from bio
+    for (const wa of extractWhatsappLinks(bioText)) {
+      if (!whatsappsMap.has(wa.url)) {
+        whatsappsMap.set(wa.url, {
+          url: wa.url,
+          phone: wa.phone,
+          source: "bio",
+        });
+      }
+    }
+  }
+
+  // 3. External URL (from bio or profile)
+  if (input.externalUrl && typeof input.externalUrl === "string" && input.externalUrl.trim()) {
+    const extUrl = input.externalUrl.trim();
+
+    // Check WhatsApp link
+    for (const wa of extractWhatsappLinks(extUrl)) {
+      if (!whatsappsMap.has(wa.url)) {
+        whatsappsMap.set(wa.url, {
+          url: wa.url,
+          phone: wa.phone,
+          source: "bio",
+        });
+      }
+    }
+
+    // Check Social link
+    const detectedSocial = detectSocialPlatform(extUrl);
+    if (detectedSocial) {
+      const plat = detectedSocial.platform as keyof typeof socialLinks;
+      if (plat in socialLinks && !socialLinks[plat]) {
+        socialLinks[plat] = detectedSocial.url;
+      }
+    }
+  }
+
+  // 4. Clinic website homepage + /contact page (max 2 pages)
+  const candidateWebsite =
+    input.website ||
+    input.mapsWebsite ||
+    (!isSocialOrSharedPlatform(input.externalUrl ?? "") ? input.externalUrl : null);
+
+  if (candidateWebsite && typeof candidateWebsite === "string" && candidateWebsite.trim()) {
+    const { homeHtml, contactHtml } = await fetchWebsiteContactPages(
+      candidateWebsite.trim(),
+      timeoutMs,
+    );
+
+    const pages = [homeHtml, contactHtml].filter((p): p is string => Boolean(p));
+
+    for (const html of pages) {
+      // Social links from HTML
+      const socials = extractSocialLinksFromHtml(html);
+      if (socials.facebook && !socialLinks.facebook) socialLinks.facebook = socials.facebook;
+      if (socials.tiktok && !socialLinks.tiktok) socialLinks.tiktok = socials.tiktok;
+      if (socials.linkedin && !socialLinks.linkedin) socialLinks.linkedin = socials.linkedin;
+      if (socials.youtube && !socialLinks.youtube) socialLinks.youtube = socials.youtube;
+      if (socials.whatsapp && !whatsappsMap.has(socials.whatsapp)) {
+        whatsappsMap.set(socials.whatsapp, {
+          url: socials.whatsapp,
+          source: "website",
+        });
+      }
+
+      // WhatsApp links
+      for (const wa of extractWhatsappLinks(html)) {
+        if (!whatsappsMap.has(wa.url)) {
+          whatsappsMap.set(wa.url, {
+            url: wa.url,
+            phone: wa.phone,
+            source: "website",
+          });
+        }
+      }
+
+      // Emails from HTML
+      for (const em of extractAllEmails(html)) {
+        if (!emailsMap.has(em)) {
+          emailsMap.set(em, { value: em, source: "website" });
+        }
+      }
+
+      // Phones from HTML
+      for (const ph of extractAllPhones(html, country)) {
+        if (!phonesMap.has(ph.normalized)) {
+          phonesMap.set(ph.normalized, {
+            value: ph.raw,
+            normalized: ph.normalized,
+            source: "website",
+          });
+        }
+      }
+    }
+  }
+
+  return {
+    emails: Array.from(emailsMap.values()),
+    phones: Array.from(phonesMap.values()),
+    whatsapps: Array.from(whatsappsMap.values()),
+    socialLinks,
+    extractedAt: new Date().toISOString(),
+  };
+}
+
+/**
+ * Stage 3 contact enrichment across accepted leads.
+ * Uses bounded concurrency 5, 6s timeout, max 2 pages per lead.
+ */
+export async function enrichProfilesWithContacts(
+  profiles: LeadProfile[],
+  options?: {
+    countryCode?: string;
+    timeoutMs?: number;
+    concurrency?: number;
+  },
+): Promise<{
+  enrichedProfiles: LeadProfile[];
+  contactsExtracted: {
+    email: number;
+    phone: number;
+    whatsapp: number;
+    other: number;
+  };
+  leadsWithAnyContact: number;
+}> {
+  const concurrency = options?.concurrency ?? WEBSITE_EXTRACT_CONCURRENCY;
+  const timeoutMs = options?.timeoutMs ?? WEBSITE_EXTRACT_TIMEOUT_MS;
+  const countryCode = options?.countryCode ?? "CA";
+
+  const contactsExtracted = {
+    email: 0,
+    phone: 0,
+    whatsapp: 0,
+    other: 0,
+  };
+  let leadsWithAnyContact = 0;
+
+  await runWithConcurrency(profiles, concurrency, async (profile) => {
+    try {
+      const rawObj =
+        typeof profile.rawProfileData === "object" && profile.rawProfileData !== null
+          ? (profile.rawProfileData as Record<string, unknown>)
+          : {};
+
+      const contacts = await extractLeadContacts({
+        bio: profile.biography ?? profile.bio,
+        externalUrl: profile.externalUrl,
+        website: profile.website,
+        mapsPhone: profile.phone ?? (rawObj.phone as string | undefined),
+        mapsWebsite: (rawObj.website as string | undefined),
+        countryCode,
+        timeoutMs,
+      });
+
+      // Update lead profile contact fields
+      if (contacts.phones.length > 0) {
+        profile.phone = contacts.phones[0].value;
+        profile.phoneNormalized = contacts.phones[0].normalized;
+      }
+      if (contacts.emails.length > 0) {
+        profile.email = contacts.emails[0].value;
+        profile.emailNormalized = contacts.emails[0].value;
+      }
+      if (!profile.website && (profile.externalUrl || rawObj.website)) {
+        const norm = normalizeWebsite(profile.website || (rawObj.website as string) || profile.externalUrl);
+        if (norm && !isSocialOrSharedPlatform(norm.domain)) {
+          profile.website = norm.rootUrl;
+          profile.websiteDomain = norm.domain;
+        }
+      }
+
+      // Track primary contact source
+      profile.contactSource =
+        contacts.phones[0]?.source ??
+        contacts.emails[0]?.source ??
+        contacts.whatsapps[0]?.source ??
+        profile.contactSource ??
+        null;
+
+      // Update availableChannels
+      profile.availableChannels = computeAvailableChannels({
+        hasInstagram: true,
+        email: profile.email,
+        phone: profile.phone,
+      });
+
+      // Persist in rawProfileData.contacts
+      profile.rawProfileData = {
+        ...rawObj,
+        contacts,
+      };
+
+      // Accumulate counts
+      contactsExtracted.email += contacts.emails.length;
+      contactsExtracted.phone += contacts.phones.length;
+      contactsExtracted.whatsapp += contacts.whatsapps.length;
+      const otherCount = Object.values(contacts.socialLinks).filter(Boolean).length;
+      contactsExtracted.other += otherCount;
+
+      if (
+        contacts.emails.length > 0 ||
+        contacts.phones.length > 0 ||
+        contacts.whatsapps.length > 0
+      ) {
+        leadsWithAnyContact++;
+      }
+    } catch {
+      // Non-fatal per-lead failure
+    }
+  });
+
+  return {
+    enrichedProfiles: profiles,
+    contactsExtracted,
+    leadsWithAnyContact,
+  };
+}
+
+/**
+ * On-demand manual contact extraction for single or bulk leads.
+ */
+export async function extractContactsForLeadsOnDemand(params: {
+  leadIds: string[];
+  userId: string;
+}): Promise<{
+  success: boolean;
+  count: number;
+  leads: Array<{
+    id: string;
+    phone: string | null;
+    phoneNormalized: string | null;
+    email: string | null;
+    website: string | null;
+    contacts: LeadContactsData;
+  }>;
+}> {
+  const { leadIds, userId } = params;
+  const prisma = getPrismaClient();
+
+  const leads = await prisma.lead.findMany({
+    where: {
+      id: { in: leadIds },
+      ...(userId ? { campaign: { userId } } : {}),
+    },
+    include: {
+      campaign: {
+        select: {
+          id: true,
+          location: true,
+          userId: true,
+        },
+      },
+    },
+  });
+
+  const updatedResults: Array<{
+    id: string;
+    phone: string | null;
+    phoneNormalized: string | null;
+    email: string | null;
+    website: string | null;
+    contacts: LeadContactsData;
+  }> = [];
+
+  await runWithConcurrency(leads, WEBSITE_EXTRACT_CONCURRENCY, async (lead) => {
+    const countryCode =
+      resolveCountryCode(lead.campaign?.location) ?? "CA";
+
+    const rawObj =
+      typeof lead.rawProfileData === "object" && lead.rawProfileData !== null
+        ? (lead.rawProfileData as Record<string, unknown>)
+        : {};
+
+    const contacts = await extractLeadContacts({
+      bio: lead.biography,
+      externalUrl: lead.externalUrl,
+      website: lead.website,
+      mapsPhone: (rawObj.phone as string | undefined) ?? lead.phone,
+      mapsWebsite: (rawObj.website as string | undefined),
+      countryCode,
+      timeoutMs: WEBSITE_EXTRACT_TIMEOUT_MS,
+    });
+
+    const bestPhone = contacts.phones[0]?.value ?? lead.phone;
+    const bestPhoneNormalized = contacts.phones[0]?.normalized ?? lead.phoneNormalized;
+    const bestEmail = contacts.emails[0]?.value ?? lead.email;
+    const bestEmailNormalized = contacts.emails[0]?.value ?? lead.emailNormalized;
+
+    let targetWebsite = lead.website;
+    let targetDomain = lead.websiteDomain;
+    if (!targetWebsite && (lead.externalUrl || rawObj.website)) {
+      const norm = normalizeWebsite(lead.website || (rawObj.website as string) || lead.externalUrl);
+      if (norm && !isSocialOrSharedPlatform(norm.domain)) {
+        targetWebsite = norm.rootUrl;
+        targetDomain = norm.domain;
+      }
+    }
+
+    const contactSource =
+      contacts.phones[0]?.source ??
+      contacts.emails[0]?.source ??
+      contacts.whatsapps[0]?.source ??
+      lead.contactSource ??
+      null;
+
+    const availableChannels = computeAvailableChannels({
+      hasInstagram: true,
+      email: bestEmail,
+      phone: bestPhone,
+    });
+
+    const updatedRaw = {
+      ...rawObj,
+      contacts,
+    };
+
+    await prisma.lead.update({
+      where: { id: lead.id },
+      data: {
+        phone: bestPhone,
+        phoneNormalized: bestPhoneNormalized,
+        email: bestEmail,
+        emailNormalized: bestEmailNormalized,
+        website: targetWebsite,
+        websiteDomain: targetDomain,
+        contactSource,
+        availableChannels,
+        rawProfileData: updatedRaw as Prisma.InputJsonValue,
+      },
+    });
+
+    updatedResults.push({
+      id: lead.id,
+      phone: bestPhone,
+      phoneNormalized: bestPhoneNormalized,
+      email: bestEmail,
+      website: targetWebsite,
+      contacts,
+    });
+  });
+
+  return {
+    success: true,
+    count: updatedResults.length,
+    leads: updatedResults,
+  };
+}
+
+/**
+ * Backward compatibility wrapper.
+ */
+export function extractContactsFromHtml(html: string): {
+  email: string | null;
+  phone: string | null;
+} {
+  const emails = extractAllEmails(html);
+  const phones = extractAllPhones(html);
+  return {
+    email: emails[0] ?? null,
+    phone: phones[0]?.raw ?? null,
+  };
+}
+
+export async function extractContactsFromWebsite(
+  rawUrl: string,
+  options?: { timeoutMs?: number },
+): Promise<WebsiteContactResult> {
+  const contacts = await extractLeadContacts({
+    website: rawUrl,
+    timeoutMs: options?.timeoutMs,
+  });
+
+  const norm = normalizeWebsite(rawUrl);
+  return {
+    email: contacts.emails[0]?.value ?? null,
+    emailNormalized: contacts.emails[0]?.value ?? null,
+    phone: contacts.phones[0]?.value ?? null,
+    phoneNormalized: contacts.phones[0]?.normalized ?? null,
+    website: norm?.rootUrl ?? rawUrl,
+    websiteDomain: norm?.domain ?? null,
+    contactSource:
+      contacts.emails.length > 0 || contacts.phones.length > 0
+        ? "website_fallback"
+        : null,
+  };
+}
+
 export async function enrichProfilesWithWebsiteFallback(
   profiles: LeadProfile[],
   options?: {
@@ -253,19 +856,15 @@ export async function enrichProfilesWithWebsiteFallback(
           ? profile.externalUrl
           : null;
 
-    // Only attempt website fallback if candidate has a genuine website but NO contact info yet
     if (!hasEmail && !hasPhone && targetUrl && targetUrl.trim().length > 0) {
       if (fetchesAttempted >= maxFetches) {
-        if (process.env.NODE_ENV !== "production") {
-          console.log(`[WebsiteFallback] reached maxFetches cap (${maxFetches}), stopping fallback`);
-        }
         break;
       }
 
       fetchesAttempted++;
       try {
         const result = await extractContactsFromWebsite(targetUrl, {
-          timeoutMs: options?.timeoutMs ?? DEFAULT_FETCH_TIMEOUT_MS,
+          timeoutMs: options?.timeoutMs ?? WEBSITE_EXTRACT_TIMEOUT_MS,
         });
 
         if (result.emailNormalized || result.phoneNormalized) {
@@ -286,7 +885,6 @@ export async function enrichProfilesWithWebsiteFallback(
       }
     }
 
-    // Always ensure availableChannels is computed
     profile.availableChannels = computeAvailableChannels({
       hasInstagram: true,
       email: profile.email,

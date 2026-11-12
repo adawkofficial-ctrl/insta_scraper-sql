@@ -1,3 +1,4 @@
+import "./preload_server_only.cjs";
 import "dotenv/config";
 import assert from "node:assert/strict";
 import {
@@ -14,7 +15,7 @@ import {
   getAuthSecret,
   getAuthSecretBytes,
 } from "../src/lib/services/auth/auth-constants";
-import { checkRateLimit, getClientIp } from "../src/lib/services/auth/rate-limiter";
+import { checkRateLimit, getClientIp, checkAuthRateLimit } from "../src/lib/services/auth/rate-limiter";
 import { extractTokenFromRequest } from "../src/lib/services/auth/auth-guard";
 import { getSafeRedirect } from "../src/components/auth-card";
 import { PrismaPg } from "@prisma/adapter-pg";
@@ -83,25 +84,39 @@ async function runTests() {
   // 4. Rate Limiter
   console.log("\n[Test 4] Sliding-window rate limiter");
   {
-    const key = `test_ip_${Date.now()}`;
-    // 3 requests allowed in 1000ms window
-    const r1 = checkRateLimit(key, 3, 1000);
-    assert.equal(r1.allowed, true);
-    assert.equal(r1.remaining, 2);
+    const prevDisable = process.env.DISABLE_AUTH_RATE_LIMIT;
+    delete process.env.DISABLE_AUTH_RATE_LIMIT;
+    const prevDryRun = process.env.APIFY_DRY_RUN;
+    const prevMockUnipile = process.env.MOCK_UNIPILE;
+    const prevMockGemini = process.env.MOCK_GEMINI;
+    delete process.env.APIFY_DRY_RUN;
+    delete process.env.MOCK_UNIPILE;
+    delete process.env.MOCK_GEMINI;
+    try {
+      const key = `test_ip_${Date.now()}`;
+      // 3 requests allowed in 1000ms window
+      const r1 = checkRateLimit(key, 3, 1000);
+      assert.equal(r1.allowed, true);
+      assert.equal(r1.remaining, 2);
 
-    const r2 = checkRateLimit(key, 3, 1000);
-    assert.equal(r2.allowed, true);
-    assert.equal(r2.remaining, 1);
+      const r2 = checkRateLimit(key, 3, 1000);
+      assert.equal(r2.allowed, true);
+      assert.equal(r2.remaining, 1);
 
-    const r3 = checkRateLimit(key, 3, 1000);
-    assert.equal(r3.allowed, true);
-    assert.equal(r3.remaining, 0);
+      const r3 = checkRateLimit(key, 3, 1000);
+      assert.equal(r3.allowed, true);
+      assert.equal(r3.remaining, 0);
 
-    const r4 = checkRateLimit(key, 3, 1000);
-    assert.equal(r4.allowed, false, "4th request within window must be rate limited");
-    assert.equal(r4.remaining, 0);
-    assert.ok(r4.resetMs > 0);
-    console.log("  ✓ Rate limiter sliding window correctly throttles requests");
+      const r4 = checkRateLimit(key, 3, 1000);
+      assert.equal(r4.allowed, false, "4th request within window must be rate limited");
+      assert.equal(r4.remaining, 0);
+      assert.ok(r4.resetMs > 0);
+      console.log("  ✓ Rate limiter sliding window correctly throttles requests");
+    } finally {
+      if (prevDisable !== undefined) {
+        process.env.DISABLE_AUTH_RATE_LIMIT = prevDisable;
+      }
+    }
   }
 
   // 5. Client IP extraction
@@ -222,6 +237,119 @@ async function runTests() {
   if (createdUserId) {
     await prisma.user.delete({ where: { id: createdUserId } });
     console.log("  ✓ Test user cleaned up from database");
+  }
+
+  // 9. In-app rate limit (5 attempts / 15 min per IP and email)
+  console.log("\n[Test 9] In-app rate limit (5 attempts / 15 min per IP and email)");
+  {
+    const prevDisable = process.env.DISABLE_AUTH_RATE_LIMIT;
+    const prevEnv = process.env.NODE_ENV;
+    delete process.env.DISABLE_AUTH_RATE_LIMIT;
+    (process.env as Record<string, string | undefined>).NODE_ENV = "production";
+
+    const prevDryRun = process.env.APIFY_DRY_RUN;
+    const prevMockUnipile = process.env.MOCK_UNIPILE;
+    const prevMockGemini = process.env.MOCK_GEMINI;
+    delete process.env.APIFY_DRY_RUN;
+    delete process.env.MOCK_UNIPILE;
+    delete process.env.MOCK_GEMINI;
+    try {
+      const testIp = `192.168.10.${Math.floor(Math.random() * 200) + 10}`;
+      const testEmail = `ratelimit_${Date.now()}@example.com`;
+
+      for (let i = 1; i <= 5; i++) {
+        const res = checkAuthRateLimit("login", testIp, testEmail);
+        assert.equal(res.allowed, true, `Attempt ${i} should be allowed`);
+        assert.equal(res.remaining, 5 - i);
+      }
+
+      // 6th attempt from same IP should be blocked
+      const blockedIp = checkAuthRateLimit("login", testIp, `other_${Date.now()}@example.com`);
+      assert.equal(blockedIp.allowed, false, "6th attempt from same IP must be blocked");
+
+      // 6th attempt from different IP with same email should be blocked
+      const differentIp = `192.168.10.${Math.floor(Math.random() * 200) + 10}`;
+      const blockedEmail = checkAuthRateLimit("login", differentIp, testEmail);
+      assert.equal(blockedEmail.allowed, false, "6th attempt for same email must be blocked");
+
+      console.log("  ✓ 5 attempts / 15 min limit enforced per IP and per email");
+    } finally {
+      if (prevDisable !== undefined) process.env.DISABLE_AUTH_RATE_LIMIT = prevDisable;
+      (process.env as Record<string, string | undefined>).NODE_ENV = prevEnv;
+    }
+  }
+
+  // 10. Production readiness health probe constraints
+  console.log("\n[Test 10] Production readiness health probe constraints");
+  {
+    const { GET: readyGet } = await import("../src/app/api/health/ready/route");
+    const prevEnv = process.env.NODE_ENV;
+    const prevSecret = process.env.AUTH_SECRET;
+    const prevAdminPass = process.env.ADMIN_PASSWORD;
+    const prevCookieSecure = process.env.COOKIE_SECURE;
+    const prevDisableRateLimit = process.env.DISABLE_AUTH_RATE_LIMIT;
+
+    const prevDryRun = process.env.APIFY_DRY_RUN;
+    const prevMockUnipile = process.env.MOCK_UNIPILE;
+    const prevMockGemini = process.env.MOCK_GEMINI;
+    delete process.env.APIFY_DRY_RUN;
+    delete process.env.MOCK_UNIPILE;
+    delete process.env.MOCK_GEMINI;
+    try {
+      // 1. Weak AUTH_SECRET in production fails ready probe
+      (process.env as Record<string, string | undefined>).NODE_ENV = "production";
+      process.env.AUTH_SECRET = "too-short";
+      process.env.ADMIN_PASSWORD = "StrongProductionPassword2026!";
+      delete process.env.DISABLE_AUTH_RATE_LIMIT;
+      process.env.COOKIE_SECURE = "true";
+
+      const res1 = await readyGet();
+      const json1 = (await res1.json()) as { status: string; checks: Record<string, string> };
+      assert.equal(res1.status, 503, "Should return 503 when AUTH_SECRET is < 32 chars in production");
+      assert.equal(json1.status, "not_ready");
+      assert.equal(json1.checks.auth_secret, "missing_or_too_short");
+
+      // 2. Weak ADMIN_PASSWORD in production fails ready probe
+      process.env.AUTH_SECRET = "a".repeat(32);
+      process.env.ADMIN_PASSWORD = "AdminPass2026!Secure"; // default password
+      const res2 = await readyGet();
+      const json2 = (await res2.json()) as { status: string; checks: Record<string, string> };
+      assert.equal(res2.status, 503, "Should return 503 when ADMIN_PASSWORD is weak/default in production");
+      assert.equal(json2.checks.admin_password, "weak_or_default");
+
+      // 3. DISABLE_AUTH_RATE_LIMIT set in production fails ready probe
+      process.env.ADMIN_PASSWORD = "StrongProductionPassword2026!";
+      process.env.DISABLE_AUTH_RATE_LIMIT = "1";
+      const res3 = await readyGet();
+      const json3 = (await res3.json()) as { status: string; checks: Record<string, string> };
+      assert.equal(res3.status, 503, "Should return 503 when DISABLE_AUTH_RATE_LIMIT is set in production");
+      assert.equal(json3.checks.rate_limiting, "disabled_in_production");
+
+      // 4. COOKIE_SECURE=false in production fails ready probe
+      delete process.env.DISABLE_AUTH_RATE_LIMIT;
+      process.env.COOKIE_SECURE = "false";
+      const res4 = await readyGet();
+      const json4 = (await res4.json()) as { status: string; checks: Record<string, string> };
+      assert.equal(res4.status, 503, "Should return 503 when COOKIE_SECURE=false in production");
+      assert.equal(json4.checks.cookie_secure, "insecure_http_rejected");
+
+      // 5. Valid production configuration passes ready probe
+      process.env.COOKIE_SECURE = "true";
+      const res5 = await readyGet();
+      const json5 = (await res5.json()) as { status: string; checks: Record<string, string> };
+      assert.equal(res5.status, 200, "Should return 200 when all production requirements are satisfied");
+      assert.equal(json5.status, "ready");
+      console.log("  ✓ Production readiness probe rejects weak secret, weak password, disabled rate limit, and insecure cookies");
+    } finally {
+      (process.env as Record<string, string | undefined>).NODE_ENV = prevEnv;
+      if (prevSecret !== undefined) process.env.AUTH_SECRET = prevSecret; else delete process.env.AUTH_SECRET;
+      if (prevAdminPass !== undefined) process.env.ADMIN_PASSWORD = prevAdminPass; else delete process.env.ADMIN_PASSWORD;
+      if (prevCookieSecure !== undefined) process.env.COOKIE_SECURE = prevCookieSecure; else delete process.env.COOKIE_SECURE;
+      if (prevDisableRateLimit !== undefined) process.env.DISABLE_AUTH_RATE_LIMIT = prevDisableRateLimit; else delete process.env.DISABLE_AUTH_RATE_LIMIT;
+      if (prevDryRun !== undefined) process.env.APIFY_DRY_RUN = prevDryRun; else delete process.env.APIFY_DRY_RUN;
+      if (prevMockUnipile !== undefined) process.env.MOCK_UNIPILE = prevMockUnipile; else delete process.env.MOCK_UNIPILE;
+      if (prevMockGemini !== undefined) process.env.MOCK_GEMINI = prevMockGemini; else delete process.env.MOCK_GEMINI;
+    }
   }
 
   console.log("\n🎉 ALL AUTH PRODUCTION READINESS TESTS PASSED!\n");

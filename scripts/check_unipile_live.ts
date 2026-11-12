@@ -14,8 +14,8 @@ async function checkUnipile() {
       },
     });
     console.log("Unipile /api/v1/accounts status:", res.status);
-    const body = await res.text();
-    console.log("Unipile accounts response:", body.slice(0, 500));
+    const data = await res.json();
+    console.log("Full Unipile accounts response:\n", JSON.stringify(data, null, 2));
   } catch (err) {
     console.error("Unipile fetch failed:", err);
   }

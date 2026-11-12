@@ -11,8 +11,10 @@ import {
 import { BadRequestError, NotFoundError, ConflictError } from "@/lib/errors";
 import { logger } from "@/lib/logger";
 import { renderTemplate } from "../template/template-renderer";
-import { getMessagingProvider } from "../messaging";
+import { getMessagingProvider, sendSingleMessage, canSendNow } from "../messaging";
 import { findConnectedSenderForDispatch } from "../senders/instagram-sender-service";
+import { findConnectedSendersForUser } from "../senders/instagram-sender-repository";
+import { calculateWarmupCap } from "../messaging/send-gate";
 import { runDiscovery } from "../discovery/discovery-service";
 import {
   createBulkMessageJob,
@@ -28,6 +30,7 @@ import {
   DncChannel,
 } from "../compliance/dnc-service";
 import { notifySystemError } from "../notifications/notification-triggers";
+import { getMaxLeadLimit } from "../scraper";
 
 // Worker lease configuration
 export const LEASE_DURATION_MS = 60 * 1000; // 60 seconds lease
@@ -124,7 +127,7 @@ export type ExecutionPreviewResponse = {
   items: Array<{
     id: string;
     leadId: string;
-    username: string;
+    username: string | null;
     messagePreview: string;
     status: ExecutionItemStatus;
   }>;
@@ -160,9 +163,9 @@ export type ExecutionDetailResponse = {
     createdAt: Date;
     lead: {
       id: string;
-      username: string;
+      username: string | null;
       fullName: string | null;
-      profileUrl: string;
+      profileUrl: string | null;
       category: string | null;
       followers: number | null;
     };
@@ -234,6 +237,13 @@ export type CampaignExecutionStatusResponse = {
     errorCode: string | null;
     errorMessage: string | null;
   } | null;
+  estimatedCompletion?: {
+    estimatedCompletionDate: string | null;
+    healthySendersCount: number;
+    dailyCapacity: number;
+    daysRemaining: number | null;
+    workingHoursWindow: string;
+  } | null;
 };
 
 /**
@@ -279,10 +289,11 @@ export async function preflightValidateCampaignExecution(
 
   // 4. Lead limit validation
   if (campaign.leadLimit !== null && campaign.leadLimit !== undefined) {
-    if (campaign.leadLimit < 1 || campaign.leadLimit > 100) {
+    const maxLimit = getMaxLeadLimit();
+    if (campaign.leadLimit < 1 || campaign.leadLimit > maxLimit) {
       throw new BadRequestError(
         "INVALID_LEAD_LIMIT",
-        "Lead limit must be between 1 and 100.",
+        `Lead limit must be between 1 and ${maxLimit}.`,
       );
     }
   }
@@ -1338,6 +1349,45 @@ export async function getCampaignExecutionStatus(
     elapsedSeconds = Math.max(0, Math.floor((endTime.getTime() - latestExecution.startedAt.getTime()) / 1000));
   }
 
+  // Fetch healthy senders for the user to compute daily capacity & estimated completion
+  const senders = campaign.userId ? await findConnectedSendersForUser(campaign.userId) : [];
+  const healthySenders = senders.filter((s) => {
+    const isConn = s.status === "CONNECTED" || s.status === "ACTIVE" || s.status === "WARMING";
+    const notPaused = !s.pausedUntil || s.pausedUntil <= new Date();
+    return isConn && notPaused;
+  });
+
+  let totalDailyCapacity = 0;
+  for (const s of healthySenders) {
+    const warmup = calculateWarmupCap({
+      warmupStartedAt: s.warmupStartedAt,
+      configuredDailyCap: s.dailyCap,
+    });
+    totalDailyCapacity += warmup.dailyCap;
+  }
+
+  const remainingToSend = queued + processing;
+  let estimatedCompletionDate: string | null = null;
+  let daysRemaining: number | null = null;
+
+  if (remainingToSend > 0 && totalDailyCapacity > 0) {
+    daysRemaining = Math.ceil(remainingToSend / totalDailyCapacity);
+    const estDate = new Date();
+    estDate.setDate(estDate.getDate() + daysRemaining);
+    estimatedCompletionDate = estDate.toISOString();
+  } else if (remainingToSend === 0 && (sent > 0 || campaign.status === CampaignStatus.COMPLETED)) {
+    daysRemaining = 0;
+    estimatedCompletionDate = latestExecution?.completedAt?.toISOString() ?? new Date().toISOString();
+  }
+
+  const estimatedCompletion = {
+    estimatedCompletionDate,
+    healthySendersCount: healthySenders.length,
+    dailyCapacity: totalDailyCapacity,
+    daysRemaining,
+    workingHoursWindow: "09:00 - 18:00 (Lead Local Time)",
+  };
+
   return {
     campaignId: campaign.id,
     executionId: latestExecution?.id ?? null,
@@ -1371,6 +1421,7 @@ export async function getCampaignExecutionStatus(
             errorMessage: latestExecution.errorMessage,
           }
         : null,
+    estimatedCompletion,
   };
 }
 
@@ -1445,7 +1496,9 @@ export async function createExecutionPreview(
     orderBy: { createdAt: "asc" },
   });
 
-  const eligibleLeads = leads.filter((l) => (l.profileUrl?.trim() || "").startsWith("http"));
+  const eligibleLeads = leads.filter(
+    (l) => Boolean(l.username?.trim()) && (l.profileUrl?.trim() || "").startsWith("http"),
+  );
   const nonUrlSkipped = leads.length - eligibleLeads.length;
 
   // Enforce DNC suppression on eligible leads
@@ -1468,8 +1521,12 @@ export async function createExecutionPreview(
 
   const preparedItems = activeLeads.map((lead) => ({
     leadId: lead.id,
-    username: lead.username,
-    messageText: renderTemplate(selectedTemplate.body, { username: lead.username, fullName: lead.fullName }, campaign.name),
+    username: lead.username ?? "",
+    messageText: renderTemplate(
+      selectedTemplate.body,
+      { username: lead.username ?? "", fullName: lead.fullName },
+      campaign.name,
+    ),
   }));
 
   const result = await prisma.$transaction(async (tx) => {
@@ -1781,19 +1838,103 @@ export async function dispatchExecution(
       }
     }
 
-    const dispatch = await provider.sendMessage({
-      profileUrl: item.lead.profileUrl,
-      message: item.messageText,
-      senderAccountId: senderAccount?.id,
-    });
+    if (!item.lead.profileUrl || !item.lead.username) {
+      await prisma.campaignExecutionItem.update({
+        where: { id: item.id },
+        data: {
+          status: ExecutionItemStatus.SKIPPED,
+          errorMessage: "Lead has no Instagram handle or profile URL",
+          processedAt: new Date(),
+        },
+      });
+      continue;
+    }
 
-    const itemStatus = dispatch.success ? ExecutionItemStatus.SENT : ExecutionItemStatus.FAILED;
+    if (senderAccount) {
+      const gateCheck = await canSendNow({
+        senderAccountId: senderAccount.id,
+        leadId: item.leadId,
+        lead: freshLead,
+        campaignId: execution.campaignId,
+      });
+
+      if (!gateCheck.allowed) {
+        if (gateCheck.reason === "OUTSIDE_WORKING_HOURS") {
+          await prisma.campaignExecutionItem.update({
+            where: { id: item.id },
+            data: {
+              status: ExecutionItemStatus.SKIPPED,
+              errorMessage: `Outside working hours (resumes at ${gateCheck.retryAt?.toISOString() ?? "next window"})`,
+              processedAt: new Date(),
+            },
+          });
+          results.push({
+            id: item.id,
+            leadId: item.leadId,
+            username: item.lead.username,
+            status: ExecutionItemStatus.SKIPPED,
+            errorMessage: "Outside working hours",
+          });
+          continue;
+        }
+        if (gateCheck.reason === "SENDING_DISABLED") {
+          results.push({
+            id: item.id,
+            leadId: item.leadId,
+            username: item.lead.username,
+            status: item.status,
+            errorMessage: "Sending is disabled (OUTBOUND_SENDING_ENABLED=false)",
+          });
+          continue;
+        }
+        results.push({
+          id: item.id,
+          leadId: item.leadId,
+          username: item.lead.username,
+          status: item.status,
+          errorMessage: `Blocked by send gate: ${gateCheck.reason}`,
+        });
+        continue;
+      }
+    }
+
+    let dispatchSuccess = false;
+    let dispatchErrorMessage: string | null = null;
+
+    if (senderAccount) {
+      try {
+        const sendResult = await sendSingleMessage(
+          {
+            campaignId: execution.campaignId,
+            leadId: item.leadId,
+            message: item.messageText,
+            senderAccountId: senderAccount.id,
+          },
+          userId,
+        );
+        dispatchSuccess = sendResult.success;
+        dispatchErrorMessage = sendResult.success ? null : (sendResult.error ?? "Failed");
+      } catch (err) {
+        dispatchSuccess = false;
+        dispatchErrorMessage = err instanceof Error ? err.message : String(err);
+      }
+    } else {
+      const dispatch = await provider.sendMessage({
+        profileUrl: item.lead.profileUrl,
+        message: item.messageText,
+        senderAccountId: undefined,
+      });
+      dispatchSuccess = dispatch.success;
+      dispatchErrorMessage = dispatch.success ? null : (dispatch.error?.message ?? "Failed");
+    }
+
+    const itemStatus = dispatchSuccess ? ExecutionItemStatus.SENT : ExecutionItemStatus.FAILED;
     await prisma.campaignExecutionItem.update({
       where: { id: item.id },
       data: { status: itemStatus, processedAt: new Date() },
     });
 
-    if (dispatch.success) sent++;
+    if (dispatchSuccess) sent++;
     else failed++;
 
     results.push({
@@ -1801,7 +1942,7 @@ export async function dispatchExecution(
       leadId: item.leadId,
       username: item.lead.username,
       status: itemStatus,
-      errorMessage: dispatch.success ? null : dispatch.error?.message ?? "Failed",
+      errorMessage: dispatchSuccess ? null : dispatchErrorMessage ?? "Failed",
     });
   }
 

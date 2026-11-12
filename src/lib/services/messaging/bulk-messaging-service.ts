@@ -541,7 +541,7 @@ export async function previewBulkMessageJob(
     where: {
       campaignId: campaign.id,
       direction: "OUTBOUND",
-      status: { in: ["SENT", "QUEUED", "SENDING"] },
+      status: { in: ["SENT", "SENDING"] },
       lead: {
         OR: [{ groupKey: { not: null } }, { website: { not: null } }],
       },
@@ -811,7 +811,7 @@ export async function createBulkMessageJob(
     where: {
       campaignId: campaign.id,
       direction: "OUTBOUND",
-      status: { in: ["SENT", "QUEUED", "SENDING"] },
+      status: { in: ["SENT", "SENDING"] },
       lead: {
         OR: [{ groupKey: { not: null } }, { website: { not: null } }],
       },

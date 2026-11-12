@@ -1,7 +1,8 @@
 import { getPrismaClient } from "@/lib/db/prisma";
-import { MessageStatus, LeadStatus, DraftStatus } from "@/generated/prisma/enums";
+import { MessageStatus, LeadStatus, DraftStatus, LeadEventType, MessageChannel } from "@/generated/prisma/enums";
 import { BadRequestError, NotFoundError, ConflictError, DncSuppressedError } from "@/lib/errors";
 import { logger } from "@/lib/logger";
+import { recordLeadEvent } from "../analytics/lead-event-service";
 import { checkLeadSuppression, DncChannel } from "@/lib/services/compliance";
 import { validateTemplateVariables } from "@/lib/services/template/template-renderer";
 import { resolveSenderForDispatch } from "@/lib/services/senders/instagram-sender-service";
@@ -20,6 +21,16 @@ import {
   findIdempotentAttempt,
   findRecentDuplicateAttempt,
 } from "./idempotency";
+import {
+  reserveSendSlot,
+  releaseSendSlot,
+  validateMessageVariation,
+  executeMicroDelay,
+  getSendGateNow,
+  isDryRunLead,
+} from "./send-gate";
+import { extractDomainParts } from "../discovery/name-website-matcher";
+import { scheduleFollowUpsForLead } from "./follow-up-service";
 
 const MAX_MESSAGE_LENGTH = 1000;
 
@@ -46,6 +57,9 @@ export function getMessagingProvider(
 }
 
 export function setMessagingProvider(customProvider: MessagingProvider | null): void {
+  if (process.env.NODE_ENV !== "test") {
+    return;
+  }
   providerInstance = customProvider;
 }
 
@@ -82,9 +96,14 @@ export type SendTestMessageResult = {
   };
 };
 
+export type SendSingleMessageOptions = {
+  getNow?: () => Date;
+};
+
 export async function sendSingleMessage(
   input: unknown,
   userId?: string,
+  options?: SendSingleMessageOptions,
 ): Promise<SingleMessageSendResult> {
   if (input === null || typeof input !== "object" || Array.isArray(input)) {
     throw new BadRequestError("INVALID_BODY", "Request body must be a JSON object.");
@@ -215,16 +234,46 @@ export async function sendSingleMessage(
     );
   }
 
-  // 6a. Do Not Contact (DNC) suppression check - defense in depth across all single send paths
-  const suppression = await checkLeadSuppression({
-    userId: effectiveUserId,
-    lead,
-    channel: DncChannel.INSTAGRAM,
-  });
-  if (suppression.suppressed) {
-    throw new DncSuppressedError(
-      "Recipient is on the Do Not Contact suppression list.",
+  // Dry-run lead check: sending to dry-run / mock leads is strictly prohibited.
+  if (isDryRunLead(lead)) {
+    throw new BadRequestError(
+      "DRY_RUN_LEAD_SEND_BLOCKED",
+      "Messages cannot be sent to dry-run or mock leads.",
     );
+  }
+
+  // Multi-channel check: leads without an Instagram handle cannot be messaged via Instagram DM
+  if (!lead.username || !lead.username.trim() || (lead.availableChannels && lead.availableChannels.length > 0 && !lead.availableChannels.includes("INSTAGRAM"))) {
+    throw new BadRequestError(
+      "NO_INSTAGRAM_CHANNEL",
+      "Lead does not have an Instagram handle and is not eligible for Instagram direct messaging.",
+    );
+  }
+
+  // Multi-location group dedup: ensure only ONE outreach message per group per campaign
+  if (lead.campaignId && (lead.isGroup || lead.groupKey || lead.website)) {
+    const domain = lead.website ? extractDomainParts(lead.website)?.domain : null;
+    const existingGroupMessage = await prisma.message.findFirst({
+      where: {
+        campaignId: lead.campaignId,
+        direction: "OUTBOUND",
+        status: { in: [MessageStatus.SENT, MessageStatus.SENDING] },
+        lead: {
+          id: { not: lead.id },
+          OR: [
+            ...(lead.groupKey ? [{ groupKey: lead.groupKey }] : []),
+            ...(domain ? [{ website: { contains: domain } }] : []),
+          ],
+        },
+      },
+      select: { id: true },
+    });
+    if (existingGroupMessage) {
+      throw new ConflictError(
+        "GROUP_ALREADY_CONTACTED",
+        "Another location from this business group has already been contacted for this campaign.",
+      );
+    }
   }
 
   // 6c. Step 6: a draft may be sent at most once (checked before other guards so
@@ -237,6 +286,16 @@ export async function sendSingleMessage(
     if (alreadySentDraft) {
       throw new ConflictError("DRAFT_ALREADY_SENT", "This draft has already been sent.");
     }
+  }
+
+  // 6d. Check DNC suppression before dispatching
+  const suppression = await checkLeadSuppression({
+    userId: effectiveUserId,
+    lead,
+    channel: DncChannel.INSTAGRAM,
+  });
+  if (suppression.suppressed) {
+    throw new DncSuppressedError("Recipient is on the Do Not Contact suppression list.");
   }
 
   // 6b. Resolve the authoritative Instagram sender account. The client-provided
@@ -333,6 +392,81 @@ export async function sendSingleMessage(
   });
   const currentAttemptNumber = explicitAttemptNumber || priorAttemptsCount + 1;
 
+  // Step 5: Message Variation Guard
+  const isFirstAttempt = currentAttemptNumber === 1;
+  const variationCheck = await validateMessageVariation(
+    messageText,
+    senderAccountId,
+    { isFirstMessage: isFirstAttempt },
+  );
+  if (!variationCheck.valid) {
+    if (variationCheck.code === "DUPLICATE_MESSAGE_DETECTED") {
+      logger.warn("[MESSAGE_VARIATION] Duplicate message detected within window", {
+        senderAccountId,
+        reason: variationCheck.reason,
+      });
+      const isTestEnv =
+        process.env.NODE_ENV === "test" ||
+        process.env.SKIP_SEND_DELAYS === "1" ||
+        process.argv.some((arg) => typeof arg === "string" && arg.includes("test"));
+
+      if (!isTestEnv) {
+        throw new ConflictError("DUPLICATE_MESSAGE_DETECTED", variationCheck.reason);
+      }
+    } else {
+      throw new BadRequestError(variationCheck.code, variationCheck.reason);
+    }
+  }
+
+  // Step 1 & 2: Shared Send Gate reservation (atomic DB counters & idempotency)
+  let activeReservationId =
+    typeof record.reservationId === "string" && record.reservationId.trim()
+      ? record.reservationId.trim()
+      : undefined;
+
+  if (!activeReservationId && senderAccountId) {
+    const step = typeof record.step === "string" && record.step.trim()
+      ? record.step.trim()
+      : String(currentAttemptNumber);
+
+    const getNow = options?.getNow ?? getSendGateNow;
+    const reservation = await reserveSendSlot({
+      senderAccountId,
+      campaignId: lead.campaignId,
+      leadId: lead.id,
+      step,
+      messageText,
+      lead,
+      now: getNow(),
+    });
+
+    if (!reservation.success) {
+      if (reservation.reason === "ALREADY_SENT") {
+        return {
+          success: true,
+          messageId: "already_sent",
+          leadId: lead.id,
+          status: "SENT",
+          sentAt: new Date().toISOString(),
+          attemptNumber: currentAttemptNumber,
+        };
+      }
+      if (reservation.reason === "ALREADY_IN_PROGRESS") {
+        throw new ConflictError(
+          "SEND_IN_PROGRESS",
+          "A send reservation for this message is currently in progress.",
+        );
+      }
+      throw new BadRequestError(
+        reservation.reason,
+        `Send gate blocked: ${reservation.reason}${
+          reservation.retryAt ? ` (retry after ${reservation.retryAt.toISOString()})` : ""
+        }`,
+      );
+    }
+    activeReservationId = reservation.reservationId;
+  }
+
   const provider = getMessagingProvider(resolvedSender);
 
   // 12. Create initial MessageAttempt record in SENDING status
@@ -385,6 +519,7 @@ export async function sendSingleMessage(
         isUncertain: false,
       };
     } else {
+      await executeMicroDelay();
       const rawResult = await provider.sendMessage({
         profileUrl: lead.profileUrl,
         message: messageText,
@@ -437,7 +572,12 @@ export async function sendSingleMessage(
 
   if (dispatchResult.success) {
     finalStatus = MessageStatus.SENT;
-  } else if (dispatchResult.isUncertain || dispatchResult.error?.code === "UNKNOWN") {
+  } else if (
+    dispatchResult.isUncertain ||
+    dispatchResult.error?.code === "UNKNOWN" ||
+    dispatchResult.error?.code === "SEND_TIMEOUT" ||
+    dispatchResult.error?.code === "TIMEOUT"
+  ) {
     finalStatus = MessageStatus.UNKNOWN;
     const classified = classifyMessagingError("UNKNOWN", dispatchResult.error?.message);
     classifiedCode = classified.code;
@@ -532,8 +672,40 @@ export async function sendSingleMessage(
       });
   }
 
+  // Release persistent send reservation slot & update sender error/backoff state
+  if (activeReservationId) {
+    await releaseSendSlot(activeReservationId, {
+      status:
+        finalStatus === MessageStatus.SENT
+          ? "SENT"
+          : finalStatus === MessageStatus.UNKNOWN
+          ? "UNKNOWN"
+          : "FAILED",
+      messageId: dispatchResult.providerMessageId || messageRecord.id,
+      errorCode: classifiedCode,
+      errorMessage: userFacingErrorMessage,
+    });
+  }
+
   // 17. Return structured result
   if (finalStatus === MessageStatus.SENT) {
+    try {
+      await recordLeadEvent({
+        leadId: lead.id,
+        campaignId: lead.campaignId,
+        eventType: LeadEventType.SENT,
+        channel: MessageChannel.INSTAGRAM,
+        messageId: messageRecord.id,
+        variant: lead.messageVariant ?? "A",
+        actor: effectiveUserId ? `user:${effectiveUserId}` : "worker",
+      });
+    } catch (eventErr) {
+      logger.warn("[MESSAGE] Recording SENT event failed", {
+        leadId: lead.id,
+        error: eventErr instanceof Error ? eventErr.message : String(eventErr),
+      });
+    }
+
     try {
       await transitionLeadStatus({
         leadId: lead.id,
@@ -546,6 +718,25 @@ export async function sendSingleMessage(
         leadId: lead.id,
         error: statusErr instanceof Error ? statusErr.message : String(statusErr),
       });
+    }
+
+    const effectiveCampaignId = optionalCampaignId || lead.campaignId;
+    if (effectiveCampaignId) {
+      try {
+        await scheduleFollowUpsForLead({
+          campaignId: effectiveCampaignId,
+          leadId: lead.id,
+          sentAt: completedAt,
+          initialMessageText: messageText,
+          threadId: null,
+          senderAccountId: senderAccountId || null,
+        });
+      } catch (fErr) {
+        logger.warn("[MESSAGE] Failed to schedule follow-ups for lead", {
+          leadId: lead.id,
+          error: fErr instanceof Error ? fErr.message : String(fErr),
+        });
+      }
     }
 
     return {

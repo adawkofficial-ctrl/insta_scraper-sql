@@ -31,6 +31,17 @@ npx prisma format
 npx prisma validate
 ```
 
+### Database Separation: Real Data vs. Tests
+To protect production and user data, test suites never run against the application's real database:
+- **Application Database (`DATABASE_URL`)**: Used by the application in development and production (e.g., `insta_scraper_prod`).
+- **Dedicated Test Database (`DATABASE_URL_TEST`)**: Used exclusively for running automated test suites (defaults to `insta_scraper_test`).
+- **One-Command Setup**: Run `npm run test:db:setup` to automatically create the test database and run all migrations on it:
+  ```bash
+  npm run test:db:setup
+  ```
+- **Safety Guard**: The test runner and test environment include an automated guard that prevents tests from running against databases with `prod` or `live` in their names, or targeting `DATABASE_URL` when `NODE_ENV=production`.
+
+
 ### 4. Development Command
 Start the Next.js local development server with hot reload:
 ```bash
@@ -284,3 +295,120 @@ The application provides instant mobile and desktop push notifications via [ntfy
    - `Provider & System Errors`: Immediate alert when Apify, Sparior, or Gemini run out of quota or fail authentication.
    - `Daily Activity Summary`: Past 24h recap of new leads, sent messages, and replies.
 5. Click **"Save Settings"**, then click **"Send Test Push"** to verify delivery to your device.
+
+---
+
+## Production Pipeline & Safety Reference (Fix 1–6 Integration)
+
+### 1. Pipeline Stage Order
+The lead generation and outreach engine follows a strict 7-stage sequential funnel designed to minimize paid API costs and prevent premature account bans:
+
+1. **Target Definition & Niche Filters (Stage 1)**: Campaign settings define target city, category, intent, and allowable terms (e.g., allowing "trainer" in Fitness campaigns while blocking it in unrelated niches).
+2. **Low-Cost Discovery & Waterfall (Stage 2)**: Candidate businesses are ingested via Google Maps ($0.004/place). The multi-channel waterfall scrapes homepage, `/contact`, and link hubs for free before falling back to external lookups. Closed businesses, national chains (via 3+ location frequency), and wrong-city results are pruned immediately.
+3. **Multi-Channel Handle Yield & Deduplication (Stage 3)**: Places with valid Instagram handles proceed to IG outreach. Places without Instagram but possessing phone or email are **retained** as multi-channel leads (`CONTACTABLE_NON_IG`) rather than discarded. Records are deduplicated by `placeId`, normalized `websiteDomain`, and E.164 phone number.
+4. **Stage Spend Ceilings & Pre-Enrichment Gate (Stage 4)**: Cumulative spend per stage is strictly budgeted (`MAX_STAGE_SPEND_MAPS_USD`, `MAX_STAGE_SPEND_ENRICHMENT_USD`). If the budget ceiling is hit, discovery gracefully terminates with `stop_reason: "BUDGET_CEILING_REACHED"`. Gemini Flash gates evaluate only viable candidates.
+5. **Lazy Instagram Profile Enrichment & Quality Scoring (Stage 5)**: Paid profile enrichment ($0.003–$0.005) runs **only** on surviving qualified candidates. The engine calculates an objective 100-point Lead Quality Score and classifies leads into Tiers A, B, C, and D.
+6. **Human-in-the-Loop Send Gate & Dispatch (Stage 6)**: Tiers A & B qualify for personalized DM draft generation; Tier C is held for manual review; Tier D is rejected. Dispatches pass through the centralized `sendGate` enforcing global and campaign-level DNC suppression, daily/hourly caps, warm-up pacing, non-constant jitter, and recipient timezone working hours.
+7. **Inbound Reply Processing & Outcome Analytics (Stage 7)**: Inbound replies via Unipile or Playwright are classified (`positive`, `question`, `stop`, `unknown`). Opt-outs automatically add the lead to DNC and cancel pending messages. Outcome analytics tracks real acquisition costs, conversion rates, and ROI across keywords, cities, and tiers.
+
+---
+
+### 2. Cost Model & Unit Economics
+The platform enforces a "Zero Dollar Leakage" accounting model where every cent of API expenditure is attributed directly to the executing `ScrapeJob` and `Campaign`:
+
+| Pipeline Step | Provider / Service | Cost per Unit | Accounting & Optimization Notes |
+|---|---|---|---|
+| **Place Discovery** | Google Maps (Apify Actor) | **$0.0040 / place** ($4.00 / 1k places) | Scrapes place name, address, website, phone, rating, reviews. |
+| **Handle Waterfall** | Internal HTTP Scraper | **$0.0000 (Free)** | Zero-cost local Cheerio scraper extracts IG handles and emails from home, contact, and Linktree pages. |
+| **Candidate Gate** | Google Gemini 1.5 Flash | **$0.00015 / eval** (~$0.075 / 1M tokens) | Evaluates relevance only when heuristics are ambiguous. Skipped for high-confidence matches. |
+| **Profile Enrichment** | Apify Instagram Profile | **$0.0030–$0.0050 / profile** | **Lazy Gate**: Executed ONLY on surviving candidates after free waterfall and chain filtering. |
+| **Fast Lookups** | Sparior Pro (RapidAPI) | **$0.0015 / request** | Alternative lightweight profile lookup provider with budget soft limits. |
+| **DM Dispatch** | Unipile / Playwright | **Direct Session** | Sent through your authenticated sender account with atomic reservation slots. |
+
+---
+
+### 3. Lead Quality Scoring Weights (0–100 Points)
+Every discovered lead receives an objective composite score based on 5 independent weighted pillars:
+
+| Pillar | Weight | Evaluation Criteria |
+|---|---|---|
+| **Business Health & Reputation** | **25%** | Google rating $\ge 4.0$, $\ge 10$ customer reviews, valid active website domain. |
+| **Independence / Non-Chain** | **20%** | Independent single-location business, non-franchise, distinct brand identity. |
+| **Instagram Presence & Activity** | **25%** | Active profile, 500–50k target followers, posted within last 30 days, healthy engagement rate. |
+| **Target Audience Alignment** | **15%** | Bio relevance match, absence of negative keywords, explicit location match in target city. |
+| **Reachability & Multi-Channel** | **15%** | Multiple active channels available (Instagram DM, email, phone, website form). |
+
+#### Score Tiers & Action Policy:
+- **Tier A (Score $\ge 80$)**: High-value local business. Auto-approved for personalized DM campaign.
+- **Tier B (Score $65–79$)**: Qualified prospect. Approved for standard template outreach.
+- **Tier C (Score $50–64$)**: Borderline / low engagement. **Held in review queue**; requires human approval before draft creation.
+- **Tier D (Score $< 50$)**: Disqualified / inactive / chain. Automatically rejected; no outreach attempted.
+
+---
+
+### 4. Sender Limits & Warm-up Schedule
+To protect sender accounts from Instagram action blocks and automated spam detection, all outbounds pass through the centralized `sendGate`:
+
+| Account Stage | Age / History | Hourly Cap | Daily Cap | Target Delay Between Messages |
+|---|---|---|---|---|
+| **Warm-up Phase 1** | Days 1–3 | **2 DMs / hr** | **10 DMs / day** | 15–25 min + non-constant jitter ($\pm 20\%$) |
+| **Warm-up Phase 2** | Days 4–7 | **4 DMs / hr** | **20 DMs / day** | 10–18 min + non-constant jitter ($\pm 20\%$) |
+| **Warm-up Phase 3** | Days 8–14 | **6 DMs / hr** | **35 DMs / day** | 8–14 min + non-constant jitter ($\pm 20\%$) |
+| **Mature Outreach** | Day 15+ | **8 DMs / hr** | **50 DMs / day** *(Hard Ceiling)* | 6–12 min + non-constant jitter ($\pm 20\%$) |
+
+#### Safety & Compliance Rules:
+- **Working Hours Deferral**: Messages are only dispatched between **09:00 and 18:00** in the lead's local timezone. Deliveries outside this window are automatically deferred to 09:00 the following morning.
+- **Atomic DB Reservation**: Send slots are reserved via database transactions (`reserveSendSlot`) to prevent race conditions across parallel job workers.
+- **Auto-Pause on Danger Errors**: If Instagram responds with `429 Rate Limited`, `checkpoint_required`, `challenge_required`, or `action_blocked`, the sender status is instantly updated to `PAUSED` and an alert is broadcast.
+- **Opt-Out Handling**: Any inbound message containing "stop", "unsubscribe", "remove", or "don't message" instantly adds the lead to the Do-Not-Contact (DNC) list and purges all pending queue drafts.
+
+---
+
+### 5. Environment Variables Reference
+Key configuration variables in `.env` (refer to `.env.example` for template):
+
+```bash
+# --- Core Application & Security ---
+DATABASE_URL="postgresql://user:password@localhost:5432/insta_scraper_prod"
+AUTH_SECRET="your-32-char-random-auth-secret-here"
+NEXTAUTH_URL="http://localhost:3001"
+
+# --- Messaging Providers ---
+MESSAGING_PROVIDER="playwright"            # "playwright" | "unipile"
+UNIPILE_DSN="api66.unipile.com"
+UNIPILE_API_KEY="your-unipile-api-key"
+UNIPILE_WEBHOOK_PATH_SECRET="your-secret"
+
+# --- Discovery & Profile Scraping ---
+SCRAPER_PROVIDER="apify"                   # "apify" | "sparior"
+APIFY_API_TOKEN="your-apify-token"
+SPARIOR_API_KEY="your-rapidapi-key"
+GEMINI_API_KEY="your-gemini-api-key"
+
+# --- Stage Spend Ceilings (USD) ---
+MAX_STAGE_SPEND_MAPS_USD="5.00"            # Discovery budget limit per run
+MAX_STAGE_SPEND_ENRICHMENT_USD="10.00"      # Profile enrichment budget limit per run
+
+# --- Sender Cooldown & Timing ---
+SENDER_COOLDOWN_MINUTES="10"               # Base interval between sends
+SENDER_WARMUP_ENABLED="true"               # Enforce warmup ramp schedule
+WORKING_HOURS_START="9"                    # 9:00 AM recipient local time
+WORKING_HOURS_END="18"                     # 6:00 PM recipient local time
+```
+
+---
+
+### 6. How to Run a Safe First Campaign (Checklist)
+Follow this checklist to safely execute your initial campaign without risking account health:
+
+- [ ] **1. Connect 1 Sender Account**: Navigate to *Settings > Instagram Sender Account* and connect **one** verified Instagram account. Ensure the status displays `CONNECTED`.
+- [ ] **2. Verify Warm-up is Enabled**: Ensure `SENDER_WARMUP_ENABLED="true"` in your environment so the sender starts in Phase 1 (max 10 DMs/day, 2 DMs/hr).
+- [ ] **3. Start with a Small Batch (25 Leads)**: Create a new Campaign with `maxLeads: 25`. Specify a narrow geographical city (e.g., "Austin, TX") and specific target niche (e.g., "Pediatric Dentist").
+- [ ] **4. Review Ingested Leads**: Once discovery finishes, inspect the lead list in the dashboard:
+  - Confirm that Tier D leads are rejected.
+  - Confirm that multi-channel leads (without IG, but with phone/email) are safely marked and preserved.
+- [ ] **5. Review Message Drafts**: Inspect generated drafts for Tier A and Tier B leads. Ensure tone and merge variables (`{{businessName}}`, `{{city}}`) render accurately.
+- [ ] **6. Approve & Dispatch First Test DM**: Click **"Send Controlled Test Message"** for a single lead to verify real-time browser delivery and session integrity.
+- [ ] **7. Enable Scheduled Queue**: Queue the remaining approved leads. The engine will automatically space sends with 15–25 minute randomized jitter during recipient business hours (9am–6pm).
+- [ ] **8. Monitor Outcome Analytics**: Check the **Analytics** tab to track delivered messages, reply rates, and cost per positive response.
+

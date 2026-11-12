@@ -576,8 +576,10 @@ async function runStep3Tests() {
   // --- Test 12: Provider factory selection ---
   await test("12. Provider factory selection by SCRAPER_PROVIDER env", async () => {
     const prev = process.env.SCRAPER_PROVIDER;
+    const prevDisc = process.env.DISCOVERY_PROVIDER;
 
     try {
+      process.env.DISCOVERY_PROVIDER = "instagram_search";
       process.env.SCRAPER_PROVIDER = "apify";
       const apifyDisc = getDiscoveryServiceDiscoveryProvider();
       assert.equal(apifyDisc.name, "apify");
@@ -598,6 +600,7 @@ async function runStep3Tests() {
       });
     } finally {
       process.env.SCRAPER_PROVIDER = prev;
+      process.env.DISCOVERY_PROVIDER = prevDisc;
     }
   });
 

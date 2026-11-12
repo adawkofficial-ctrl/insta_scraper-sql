@@ -97,6 +97,13 @@ export type CampaignExecutionStatusResponse = {
     errorCode: string | null;
     errorMessage: string | null;
   } | null;
+  estimatedCompletion?: {
+    estimatedCompletionDate: string | null;
+    healthySendersCount: number;
+    dailyCapacity: number;
+    daysRemaining: number | null;
+    workingHoursWindow: string;
+  } | null;
 };
 
 export async function fetchCampaignExecutionStatus(
@@ -160,7 +167,7 @@ export async function cancelCampaignExecution(
 export type ExecutionPreviewItem = {
   id: string;
   leadId: string;
-  username: string;
+  username: string | null;
   messagePreview: string;
   status: ExecutionItemStatus;
 };
@@ -187,9 +194,9 @@ export type ExecutionDetailItem = {
   createdAt: string;
   lead: {
     id: string;
-    username: string;
+    username: string | null;
     fullName: string | null;
-    profileUrl: string;
+    profileUrl: string | null;
     category: string | null;
     followers: number | null;
   };

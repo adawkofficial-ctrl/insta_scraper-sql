@@ -22,6 +22,17 @@ export type CampaignSummary = {
   location?: string | null;
   category?: string | null;
   leadLimit?: number | null;
+  followUpEnabled?: boolean;
+  followUpCount?: number;
+  followUpDelayDays?: number[];
+  followUpTemplates?: string[];
+  followUpSummary?: {
+    scheduled: number;
+    sent: number;
+    cancelled: number;
+    repliesAfterFollowUp: number;
+    total: number;
+  };
   companyProfileId?: string;
   companyProfile?: {
     id: string;
@@ -35,6 +46,34 @@ export type CampaignSummary = {
   updatedAt: string;
   leadCount: number;
   scrapeJobCount: number;
+};
+
+export type ScrapeJobUsage = {
+  placesFetched?: number;
+  contactableWithIg?: number;
+  contactableWithoutIg?: number;
+  droppedByReason?: {
+    closed?: number;
+    wrong_city?: number;
+    chain?: number;
+    negative_keyword?: number;
+    no_contact?: number;
+    [key: string]: number | undefined;
+  };
+  tierCounts?: {
+    A?: number;
+    B?: number;
+    C?: number;
+    D?: number;
+    [key: string]: number | undefined;
+  };
+  spendByStage?: {
+    maps?: number;
+    profiles?: number;
+    gemini?: number;
+    [key: string]: number | undefined;
+  };
+  [key: string]: unknown;
 };
 
 export type ScrapeJobItem = {
@@ -56,6 +95,11 @@ export type ScrapeJobItem = {
   candidatesDiscovered?: number | null;
   candidatesEnriched?: number | null;
   candidatesSkipped?: number | null;
+  isDryRun?: boolean | null;
+  usage?: ScrapeJobUsage | null;
+  stopReason?: string | null;
+  costUsd?: number | string | null;
+  costBreakdown?: Record<string, unknown> | null;
 };
 
 export type CampaignDetail = CampaignSummary & {
@@ -76,6 +120,17 @@ export type CreateCampaignInput = {
   location?: string | null;
   category?: string | null;
   leadLimit?: number | null;
+  followUpEnabled?: boolean;
+  followUpCount?: number;
+  followUpDelayDays?: number[];
+  followUpTemplates?: string[];
+  followUpSummary?: {
+    scheduled: number;
+    sent: number;
+    cancelled: number;
+    repliesAfterFollowUp: number;
+    total: number;
+  };
   companyProfileId?: string;
   companyProfile?: Record<string, unknown>;
 };
@@ -95,7 +150,20 @@ export type UpdateCampaignInput = {
   location?: string | null;
   category?: string | null;
   leadLimit?: number | null;
+  followUpEnabled?: boolean;
+  followUpCount?: number;
+  followUpDelayDays?: number[];
+  followUpTemplates?: string[];
+  followUpSummary?: {
+    scheduled: number;
+    sent: number;
+    cancelled: number;
+    repliesAfterFollowUp: number;
+    total: number;
+  };
   companyProfileId?: string;
+  autoOptimize?: boolean;
+  explorationBudgetShare?: number;
 };
 
 export type AutoApprovalEligibility = {

@@ -7,6 +7,7 @@ import {
   ScrapeJobStatus,
   ExecutionMode,
   ApprovalMode,
+  AiStatus,
 } from "@/generated/prisma/enums";
 import { Prisma } from "@/generated/prisma/client";
 import { BadRequestError, NotFoundError } from "@/lib/errors";
@@ -15,7 +16,8 @@ import {
   normalizeInstagramUsername,
   parseLeadLimit,
   scrapeInstagramProfiles,
-  MAX_PROFILE_BATCH_SIZE,
+  getMaxLeadLimit,
+  getMaxProfileBatchSize,
 } from "../scraper";
 import {
   applyClassifiedProfiles,
@@ -28,6 +30,7 @@ import {
   createCompanyProfile,
   getDefaultCompanyProfileRecord,
 } from "../company-profile";
+import { getCampaignFollowUpSummary } from "../messaging/follow-up-service";
 
 export const CAMPAIGN_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 
@@ -47,6 +50,10 @@ export type CampaignSummary = {
   location: string | null;
   category: string | null;
   leadLimit: number | null;
+  followUpEnabled?: boolean;
+  followUpCount?: number;
+  followUpDelayDays?: number[];
+  followUpTemplates?: string[];
   companyProfileId: string;
   companyProfile?: {
     id: string;
@@ -65,6 +72,13 @@ export type CampaignSummary = {
 };
 
 export type CampaignDetail = CampaignSummary & {
+  followUpSummary?: {
+    scheduled: number;
+    sent: number;
+    cancelled: number;
+    repliesAfterFollowUp: number;
+    total: number;
+  };
   recentScrapeJobs: {
     id: string;
     campaignId: string | null;
@@ -147,10 +161,11 @@ function logScrape(message: string): void {
 }
 
 export function parseCampaignLeadLimit(value: unknown, fieldName = "leadLimit"): number {
+  const maxLimit = getMaxLeadLimit();
   if (value === undefined || value === null) {
     throw new BadRequestError(
       "INVALID_LEAD_LIMIT",
-      `"${fieldName}" is required and must be an integer between 1 and 100.`,
+      `"${fieldName}" is required and must be an integer between 1 and ${maxLimit}.`,
     );
   }
 
@@ -162,28 +177,28 @@ export function parseCampaignLeadLimit(value: unknown, fieldName = "leadLimit"):
     if (!/^-?\d+$/.test(trimmed)) {
       throw new BadRequestError(
         "INVALID_LEAD_LIMIT",
-        `"${fieldName}" must be an integer between 1 and 100.`,
+        `"${fieldName}" must be an integer between 1 and ${maxLimit}.`,
       );
     }
     numValue = Number.parseInt(trimmed, 10);
   } else {
     throw new BadRequestError(
       "INVALID_LEAD_LIMIT",
-      `"${fieldName}" must be an integer between 1 and 100.`,
+      `"${fieldName}" must be an integer between 1 and ${maxLimit}.`,
     );
   }
 
   if (!Number.isInteger(numValue) || Number.isNaN(numValue)) {
     throw new BadRequestError(
       "INVALID_LEAD_LIMIT",
-      `"${fieldName}" must be an integer between 1 and 100.`,
+      `"${fieldName}" must be an integer between 1 and ${maxLimit}.`,
     );
   }
 
-  if (numValue < 1 || numValue > 100) {
+  if (numValue < 1 || numValue > maxLimit) {
     throw new BadRequestError(
       "LEAD_LIMIT_OUT_OF_RANGE",
-      `"${fieldName}" must be between 1 and 100.`,
+      `"${fieldName}" must be between 1 and ${maxLimit}.`,
     );
   }
 
@@ -206,6 +221,10 @@ export async function createCampaign(
   location: string | null;
   category: string | null;
   leadLimit: number | null;
+  followUpEnabled?: boolean;
+  followUpCount?: number;
+  followUpDelayDays?: number[];
+  followUpTemplates?: string[];
   companyProfileId: string;
   companyProfile?: {
     id: string;
@@ -388,6 +407,20 @@ export async function createCampaign(
     leadLimit = parseCampaignLeadLimit(record.leadLimit, "leadLimit");
   }
 
+  const followUpEnabled = record.followUpEnabled === true;
+  const followUpCount =
+    typeof record.followUpCount === "number" && Number.isInteger(record.followUpCount)
+      ? Math.min(2, Math.max(0, record.followUpCount))
+      : 1;
+  const followUpDelayDays =
+    Array.isArray(record.followUpDelayDays) &&
+    record.followUpDelayDays.every((d) => typeof d === "number" && d > 0)
+      ? record.followUpDelayDays.map((d) => Math.trunc(d))
+      : [3, 5];
+  const followUpTemplates = Array.isArray(record.followUpTemplates)
+    ? record.followUpTemplates.map((t) => String(t).trim())
+    : [];
+
   const prisma = getPrismaClient();
 
   let companyProfileId: string;
@@ -433,6 +466,10 @@ export async function createCampaign(
       location,
       category,
       leadLimit,
+      followUpEnabled,
+      followUpCount,
+      followUpDelayDays,
+      followUpTemplates,
       companyProfileId,
     },
     select: {
@@ -452,6 +489,10 @@ export async function createCampaign(
       location: true,
       category: true,
       leadLimit: true,
+      followUpEnabled: true,
+      followUpCount: true,
+      followUpDelayDays: true,
+      followUpTemplates: true,
       companyProfileId: true,
       companyProfile: {
         select: {
@@ -493,6 +534,10 @@ export async function listCampaigns(userId?: string): Promise<CampaignSummary[]>
       location: true,
       category: true,
       leadLimit: true,
+      followUpEnabled: true,
+      followUpCount: true,
+      followUpDelayDays: true,
+      followUpTemplates: true,
       companyProfileId: true,
       companyProfile: {
         select: {
@@ -567,6 +612,10 @@ export async function getCampaignById(
       location: true,
       category: true,
       leadLimit: true,
+      followUpEnabled: true,
+      followUpCount: true,
+      followUpDelayDays: true,
+      followUpTemplates: true,
       companyProfileId: true,
       companyProfile: {
         select: {
@@ -616,6 +665,8 @@ export async function getCampaignById(
     throw new NotFoundError("CAMPAIGN_NOT_FOUND", "Campaign not found");
   }
 
+  const followUpSummary = await getCampaignFollowUpSummary(campaign.id);
+
   return {
     id: campaign.id,
     name: campaign.name,
@@ -632,6 +683,11 @@ export async function getCampaignById(
     location: campaign.location,
     category: campaign.category,
     leadLimit: campaign.leadLimit,
+    followUpEnabled: campaign.followUpEnabled,
+    followUpCount: campaign.followUpCount,
+    followUpDelayDays: campaign.followUpDelayDays,
+    followUpTemplates: campaign.followUpTemplates,
+    followUpSummary,
     companyProfileId: campaign.companyProfileId,
     companyProfile: campaign.companyProfile,
     createdAt: campaign.createdAt,
@@ -669,6 +725,10 @@ export async function updateCampaign(
   location: string | null;
   category: string | null;
   leadLimit: number | null;
+  followUpEnabled?: boolean;
+  followUpCount?: number;
+  followUpDelayDays?: number[];
+  followUpTemplates?: string[];
   companyProfileId: string;
   companyProfile?: {
     id: string;
@@ -701,6 +761,15 @@ export async function updateCampaign(
     category?: string | null;
     leadLimit?: number | null;
     companyProfileId?: string;
+    autoOptimize?: boolean;
+    explorationBudgetShare?: number;
+    customPositiveKeywords?: string[];
+    customNegativeKeywords?: string[];
+    minLeadScore?: number;
+    followUpEnabled?: boolean;
+    followUpCount?: number;
+    followUpDelayDays?: number[];
+    followUpTemplates?: string[];
   } = {};
 
   // Verify campaign exists and belongs to user if specified
@@ -956,6 +1025,104 @@ export async function updateCampaign(
     data.qualityMaxRegenerations = value;
   }
 
+  if (record.autoOptimize !== undefined) {
+    if (typeof record.autoOptimize !== "boolean") {
+      throw new BadRequestError("INVALID_AUTO_OPTIMIZE", '"autoOptimize" must be a boolean.');
+    }
+    data.autoOptimize = record.autoOptimize;
+  }
+
+  if (record.explorationBudgetShare !== undefined) {
+    const val = Number(record.explorationBudgetShare);
+    if (isNaN(val) || val < 0 || val > 1) {
+      throw new BadRequestError("INVALID_EXPLORATION_SHARE", '"explorationBudgetShare" must be a number between 0 and 1.');
+    }
+    data.explorationBudgetShare = val;
+  }
+
+  if (record.customPositiveKeywords !== undefined) {
+    if (!Array.isArray(record.customPositiveKeywords)) {
+      throw new BadRequestError("INVALID_POSITIVE_KEYWORDS", '"customPositiveKeywords" must be an array of strings.');
+    }
+    data.customPositiveKeywords = record.customPositiveKeywords.map(String);
+  }
+
+  if (record.customNegativeKeywords !== undefined) {
+    if (!Array.isArray(record.customNegativeKeywords)) {
+      throw new BadRequestError("INVALID_NEGATIVE_KEYWORDS", '"customNegativeKeywords" must be an array of strings.');
+    }
+    data.customNegativeKeywords = record.customNegativeKeywords.map(String);
+  }
+
+  if (record.minLeadScore !== undefined) {
+    const val = Number(record.minLeadScore);
+    if (isNaN(val) || val < 0 || val > 100) {
+      throw new BadRequestError("INVALID_MIN_LEAD_SCORE", '"minLeadScore" must be a number between 0 and 100.');
+    }
+    data.minLeadScore = Math.round(val);
+  }
+
+  if (record.followUpEnabled !== undefined) {
+    if (typeof record.followUpEnabled !== "boolean") {
+      throw new BadRequestError("INVALID_FOLLOW_UP_ENABLED", '"followUpEnabled" must be a boolean.');
+    }
+    data.followUpEnabled = record.followUpEnabled;
+  }
+
+  if (record.followUpCount !== undefined) {
+    const count = record.followUpCount;
+    if (typeof count !== "number" || !Number.isInteger(count) || count < 0 || count > 2) {
+      throw new BadRequestError("INVALID_FOLLOW_UP_COUNT", '"followUpCount" must be an integer between 0 and 2.');
+    }
+    data.followUpCount = count;
+  }
+
+  if (record.followUpDelayDays !== undefined) {
+    if (
+      !Array.isArray(record.followUpDelayDays) ||
+      !record.followUpDelayDays.every((d) => typeof d === "number" && d > 0)
+    ) {
+      throw new BadRequestError("INVALID_FOLLOW_UP_DELAYS", '"followUpDelayDays" must be an array of positive numbers.');
+    }
+    data.followUpDelayDays = record.followUpDelayDays.map((d) => Math.trunc(d));
+  }
+
+  if (record.followUpTemplates !== undefined) {
+    if (
+      !Array.isArray(record.followUpTemplates) ||
+      !record.followUpTemplates.every((t) => typeof t === "string")
+    ) {
+      throw new BadRequestError("INVALID_FOLLOW_UP_TEMPLATES", '"followUpTemplates" must be an array of strings.');
+    }
+    data.followUpTemplates = record.followUpTemplates.map((t) => (t as string).trim());
+  }
+
+  // Cross-validation when followUpEnabled is true
+  const effectiveFollowUpEnabled =
+    data.followUpEnabled !== undefined ? data.followUpEnabled : (existing.followUpEnabled ?? false);
+  const effectiveFollowUpCount =
+    (data.followUpCount !== undefined ? data.followUpCount : existing.followUpCount) ?? 1;
+  const effectiveTemplates =
+    (data.followUpTemplates !== undefined ? data.followUpTemplates : existing.followUpTemplates) ?? [];
+
+  if (effectiveFollowUpEnabled && effectiveFollowUpCount > 0) {
+    if (!effectiveTemplates || effectiveTemplates.length < effectiveFollowUpCount) {
+      throw new BadRequestError(
+        "MISSING_FOLLOW_UP_TEMPLATES",
+        `At least ${effectiveFollowUpCount} follow-up template(s) must be provided when follow-ups are enabled.`,
+      );
+    }
+    if (
+      effectiveFollowUpCount === 2 &&
+      effectiveTemplates[0]?.trim().toLowerCase() === effectiveTemplates[1]?.trim().toLowerCase()
+    ) {
+      throw new BadRequestError(
+        "DUPLICATE_FOLLOW_UP_TEMPLATES",
+        "Follow-up templates must differ from each other.",
+      );
+    }
+  }
+
   // Reject unauthorized fields
   const allowedKeys = new Set([
     "name",
@@ -973,6 +1140,15 @@ export async function updateCampaign(
     "category",
     "leadLimit",
     "companyProfileId",
+    "autoOptimize",
+    "explorationBudgetShare",
+    "customPositiveKeywords",
+    "customNegativeKeywords",
+    "minLeadScore",
+    "followUpEnabled",
+    "followUpCount",
+    "followUpDelayDays",
+    "followUpTemplates",
   ]);
   const unexpectedKeys = Object.keys(record).filter((k) => !allowedKeys.has(k));
   if (unexpectedKeys.length > 0) {
@@ -1005,6 +1181,12 @@ export async function updateCampaign(
       location: true,
       category: true,
       leadLimit: true,
+      followUpEnabled: true,
+      followUpCount: true,
+      followUpDelayDays: true,
+      followUpTemplates: true,
+      autoOptimize: true,
+      explorationBudgetShare: true,
       companyProfileId: true,
       companyProfile: {
         select: {
@@ -1099,10 +1281,11 @@ export function parseCampaignScrapeRequest(body: unknown): CampaignScrapeInput {
       "At least one profile or username is required.",
     );
   }
-  if (rawList.length > MAX_PROFILE_BATCH_SIZE) {
+  const maxBatch = getMaxProfileBatchSize();
+  if (rawList.length > maxBatch) {
     throw new ScrapeInputError(
       "BATCH_TOO_LARGE",
-      `Too many profiles: ${rawList.length}. The maximum for this batch is ${MAX_PROFILE_BATCH_SIZE}.`,
+      `Too many profiles: ${rawList.length}. The maximum for this batch is ${maxBatch}.`,
     );
   }
 
@@ -1291,7 +1474,7 @@ export async function persistCampaignLeads(
   campaignId: string,
   profiles: LeadProfile[],
   maxTotalLimit?: number,
-  options?: { source?: string; scrapeJobId?: string | null; userId?: string },
+  options?: { source?: string; scrapeJobId?: string | null; userId?: string; isDryRun?: boolean },
 ): Promise<{
   persisted: number;
   newLeads: number;
@@ -1320,15 +1503,23 @@ export async function persistCampaignLeads(
   }
   const userId = options?.userId ?? campaign.userId;
   const source = options?.source ?? "apify";
+  const isDryRun = options?.isDryRun === true;
 
   return await prisma.$transaction(async (tx) => {
-    const currentTotal = await tx.lead.count({ where: { campaignId } });
+    // In real runs, dry-run leads never count towards currentTotal or limits
+    const currentTotal = await tx.lead.count({
+      where: {
+        campaignId,
+        ...(!isDryRun ? { isDryRun: false } : {}),
+      },
+    });
 
     // Per-user, cross-campaign deduplication: the same person is ONE lead.
     const classifications = await classifyProfiles({
       userId,
       campaignId,
       profiles,
+      isDryRun,
       client: tx,
     });
 
@@ -1341,6 +1532,7 @@ export async function persistCampaignLeads(
       classifications,
       maxTotalLimit,
       currentTotal,
+      isDryRun,
       extraCreateFields: (profile) =>
         buildLeadCreateExtras(profile as LeadProfile),
       extraEnrichFields: (profile) =>
@@ -1357,16 +1549,12 @@ export async function persistCampaignLeads(
   });
 }
 
-/** Rich (enrichment) fields shared by create and enrich, unchanged from before. */
+/** Rich (enrichment) fields shared by create and enrich. Images are explicitly null to drop unwanted actor fields. */
 function richProfileFields(profile: LeadProfile) {
   return {
-    profilePictureUrl:
-      profile.profilePictureUrl ??
-      profile.profilePicUrlHD ??
-      profile.profilePicUrl ??
-      null,
-    profilePicUrl: profile.profilePicUrl ?? null,
-    profilePicUrlHD: profile.profilePicUrlHD ?? null,
+    profilePictureUrl: null,
+    profilePicUrl: null,
+    profilePicUrlHD: null,
     isVerified: profile.isVerified ?? profile.verified ?? null,
     verified: profile.verified ?? profile.isVerified ?? null,
     isBusiness: profile.isBusiness ?? profile.isBusinessAccount ?? null,
@@ -1377,39 +1565,115 @@ function richProfileFields(profile: LeadProfile) {
     externalUrl: profile.externalUrl ?? profile.website ?? null,
     website: profile.website ?? null,
     websiteDomain: profile.websiteDomain ?? null,
+    location: profile.location ?? null,
     phone: profile.phone ?? null,
     phoneNormalized: profile.phoneNormalized ?? null,
     socialLink: profile.socialLink ?? null,
     socialPlatform: profile.socialPlatform ?? null,
     contactSource: profile.contactSource ?? null,
     availableChannels: profile.availableChannels ?? [],
+    gmapsPlaceId: profile.gmapsPlaceId ?? null,
+    rating: profile.rating ?? profile.gmapsRating ?? null,
+    reviewCount: profile.reviewCount ?? profile.gmapsReviews ?? null,
+    city: profile.city ?? profile.gmapsCity ?? null,
+    handleSource: profile.handleSource ?? null,
+    handleConfidence: profile.handleConfidence ?? null,
+    instagramUsername: profile.instagramUsername ?? profile.username ?? null,
+    qualityScore: profile.qualityScore ?? null,
+    qualityTier: profile.qualityTier ?? null,
+    scoreBreakdown: profile.scoreBreakdown ? (profile.scoreBreakdown as Prisma.InputJsonValue) : Prisma.DbNull,
+    scoreFlags: profile.scoreFlags ?? [],
+    isChain: profile.isChain ?? false,
+    isGroup: profile.isGroup ?? false,
+    groupKey: profile.groupKey ?? null,
+    isClaimed: profile.isClaimed ?? null,
+    lastPostAt: profile.lastPostAt ? toDate(profile.lastPostAt) : null,
+    scoreVersion: profile.scoreVersion ?? 1,
+    scrapeJobId: profile.scrapeJobId ?? null,
+    discoveryKeyword: profile.discoveryKeyword ?? null,
+    discoveryCity: profile.discoveryCity ?? profile.city ?? profile.gmapsCity ?? null,
+    acquisitionCostUsd: profile.acquisitionCostUsd != null ? profile.acquisitionCostUsd : null,
+    acquisitionCostBreakdown: profile.acquisitionCostBreakdown ? (profile.acquisitionCostBreakdown as Prisma.InputJsonValue) : Prisma.DbNull,
+    messageVariant: profile.messageVariant ?? null,
   };
+}
+
+/** Drops non-whitelisted profile-actor fields (posts, likes, comments, images, related profiles) before saving. */
+function sanitizeRawProfileData(
+  raw: Record<string, unknown> | null | undefined,
+): Prisma.InputJsonValue | Prisma.NullableJsonNullValueInput {
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+    return Prisma.DbNull;
+  }
+  const droppedActorKeys = new Set([
+    "posts",
+    "latestPosts",
+    "likes",
+    "comments",
+    "images",
+    "profilePicUrl",
+    "profilePicUrlHD",
+    "profilePictureUrl",
+    "relatedProfiles",
+    "taggedPosts",
+    "highlights",
+  ]);
+
+  const clean: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(raw)) {
+    if (!droppedActorKeys.has(k) && v !== undefined) {
+      clean[k] = v;
+    }
+  }
+  return clean as Prisma.InputJsonValue;
 }
 
 function buildLeadCreateExtras(
   profile: LeadProfile,
 ): Partial<Prisma.LeadUncheckedCreateInput> {
+  const aiAnalysisJson = profile.aiAnalysis
+    ? (profile.aiAnalysis as Prisma.InputJsonValue)
+    : (profile.rawProfileData && typeof profile.rawProfileData === "object" && "aiAnalysis" in profile.rawProfileData
+      ? (profile.rawProfileData.aiAnalysis as Prisma.InputJsonValue)
+      : Prisma.DbNull);
+
   return {
     ...richProfileFields(profile),
-    relatedProfiles: toJsonValue(profile.relatedProfiles),
-    latestPosts: toJsonValue(profile.latestPosts),
-    rawProfileData: Prisma.DbNull,
+    relatedProfiles: Prisma.DbNull,
+    latestPosts: Prisma.DbNull,
+    rawProfileData: sanitizeRawProfileData(profile.rawProfileData),
     scrapedAt: toDate(profile.scrapedAt),
     followers: profile.followers ?? profile.followersCount ?? null,
     following: profile.following ?? profile.followsCount ?? null,
+    leadScore: profile.leadScore ?? null,
+    aiAnalysis: aiAnalysisJson,
+    ...(profile.leadScore !== undefined && profile.leadScore !== null
+      ? { aiStatus: AiStatus.DONE, aiAnalyzedAt: new Date() }
+      : {}),
   } as Partial<Prisma.LeadUncheckedCreateInput>;
 }
 
 function buildLeadEnrichExtras(profile: LeadProfile): Prisma.LeadUpdateInput {
+  const aiAnalysisJson = profile.aiAnalysis
+    ? (profile.aiAnalysis as Prisma.InputJsonValue)
+    : (profile.rawProfileData && typeof profile.rawProfileData === "object" && "aiAnalysis" in profile.rawProfileData
+      ? (profile.rawProfileData.aiAnalysis as Prisma.InputJsonValue)
+      : Prisma.DbNull);
+
   return {
     ...richProfileFields(profile),
     followers: profile.followers ?? profile.followersCount ?? null,
     following: profile.following ?? profile.followsCount ?? null,
     postsCount: profile.postsCount ?? null,
-    relatedProfiles: toJsonValue(profile.relatedProfiles),
-    latestPosts: toJsonValue(profile.latestPosts),
-    rawProfileData: Prisma.DbNull,
+    relatedProfiles: Prisma.DbNull,
+    latestPosts: Prisma.DbNull,
+    rawProfileData: sanitizeRawProfileData(profile.rawProfileData),
     scrapedAt: toDate(profile.scrapedAt),
+    leadScore: profile.leadScore ?? null,
+    aiAnalysis: aiAnalysisJson,
+    ...(profile.leadScore !== undefined && profile.leadScore !== null
+      ? { aiStatus: AiStatus.DONE, aiAnalyzedAt: new Date() }
+      : {}),
   } as Prisma.LeadUpdateInput;
 }
 
@@ -1418,14 +1682,7 @@ function toDate(value: string): Date | null {
   return Number.isNaN(date.getTime()) ? null : date;
 }
 
-function toJsonValue(
-  value: unknown[] | null,
-): Prisma.InputJsonValue | typeof Prisma.DbNull {
-  if (value === null) {
-    return Prisma.DbNull;
-  }
-  return value as Prisma.InputJsonValue;
-}
+
 
 function describeError(error: unknown): string {
   const raw = error instanceof Error ? error.message : String(error);

@@ -137,9 +137,11 @@ export async function analyzeLead(input: {
       const meetsScore = analysis.leadScore >= lead.campaign.minLeadScore;
       const lowConfidenceNeedsMore =
         analysis.confidence === "low" && analysis.leadScore >= lead.campaign.minLeadScore + 10;
+      const qualityTierAllows = lead.qualityTier !== "D";
       const qualifies =
         analysis.isTargetMatch &&
         meetsScore &&
+        qualityTierAllows &&
         (analysis.confidence !== "low" || lowConfidenceNeedsMore);
       if (qualifies) {
         await transitionLeadStatus({

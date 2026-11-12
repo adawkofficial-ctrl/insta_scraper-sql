@@ -95,20 +95,57 @@ export function buildDiscoverySearchTerm(input: {
   );
 }
 
+// Generic intent nouns that carry no niche signal when standalone or trailing in multi-word phrases
+export const GENERIC_INTENT_STOPWORDS = new Set([
+  "products",
+  "product",
+  "practices",
+  "practice",
+  "services",
+  "service",
+  "patients",
+  "patient",
+  "clients",
+  "customers",
+  "recommend",
+  "sell",
+  "selling",
+  "offer",
+  "businesses",
+]);
+
+/**
+ * Strips pitch/purpose clauses from conversational intent strings before keyword extraction.
+ *
+ * Example:
+ * "dental clinics, dentists and cosmetic dentistry practices that could sell or recommend teeth whitening products to patients"
+ * -> "dental clinics, dentists and cosmetic dentistry practices"
+ */
+export function stripPitchClauses(query: string): string {
+  if (!query || typeof query !== "string") return "";
+
+  const PITCH_PATTERN =
+    /\b(?:that\s+(?:could|can|sell|offer)|who\s+(?:could|can|sell|offer)|which\s+(?:could|can|sell|offer)|to\s+(?:sell|recommend)|sell\s+or\s+recommend|looking\s+to|interested\s+in|for\s+selling)\b[^,;\n\r|/]*/gi;
+
+  return query.replace(PITCH_PATTERN, " ").replace(/\s+/g, " ").trim();
+}
+
 /**
  * Splits campaign query / intent into distinct keyword phrases.
  * Delimiters can be:
- *   - commas (,), semicolons (;), newlines (\n), pipes (|)
- *   - conjunctions: " and ", " or ", " & "
- * If no delimiters exist, and the string has > 3 words, each individual word/token
- * is treated as a keyword. If <= 3 words, it's treated as a single cohesive phrase.
+ *   - commas (,), semicolons (;), newlines (\n), pipes (|), slashes (/)
+ *   - conjunctions: " and ", " or ", " & " (always split)
+ * Strips pitch clauses, trims generic trailing nouns, deduplicates, and caps at 6 keywords.
  */
 export function extractDiscoveryKeywords(input: {
   query: string;
   category?: string | null;
 }): string[] {
   const { query, category } = input;
-  if (!query || typeof query !== "string") {
+  const rawQuery = typeof query === "string" ? query : "";
+  const rawCat = typeof category === "string" ? category : "";
+
+  if (!rawQuery.trim() && !rawCat.trim()) {
     return [];
   }
 
@@ -117,7 +154,7 @@ export function extractDiscoveryKeywords(input: {
 
   const addKeyword = (kw: string) => {
     const clean = sanitizeSearchTerm(kw);
-    const words = clean.split(/\s+/).filter(Boolean);
+    let words = clean.split(/\s+/).filter(Boolean);
     while (words.length > 0 && SEARCH_STOPWORDS.has(words[0].toLowerCase())) {
       words.shift();
     }
@@ -127,6 +164,36 @@ export function extractDiscoveryKeywords(input: {
     ) {
       words.pop();
     }
+
+    // Strip trailing generic intent noun if phrase > 2 words (e.g. "cosmetic dentistry practices" -> "cosmetic dentistry")
+    // Keep 2-word phrases intact (e.g. "dental practice")
+    if (words.length > 2) {
+      const lastWordLower = words[words.length - 1].toLowerCase();
+      if (
+        lastWordLower === "practices" ||
+        lastWordLower === "practice" ||
+        lastWordLower === "products" ||
+        lastWordLower === "product" ||
+        lastWordLower === "services" ||
+        lastWordLower === "service" ||
+        lastWordLower === "patients" ||
+        lastWordLower === "patient" ||
+        lastWordLower === "businesses"
+      ) {
+        words.pop();
+      }
+    }
+
+    // If standalone word is generic intent stopword (e.g. "practice", "products", "patients"), drop it
+    if (words.length === 1 && GENERIC_INTENT_STOPWORDS.has(words[0].toLowerCase())) {
+      return;
+    }
+
+    // Cap each keyword at 4 words
+    if (words.length > 4) {
+      words = words.slice(0, 4);
+    }
+
     const phrase = words.join(" ").trim();
     if (phrase.length > 0) {
       const key = phrase.toLowerCase();
@@ -137,53 +204,34 @@ export function extractDiscoveryKeywords(input: {
     }
   };
 
-  const hasPunctDelimiters = /[,;\n\r|/]/.test(query);
+  // 1. Strip pitch/purpose clauses
+  const cleanedQuery = stripPitchClauses(rawQuery);
 
-  if (hasPunctDelimiters) {
-    const parts = query.split(/[,;\n\r|/]+/);
-    for (const part of parts) {
-      const subparts = part.split(/\s+(?:and|&)\s+/i);
-      for (const sp of subparts) {
-        addKeyword(sp);
-      }
-    }
-  } else {
-    const hasConjunctions = /\s+(?:and|or|&)\s+/i.test(query);
-    if (hasConjunctions) {
-      const parts = query.split(/\s+(?:and|or|&)\s+/i);
-      for (const part of parts) {
-        addKeyword(part);
-      }
-    } else {
-      const clean = sanitizeSearchTerm(query);
-      const words = clean.split(/\s+/).filter(Boolean);
-      if (words.length <= 3) {
-        addKeyword(clean);
-      } else {
-        for (const token of tokenizeSearchQuery(query)) {
-          addKeyword(token);
-        }
+  // 2. Split on punctuation delimiters: , ; \n | /
+  const punctParts = cleanedQuery.split(/[,;\n\r|/]+/);
+
+  // 3. Split each part on conjunctions: " and ", " & ", " or "
+  for (const part of punctParts) {
+    const subparts = part.split(/\s+(?:and|&|or)\s+/i);
+    for (const sp of subparts) {
+      const trimmed = sp.trim();
+      if (trimmed.length > 0) {
+        addKeyword(trimmed);
       }
     }
   }
 
+  // 4. Include category if provided and not already seen, keeping all query keywords
   if (category && typeof category === "string" && category.trim().length > 0) {
     const cleanCat = sanitizeSearchTerm(category);
     const catLower = cleanCat.toLowerCase();
-    const alreadyCovered = keywords.some((k) => {
-      const kLower = k.toLowerCase();
-      return (
-        kLower === catLower ||
-        kLower.includes(catLower) ||
-        catLower.includes(kLower)
-      );
-    });
-    if (!alreadyCovered && cleanCat.length > 0 && !seen.has(catLower)) {
+    if (cleanCat.length > 0 && !seen.has(catLower)) {
       addKeyword(cleanCat);
     }
   }
 
-  return keywords;
+  // 5. Cap total keywords at 6
+  return keywords.slice(0, 6);
 }
 
 /**
@@ -198,14 +246,16 @@ export function buildPerKeywordSearchQueries(input: {
   query: string;
   category?: string | null;
   location?: string | null;
+  appendLocation?: boolean;
 }): string[] {
   const keywords = extractDiscoveryKeywords({
     query: input.query,
     category: input.category,
   });
 
+  const shouldAppendLocation = input.appendLocation !== false;
   const location =
-    typeof input.location === "string" && input.location.trim().length > 0
+    shouldAppendLocation && typeof input.location === "string" && input.location.trim().length > 0
       ? sanitizeSearchTerm(input.location)
       : null;
 

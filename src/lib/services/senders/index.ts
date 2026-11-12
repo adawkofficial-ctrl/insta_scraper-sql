@@ -1,6 +1,7 @@
 export {
   cancelSenderLogin,
   createSenderAccount,
+  deleteSenderAccount,
   diagnoseSenderDm,
   disconnectSenderAccount,
   findConnectedSenderForDispatch,
@@ -11,6 +12,9 @@ export {
   connectSenderWithSessionId,
   toSenderAccountDto,
   verifySenderAccount,
+  updateSenderSettings,
+  pauseSenderAccount,
+  resumeSenderAccount,
   type ConnectSenderResult,
   type SenderAccountDto,
   type SenderDispatchResolution,

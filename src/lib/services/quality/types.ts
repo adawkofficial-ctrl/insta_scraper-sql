@@ -77,7 +77,7 @@ export type QualityContext = {
   lead: {
     id: string;
     campaignId: string;
-    username: string;
+    username: string | null;
     fullName: string | null;
     biography: string | null;
     businessCategoryName: string | null;

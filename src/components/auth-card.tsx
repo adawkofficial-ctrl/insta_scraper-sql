@@ -2,8 +2,7 @@
 
 import { useState, useEffect } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
-import Link from "next/link";
-import { loginUser, registerUser, getMe } from "@/lib/api/auth";
+import { loginUser, getMe } from "@/lib/api/auth";
 
 export function getSafeRedirect(rawRedirect: string | null): string {
   if (!rawRedirect) return "/";
@@ -32,28 +31,36 @@ type AuthCardProps = {
   initialMode?: "login" | "register";
 };
 
-export function AuthCard({ initialMode = "login" }: AuthCardProps) {
+export function AuthCard({ initialMode: _initialMode }: AuthCardProps = {}) {
   const router = useRouter();
   const searchParams = useSearchParams();
 
-  const queryMode = searchParams.get("mode") || searchParams.get("tab");
-  const defaultMode =
-    queryMode === "register" || initialMode === "register" ? "register" : "login";
-
-  const [mode, setMode] = useState<"login" | "register">(defaultMode);
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-  const [name, setName] = useState("");
-  const [confirmPassword, setConfirmPassword] = useState("");
-
   const [showPassword, setShowPassword] = useState(false);
-  const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [defaultAdmin, setDefaultAdmin] = useState<{ email: string; password?: string } | null>(null);
 
   const redirectPath = getSafeRedirect(searchParams.get("redirect"));
   const isDevMode = process.env.NODE_ENV !== "production";
+
+  // Fetch configured default admin info for dev helper
+  useEffect(() => {
+    let isMounted = true;
+    fetch("/api/auth/default-admin")
+      .then((res) => (res.ok ? res.json() : null))
+      .then((data) => {
+        if (isMounted && data?.email) {
+          setDefaultAdmin(data);
+        }
+      })
+      .catch(() => {});
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   // Check if user is already authenticated
   useEffect(() => {
@@ -68,11 +75,6 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
     };
   }, [router, redirectPath]);
 
-  const handleModeChange = (newMode: "login" | "register") => {
-    setMode(newMode);
-    setError(null);
-  };
-
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError(null);
@@ -83,30 +85,15 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
       return;
     }
 
-    if (mode === "register") {
-      if (password.length < 8) {
-        setError("Password must be at least 8 characters long.");
-        return;
-      }
-      if (password !== confirmPassword) {
-        setError("Passwords do not match. Please verify and try again.");
-        return;
-      }
+    if (!password) {
+      setError("Please enter your password.");
+      return;
     }
 
     setLoading(true);
 
     try {
-      if (mode === "login") {
-        await loginUser({ email: trimmedEmail, password });
-      } else {
-        await registerUser({
-          email: trimmedEmail,
-          password,
-          name: name.trim() || undefined,
-        });
-      }
-
+      await loginUser({ email: trimmedEmail, password });
       // Hard redirect / full navigation ensures auth state and cookies are fresh
       window.location.href = redirectPath;
     } catch (err: unknown) {
@@ -143,46 +130,12 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
             Insta<span className="text-rose-500">Scraper</span>
           </h1>
           <p className="mt-2 text-sm text-zinc-400">
-            {mode === "login"
-              ? "Sign in to manage your campaigns, outreach, and leads"
-              : "Create a secure account to power your Instagram engine"}
+            Sign in to manage your campaigns, outreach, and leads
           </p>
         </div>
 
         {/* Card Container */}
         <div className="rounded-2xl border border-zinc-800/80 bg-zinc-900/60 p-8 shadow-xl backdrop-blur-sm">
-          {/* Mode Switcher Tabs */}
-          <div className="mb-6 flex rounded-lg bg-zinc-800/60 p-1" role="tablist">
-            <button
-              type="button"
-              role="tab"
-              aria-selected={mode === "login"}
-              id="tab-login"
-              onClick={() => handleModeChange("login")}
-              className={`flex-1 rounded-md py-2 text-center text-sm font-medium transition ${
-                mode === "login"
-                  ? "bg-rose-600 text-white shadow-sm"
-                  : "text-zinc-400 hover:text-zinc-200"
-              }`}
-            >
-              Sign In
-            </button>
-            <button
-              type="button"
-              role="tab"
-              aria-selected={mode === "register"}
-              id="tab-register"
-              onClick={() => handleModeChange("register")}
-              className={`flex-1 rounded-md py-2 text-center text-sm font-medium transition ${
-                mode === "register"
-                  ? "bg-rose-600 text-white shadow-sm"
-                  : "text-zinc-400 hover:text-zinc-200"
-              }`}
-            >
-              Create Account
-            </button>
-          </div>
-
           {/* Error Message */}
           {error && (
             <div
@@ -215,27 +168,6 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
           )}
 
           <form onSubmit={handleSubmit} className="space-y-4">
-            {mode === "register" && (
-              <div>
-                <label
-                  htmlFor="name"
-                  className="block text-xs font-semibold uppercase tracking-wider text-zinc-400"
-                >
-                  Full Name (Optional)
-                </label>
-                <input
-                  id="name"
-                  name="name"
-                  type="text"
-                  autoComplete="name"
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder="e.g. Alex Rivera"
-                  className="mt-1.5 block w-full rounded-lg border border-zinc-700/80 bg-zinc-950 px-3.5 py-2.5 text-sm text-white placeholder-zinc-500 focus:border-rose-500 focus:outline-none focus:ring-1 focus:ring-rose-500"
-                />
-              </div>
-            )}
-
             <div>
               <label
                 htmlFor="email"
@@ -251,7 +183,7 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
                 autoComplete="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder="you@domain.com"
+                placeholder={defaultAdmin?.email || "admin@instascraper.com"}
                 className="mt-1.5 block w-full rounded-lg border border-zinc-700/80 bg-zinc-950 px-3.5 py-2.5 text-sm text-white placeholder-zinc-500 focus:border-rose-500 focus:outline-none focus:ring-1 focus:ring-rose-500"
               />
             </div>
@@ -264,9 +196,6 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
                 >
                   Password
                 </label>
-                {mode === "register" && (
-                  <span className="text-[11px] text-zinc-500">Min. 8 characters</span>
-                )}
               </div>
               <div className="relative mt-1.5">
                 <input
@@ -274,10 +203,10 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
                   name="password"
                   type={showPassword ? "text" : "password"}
                   required
-                  autoComplete={mode === "register" ? "new-password" : "current-password"}
+                  autoComplete="current-password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  placeholder={mode === "register" ? "At least 8 characters" : "••••••••"}
+                  placeholder="••••••••"
                   className="block w-full rounded-lg border border-zinc-700/80 bg-zinc-950 px-3.5 py-2.5 pr-10 text-sm text-white placeholder-zinc-500 focus:border-rose-500 focus:outline-none focus:ring-1 focus:ring-rose-500"
                 />
                 <button
@@ -301,48 +230,6 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
               </div>
             </div>
 
-            {mode === "register" && (
-              <div>
-                <label
-                  htmlFor="confirmPassword"
-                  className="block text-xs font-semibold uppercase tracking-wider text-zinc-400"
-                >
-                  Confirm Password
-                </label>
-                <div className="relative mt-1.5">
-                  <input
-                    id="confirmPassword"
-                    name="confirmPassword"
-                    type={showConfirmPassword ? "text" : "password"}
-                    required
-                    autoComplete="new-password"
-                    value={confirmPassword}
-                    onChange={(e) => setConfirmPassword(e.target.value)}
-                    placeholder="Repeat your password"
-                    className="block w-full rounded-lg border border-zinc-700/80 bg-zinc-950 px-3.5 py-2.5 pr-10 text-sm text-white placeholder-zinc-500 focus:border-rose-500 focus:outline-none focus:ring-1 focus:ring-rose-500"
-                  />
-                  <button
-                    type="button"
-                    onClick={() => setShowConfirmPassword(!showConfirmPassword)}
-                    className="absolute inset-y-0 right-0 flex items-center pr-3 text-zinc-400 hover:text-zinc-200"
-                    tabIndex={-1}
-                    aria-label={showConfirmPassword ? "Hide password" : "Show password"}
-                  >
-                    {showConfirmPassword ? (
-                      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l18 18" />
-                      </svg>
-                    ) : (
-                      <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z" />
-                      </svg>
-                    )}
-                  </button>
-                </div>
-              </div>
-            )}
-
             <button
               type="submit"
               id="submit-auth-btn"
@@ -352,63 +239,27 @@ export function AuthCard({ initialMode = "login" }: AuthCardProps) {
               {loading ? (
                 <div className="flex items-center gap-2">
                   <div className="h-4 w-4 animate-spin rounded-full border-2 border-white border-t-transparent" />
-                  <span>{mode === "login" ? "Signing In..." : "Creating Account..."}</span>
+                  <span>Signing In...</span>
                 </div>
-              ) : mode === "login" ? (
-                "Sign In"
               ) : (
-                "Create Account"
+                "Sign In"
               )}
             </button>
           </form>
 
-          {/* Quick link navigation */}
-          <div className="mt-5 text-center text-xs text-zinc-400">
-            {mode === "login" ? (
-              <p>
-                Don&apos;t have an account?{" "}
-                <Link
-                  href="/register"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    handleModeChange("register");
-                  }}
-                  className="font-medium text-rose-400 hover:text-rose-300 hover:underline"
-                >
-                  Create one now
-                </Link>
-              </p>
-            ) : (
-              <p>
-                Already have an account?{" "}
-                <Link
-                  href="/login"
-                  onClick={(e) => {
-                    e.preventDefault();
-                    handleModeChange("login");
-                  }}
-                  className="font-medium text-rose-400 hover:text-rose-300 hover:underline"
-                >
-                  Sign in instead
-                </Link>
-              </p>
-            )}
-          </div>
-
-          {/* Development Demo Quick Fill (Visible ONLY in development environment) */}
+          {/* Quick Fill Helper for Demo / Dev */}
           {isDevMode && (
             <div className="mt-6 border-t border-zinc-800 pt-4 text-center text-xs text-zinc-500">
-              <p>Development Demo User:</p>
+              <p>Default Admin Account:</p>
               <button
                 type="button"
                 onClick={() => {
-                  setMode("login");
-                  setEmail("dev@instascraper.local");
-                  setPassword("devpassword123");
+                  setEmail(defaultAdmin?.email || "admin@instascraper.com");
+                  setPassword(defaultAdmin?.password || "AdminPass2026!Secure");
                 }}
                 className="mt-1 font-mono text-xs text-rose-400 hover:text-rose-300 hover:underline"
               >
-                dev@instascraper.local (auto-fill)
+                {defaultAdmin?.email || "admin@instascraper.com"} (auto-fill)
               </button>
             </div>
           )}

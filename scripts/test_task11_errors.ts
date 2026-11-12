@@ -20,7 +20,7 @@ import {
 } from "../src/lib/services/errors";
 import { sanitizeMessage } from "../src/lib/services/errors/sanitize";
 
-const BASE_URL = process.env.TEST_BASE_URL || "http://localhost:3001";
+const BASE_URL = process.env.TEST_BASE_URL || "http://localhost:3005";
 const COOKIE_NAME = "insta_session";
 
 let passed = 0;
@@ -219,7 +219,18 @@ async function main() {
     const secretPatterns = ["apify_api_", "postgresql://", "insta_session", "E:\\", "sk-", "AUTH_SECRET"];
     check(secretPatterns.every((p) => !badText.includes(p)), "error response contains no secrets/paths");
 
-    console.log("\n[HTTP] Manual retry: new attempt + immutable history + IDOR");
+    await prisma.instagramSenderAccount.create({
+      data: {
+        userId: a.userId,
+        username: `t11_sender_${Date.now()}`,
+        status: "CONNECTED",
+        connectionMethod: "PLAYWRIGHT",
+        sessionPath: "data/instagram-sessions/t11",
+        workingHoursStart: 0,
+        workingHoursEnd: 24,
+      },
+    });
+
     const template = await prisma.messageTemplate.create({
       data: { campaignId: campaign.id, name: "T11", body: "Hi {{firstName}}" },
     });

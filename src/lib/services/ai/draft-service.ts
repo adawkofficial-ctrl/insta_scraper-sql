@@ -5,7 +5,6 @@ import { AiStatus, DraftStatus, LeadStatus } from "@/generated/prisma/enums";
 import {
   BadRequestError,
   CompanyProfileIncompleteError,
-  DncSuppressedError,
   NotFoundError,
 } from "@/lib/errors";
 import { logger } from "@/lib/logger";
@@ -16,6 +15,7 @@ import {
   type CompanyProfileDto,
 } from "../company-profile";
 import { generateStructured, GeminiApiError } from "./gemini";
+import { isDryRunLead } from "@/lib/services/messaging";
 import {
   DRAFT_PROMPT_VERSION,
   DRAFT_RESPONSE_SCHEMA,
@@ -100,11 +100,11 @@ export async function generateDraft(input: {
   }
   const company = toCompanyProfileDto(profileRecord!);
 
-  if (lead.status === LeadStatus.DO_NOT_CONTACT) {
-    throw new DncSuppressedError("Cannot draft for a lead marked Do Not Contact.");
-  }
   if (lead.duplicateOfLeadId) {
     throw new BadRequestError("DUPLICATE_LEAD", "Cannot draft for a duplicate-linked lead.");
+  }
+  if (lead.isDryRun || isDryRunLead(lead)) {
+    throw new BadRequestError("DRY_RUN_LEAD_DRAFT_BLOCKED", "Cannot generate message draft for a dry-run or mock lead.");
   }
   if (lead.aiStatus !== AiStatus.DONE) {
     throw new BadRequestError("LEAD_NOT_ANALYZED", "Analyze the lead before generating a draft.");

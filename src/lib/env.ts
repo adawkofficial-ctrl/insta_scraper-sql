@@ -1,4 +1,48 @@
+import fs from "fs";
+import path from "path";
+
+let lastEnvMtime = (() => {
+  try {
+    if (typeof process === "undefined" || typeof process.cwd !== "function") return 0;
+    const envPath = path.resolve(process.cwd(), ".env");
+    return fs.existsSync(envPath) ? fs.statSync(envPath).mtimeMs : 0;
+  } catch {
+    return 0;
+  }
+})();
+
+function syncEnvFromDisk(): void {
+  try {
+    if (typeof process === "undefined" || typeof process.cwd !== "function") return;
+    const envPath = path.resolve(process.cwd(), ".env");
+    if (!fs.existsSync(envPath)) return;
+    const stat = fs.statSync(envPath);
+    if (stat.mtimeMs !== lastEnvMtime) {
+      lastEnvMtime = stat.mtimeMs;
+      const content = fs.readFileSync(envPath, "utf-8");
+      for (const rawLine of content.split(/\r?\n/)) {
+        const line = rawLine.trim();
+        if (!line || line.startsWith("#")) continue;
+        const eqIdx = line.indexOf("=");
+        if (eqIdx === -1) continue;
+        const key = line.slice(0, eqIdx).trim();
+        let val = line.slice(eqIdx + 1).trim();
+        if (
+          (val.startsWith('"') && val.endsWith('"')) ||
+          (val.startsWith("'") && val.endsWith("'"))
+        ) {
+          val = val.slice(1, -1);
+        }
+        process.env[key] = val;
+      }
+    }
+  } catch {
+    // Non-fatal if filesystem is inaccessible
+  }
+}
+
 export function getServerEnv(name: string): string | undefined {
+  syncEnvFromDisk();
   const value = process.env[name];
   if (value === undefined) {
     return undefined;
@@ -28,6 +72,95 @@ export function getScraperProviderName(): ScraperProviderType {
     );
   }
   return normalized;
+}
+
+/**
+ * Discovery provider switch.
+ *
+ * Defaults to `instagram_all_in_one` (apify/instagram-scraper only) so the
+ * disabled Maps/profile-scraper actors are never called unless explicitly
+ * selected. `DISCOVERY_PROVIDER=google_maps` restores the previous behaviour.
+ */
+export type DiscoveryProviderName =
+  | "instagram_all_in_one"
+  | "google_maps"
+  | "instagram_search"
+  | "instagram_places"
+  | "hybrid";
+
+const VALID_DISCOVERY_PROVIDERS: DiscoveryProviderName[] = [
+  "instagram_all_in_one",
+  "google_maps",
+  "instagram_search",
+  "instagram_places",
+  "hybrid",
+];
+
+export function getDiscoveryProviderName(): DiscoveryProviderName {
+  const raw = getServerEnv("DISCOVERY_PROVIDER");
+  if (!raw) {
+    return "instagram_all_in_one";
+  }
+  const normalized = raw.toLowerCase();
+  if (!VALID_DISCOVERY_PROVIDERS.includes(normalized as DiscoveryProviderName)) {
+    return "instagram_all_in_one";
+  }
+  return normalized as DiscoveryProviderName;
+}
+
+/**
+ * Profile enrichment actor switch.
+ *
+ * - `instagram_scraper` (default): apify/instagram-scraper details mode.
+ * - `instagram_profile_scraper`: legacy apify/instagram-profile-scraper.
+ */
+export type EnrichmentProviderName = "instagram_scraper" | "instagram_profile_scraper";
+
+export function getEnrichmentProviderName(): EnrichmentProviderName {
+  const raw = getServerEnv("ENRICHMENT_PROVIDER");
+  if (!raw) {
+    return "instagram_scraper";
+  }
+  const normalized = raw.toLowerCase();
+  if (normalized !== "instagram_scraper" && normalized !== "instagram_profile_scraper") {
+    return "instagram_scraper";
+  }
+  return normalized;
+}
+
+export function getIgScraperCostPerResultUsd(): number {
+  const parsed = Number.parseFloat(getServerEnv("IG_SCRAPER_COST_PER_RESULT_USD") ?? "");
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0.0027;
+}
+
+export function getIgSearchLimit(): number {
+  const parsed = Number.parseInt(getServerEnv("IG_SEARCH_LIMIT") ?? "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.min(parsed, 250) : 10;
+}
+
+export function getIgMaxQueriesPerJob(): number {
+  const parsed = Number.parseInt(getServerEnv("IG_MAX_QUERIES_PER_JOB") ?? "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 6;
+}
+
+export function getIgMaxResultsPerJob(): number {
+  const parsed = Number.parseInt(getServerEnv("IG_MAX_RESULTS_PER_JOB") ?? "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 60;
+}
+
+export function getDiscoveryMaxJobUsd(): number {
+  const parsed = Number.parseFloat(getServerEnv("DISCOVERY_MAX_JOB_USD") ?? "");
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 0.30;
+}
+
+/**
+ * Master switch for Apify spend guardrails (monthly/report/dashboard limits).
+ * Set APIFY_COST_LIMITS_ENABLED=false to disable monthly, per-run, per-job and
+ * pre-run ceiling enforcement. The APIFY_ENABLED kill switch still applies.
+ */
+export function areApifyCostLimitsEnabled(env: NodeJS.ProcessEnv = process.env): boolean {
+  const raw = (env.APIFY_COST_LIMITS_ENABLED ?? "").trim().toLowerCase();
+  return raw !== "false" && raw !== "0";
 }
 
 export type SpariorConfig = {
@@ -152,7 +285,7 @@ export function getUnipileConfig(): UnipileConfig {
 
   return {
     apiKey,
-    dsn: dsn || rootUrl,
+    dsn: rootUrl,
     baseUrl,
     isConfigured: Boolean(apiKey && (dsn || customBaseUrl)),
   };
@@ -167,3 +300,18 @@ export function getNotificationHighScoreThreshold(): number {
   const raw = Number(getServerEnv("NOTIFICATION_HIGH_SCORE_THRESHOLD") ?? "85");
   return Number.isFinite(raw) && raw >= 0 && raw <= 100 ? Math.trunc(raw) : 85;
 }
+
+export type AdminCredentials = {
+  email: string;
+  password: string;
+};
+
+export function getAdminCredentials(): AdminCredentials {
+  const email = getServerEnv("ADMIN_EMAIL") ?? "admin@instascraper.com";
+  const password = getServerEnv("ADMIN_PASSWORD") ?? "AdminPass2026!Secure";
+  return {
+    email: email.trim().toLowerCase(),
+    password: password.trim(),
+  };
+}
+

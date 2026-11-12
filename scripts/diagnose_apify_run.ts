@@ -1,6 +1,9 @@
 import "./preload_server_only.cjs";
 import "dotenv/config";
+import { assertScriptSafeForApify } from "../src/lib/services/scraper/apify-cost-guard";
 import { getApifyClient } from "../src/lib/services/scraper/apify-client";
+
+assertScriptSafeForApify();
 import {
   evaluateProfileRelevance,
   decideRelevance,

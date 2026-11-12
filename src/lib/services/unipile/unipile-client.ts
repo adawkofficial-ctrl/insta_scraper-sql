@@ -9,6 +9,47 @@ export type UnipileAccountSource = {
   [key: string]: unknown;
 };
 
+/**
+ * Validates whether Unipile mock mode is allowed.
+ * Security rule: MOCK_UNIPILE is ONLY honored when NODE_ENV === "test".
+ * In any other environment, it is strictly ignored.
+ * If set in production, logs a loud security warning.
+ */
+export function isUnipileMockMode(): boolean {
+  if (process.env.NODE_ENV !== "test") {
+    if (process.env.NODE_ENV === "production" && process.env.MOCK_UNIPILE === "1") {
+      logger.error("[SECURITY] MOCK_UNIPILE=1 detected in production environment! Mock mode is strictly prohibited in production.");
+    }
+    return false;
+  }
+  return process.env.MOCK_UNIPILE === "1";
+}
+
+/**
+ * Configurable timeout for Unipile read/metadata operations (default: 15s in prod, 5s in test).
+ */
+export function getUnipileReadTimeoutMs(): number {
+  if (process.env.NODE_ENV === "test" && !process.env.UNIPILE_READ_TIMEOUT_MS) {
+    return 5000;
+  }
+  const envVal = process.env.UNIPILE_READ_TIMEOUT_MS;
+  const parsed = envVal ? Number.parseInt(envVal, 10) : NaN;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 15000;
+}
+
+/**
+ * Configurable timeout for Unipile message dispatch operations (default: 45s in prod, 5s in test).
+ */
+export function getUnipileSendTimeoutMs(): number {
+  if (process.env.NODE_ENV === "test" && !process.env.UNIPILE_SEND_TIMEOUT_MS) {
+    return 5000;
+  }
+  const envVal = process.env.UNIPILE_SEND_TIMEOUT_MS;
+  const parsed = envVal ? Number.parseInt(envVal, 10) : NaN;
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : 45000;
+}
+
+
 export type UnipileAccount = {
   id: string;
   type?: string;
@@ -103,15 +144,22 @@ export type UnipileSendMessageResult =
   | { success: false; code: string; message: string };
 
 export class UnipileClient {
-  private config: UnipileConfig;
+  private customConfig?: Partial<UnipileConfig>;
 
   constructor(customConfig?: Partial<UnipileConfig>) {
+    this.customConfig = customConfig;
+  }
+
+  get config(): UnipileConfig {
     const base = getUnipileConfig();
-    this.config = {
-      apiKey: customConfig?.apiKey ?? base.apiKey,
-      dsn: customConfig?.dsn ?? base.dsn,
-      baseUrl: customConfig?.baseUrl ?? base.baseUrl,
-      isConfigured: customConfig?.apiKey !== undefined ? Boolean(customConfig.apiKey) : base.isConfigured,
+    return {
+      apiKey: this.customConfig?.apiKey ?? base.apiKey,
+      dsn: this.customConfig?.dsn ?? base.dsn,
+      baseUrl: this.customConfig?.baseUrl ?? base.baseUrl,
+      isConfigured:
+        this.customConfig?.apiKey !== undefined
+          ? Boolean(this.customConfig.apiKey)
+          : base.isConfigured,
     };
   }
 
@@ -144,7 +192,7 @@ export class UnipileClient {
    * Retrieves all accounts linked to the Unipile instance.
    */
   async getAccounts(): Promise<UnipileAccount[]> {
-    if (!this.isConfigured) {
+    if (!this.isConfigured || isUnipileMockMode()) {
       return [];
     }
 
@@ -153,6 +201,7 @@ export class UnipileClient {
       const res = await fetch(url, {
         method: "GET",
         headers: this.headers,
+        signal: AbortSignal.timeout(getUnipileReadTimeoutMs()),
         next: { revalidate: 0 },
       });
 
@@ -180,13 +229,14 @@ export class UnipileClient {
    * Retrieves single account by ID.
    */
   async getAccount(accountId: string): Promise<UnipileAccount | null> {
-    if (!this.isConfigured || !accountId) return null;
+    if (!this.isConfigured || !accountId || isUnipileMockMode()) return null;
 
     const url = `${this.config.baseUrl}/accounts/${encodeURIComponent(accountId)}`;
     try {
       const res = await fetch(url, {
         method: "GET",
         headers: this.headers,
+        signal: AbortSignal.timeout(getUnipileReadTimeoutMs()),
         next: { revalidate: 0 },
       });
 
@@ -198,12 +248,39 @@ export class UnipileClient {
   }
 
   /**
+   * Deletes an account from Unipile.
+   */
+  async deleteAccount(accountId: string): Promise<boolean> {
+    if (!this.isConfigured || !accountId || isUnipileMockMode()) return true;
+
+    const url = `${this.config.baseUrl}/accounts/${encodeURIComponent(accountId)}`;
+    try {
+      const res = await fetch(url, {
+        method: "DELETE",
+        headers: this.headers,
+        signal: AbortSignal.timeout(getUnipileReadTimeoutMs()),
+      });
+      return res.ok;
+    } catch (err) {
+      logger.warn("[UNIPILE] failed to delete account", {
+        accountId,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      return false;
+    }
+  }
+
+  /**
    * Connects an Instagram account using session cookies (bypasses Instagram datacenter IP blocks).
    */
   async connectWithSessionId(
     sessionId: string,
     userAgent?: string,
   ): Promise<{ success: true; accountId: string } | { success: false; message: string }> {
+    if (isUnipileMockMode()) {
+      return { success: true, accountId: `mock_unipile_${Date.now()}` };
+    }
+
     if (!this.isConfigured) {
       return {
         success: false,
@@ -226,6 +303,7 @@ export class UnipileClient {
       const res = await fetch(url, {
         method: "POST",
         headers: this.headers,
+        signal: AbortSignal.timeout(getUnipileReadTimeoutMs()),
         body: JSON.stringify(payload),
       });
 
@@ -284,21 +362,39 @@ export class UnipileClient {
    */
 
   async createHostedAuthLink(options: UnipileHostedLinkOptions = {}): Promise<{ url: string } | null> {
+    if (isUnipileMockMode()) {
+      return { url: "https://mock.unipile.com/hosted/mock_auth_link" };
+    }
+
     if (!this.isConfigured) {
       throw new Error("Unipile is not configured. Missing UNIPILE_API_KEY or UNIPILE_DSN.");
     }
 
     const url = `${this.config.baseUrl}/hosted/accounts/link`;
-    const payload: Record<string, unknown> = {
-      type: options.type ?? "create",
-      providers: options.providers ?? ["INSTAGRAM"],
-      api_url: this.config.baseUrl.replace(/\/api\/v1\/?$/, ""),
-      expiresOn: new Date(Date.now() + 60 * 60 * 1000).toISOString(),
-    };
+    const expiry = new Date(Date.now() + 60 * 60 * 1000).toISOString();
+    const apiUrl = this.config.baseUrl.replace(/\/api\/v1\/?$/, "");
+    const reconnectTarget =
+      options.existingAccountId ||
+      (options as Record<string, unknown>).reconnectAccount ||
+      (options as Record<string, unknown>).reconnect_account;
 
-    if (options.existingAccountId) {
-      payload.account_id = options.existingAccountId;
+    let payload: Record<string, unknown>;
+    if (options.type === "reconnect" && reconnectTarget) {
+      payload = {
+        type: "reconnect",
+        reconnect_account: String(reconnectTarget).trim(),
+        api_url: apiUrl,
+        expiresOn: expiry,
+      };
+    } else {
+      payload = {
+        type: "create",
+        providers: options.providers ?? ["INSTAGRAM"],
+        api_url: apiUrl,
+        expiresOn: expiry,
+      };
     }
+
     if (options.successRedirectUrl) {
       payload.success_redirect_url = options.successRedirectUrl;
     }
@@ -316,6 +412,7 @@ export class UnipileClient {
       const res = await fetch(url, {
         method: "POST",
         headers: this.headers,
+        signal: AbortSignal.timeout(getUnipileReadTimeoutMs()),
         body: JSON.stringify(payload),
       });
 
@@ -324,7 +421,14 @@ export class UnipileClient {
         logger.error("[UNIPILE] failed to generate hosted auth link", {
           status: res.status,
           response: errorText,
+          dsn: this.config.dsn,
+          baseUrl: this.config.baseUrl,
         });
+        if (res.status === 401) {
+          throw new Error(
+            `Unipile hosted link generation failed (401): ${errorText}. Please verify that UNIPILE_API_KEY and UNIPILE_DSN in .env match your Unipile dashboard.`,
+          );
+        }
         throw new Error(`Unipile hosted link generation failed (${res.status}): ${errorText}`);
       }
 
@@ -347,10 +451,18 @@ export class UnipileClient {
     username: string,
     accountId?: string,
   ): Promise<UnipileUserResponse | null> {
-    if (!this.isConfigured) return null;
-
     const cleanUsername = UnipileClient.extractUsername(username);
     if (!cleanUsername) return null;
+
+    if (isUnipileMockMode()) {
+      return {
+        id: `unipile_user_${cleanUsername}`,
+        provider_id: `provider_${cleanUsername}`,
+        username: cleanUsername,
+      };
+    }
+
+    if (!this.isConfigured) return null;
 
     const query = accountId ? `?account_id=${encodeURIComponent(accountId)}` : "";
     const url = `${this.config.baseUrl}/users/${encodeURIComponent(cleanUsername)}${query}`;
@@ -359,6 +471,7 @@ export class UnipileClient {
       const res = await fetch(url, {
         method: "GET",
         headers: this.headers,
+        signal: AbortSignal.timeout(getUnipileReadTimeoutMs()),
       });
 
       if (!res.ok) {
@@ -384,6 +497,14 @@ export class UnipileClient {
   async sendDirectMessage(
     params: UnipileSendMessageParams,
   ): Promise<UnipileSendMessageResult> {
+    if (isUnipileMockMode()) {
+      return {
+        success: true,
+        messageId: `mock_unipile_msg_${Date.now()}`,
+        raw: { mock: true },
+      };
+    }
+
     if (!this.isConfigured) {
       return {
         success: false,
@@ -401,10 +522,13 @@ export class UnipileClient {
       text: text.trim(),
     };
 
+    const timeoutMs = getUnipileSendTimeoutMs();
+
     try {
       const res = await fetch(url, {
         method: "POST",
         headers: this.headers,
+        signal: AbortSignal.timeout(timeoutMs),
         body: JSON.stringify(payload),
       });
 
@@ -442,6 +566,19 @@ export class UnipileClient {
         raw: parsed,
       };
     } catch (err) {
+      const isTimeout =
+        (err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError" || /timed?\s*out/i.test(err.message))) ||
+        Boolean((err as Record<string, unknown>)?.cause && String((err as Record<string, unknown>).cause).toLowerCase().includes("timeout"));
+
+      if (isTimeout) {
+        logger.warn("[UNIPILE] send request timed out", { accountId, recipientProviderId, timeoutMs });
+        return {
+          success: false,
+          code: "SEND_TIMEOUT",
+          message: `Send request timed out after ${timeoutMs}ms. Delivery state is unknown.`,
+        };
+      }
+
       const errorMsg = err instanceof Error ? err.message : String(err);
       return {
         success: false,
@@ -457,6 +594,14 @@ export class UnipileClient {
   async sendChatMessage(
     params: UnipileSendChatMessageParams,
   ): Promise<UnipileSendMessageResult> {
+    if (isUnipileMockMode()) {
+      return {
+        success: true,
+        messageId: `mock_unipile_msg_${Date.now()}`,
+        raw: { mock: true },
+      };
+    }
+
     if (!this.isConfigured) {
       return {
         success: false,
@@ -471,10 +616,13 @@ export class UnipileClient {
       text: text.trim(),
     };
 
+    const timeoutMs = getUnipileSendTimeoutMs();
+
     try {
       const res = await fetch(url, {
         method: "POST",
         headers: this.headers,
+        signal: AbortSignal.timeout(timeoutMs),
         body: JSON.stringify(payload),
       });
 
@@ -511,6 +659,19 @@ export class UnipileClient {
         raw: parsed,
       };
     } catch (err) {
+      const isTimeout =
+        (err instanceof Error && (err.name === "TimeoutError" || err.name === "AbortError" || /timed?\s*out/i.test(err.message))) ||
+        Boolean((err as Record<string, unknown>)?.cause && String((err as Record<string, unknown>).cause).toLowerCase().includes("timeout"));
+
+      if (isTimeout) {
+        logger.warn("[UNIPILE] chat message send request timed out", { chatId, timeoutMs });
+        return {
+          success: false,
+          code: "SEND_TIMEOUT",
+          message: `Send chat message timed out after ${timeoutMs}ms. Delivery state is unknown.`,
+        };
+      }
+
       const errorMsg = err instanceof Error ? err.message : String(err);
       return {
         success: false,

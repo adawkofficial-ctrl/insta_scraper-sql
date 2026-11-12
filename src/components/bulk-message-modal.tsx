@@ -15,6 +15,7 @@ import {
   listSenderAccounts,
   type InstagramSenderAccount,
 } from "@/lib/api/senders";
+import { useSendingStatus } from "@/components/sending-banner";
 
 type BulkMessageModalProps = {
   isOpen: boolean;
@@ -37,6 +38,7 @@ export function BulkMessageModal({
   filters,
   onJobStarted,
 }: BulkMessageModalProps) {
+  const { sendingEnabled } = useSendingStatus();
   const [templates, setTemplates] = useState<MessageTemplate[]>([]);
   const [selectedTemplateId, setSelectedTemplateId] = useState<string>("");
   const [isLoadingTemplates, setIsLoadingTemplates] = useState(false);
@@ -126,9 +128,11 @@ export function BulkMessageModal({
         const list = await listSenderAccounts();
         if (!isMounted) return;
         setSenders(list);
-        const firstConnected = list.find((sender) => sender.isConnected);
-        if (firstConnected) {
-          setSelectedSenderAccountId(firstConnected.id);
+        const connected = list.filter((sender) => sender.isConnected);
+        if (connected.length > 1) {
+          setSelectedSenderAccountId("round_robin");
+        } else if (connected.length === 1) {
+          setSelectedSenderAccountId(connected[0].id);
         }
       } catch (err: unknown) {
         if (!isMounted) return;
@@ -160,7 +164,8 @@ export function BulkMessageModal({
       try {
         const res = await previewBulkMessages(campaignId, {
           templateId: selectedTemplateId,
-          senderAccountId: selectedSenderAccountId,
+          senderAccountId:
+            selectedSenderAccountId === "round_robin" ? undefined : selectedSenderAccountId,
           leadIds: selectionMode === "selected" ? selectedLeadIds : undefined,
           selection: selectionMode,
           filters,
@@ -210,7 +215,8 @@ export function BulkMessageModal({
       // Step 1: Create Job
       const createRes = await createBulkMessageJob(campaignId, {
         templateId: selectedTemplateId,
-        senderAccountId: selectedSenderAccountId,
+        senderAccountId:
+          selectedSenderAccountId === "round_robin" ? undefined : selectedSenderAccountId,
         leadIds: selectionMode === "selected" ? selectedLeadIds : undefined,
         selection: selectionMode,
         filters,
@@ -295,20 +301,32 @@ export function BulkMessageModal({
                 Connect and verify an Instagram sender account first.
               </div>
             ) : (
-              <select
-                id="sender-select"
-                value={selectedSenderAccountId}
-                onChange={(e) => setSelectedSenderAccountId(e.target.value)}
-                disabled={isSubmitting}
-                className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-xs text-zinc-200 focus:border-rose-500 focus:outline-none"
-              >
-                {connectedSenders.map((sender) => (
-                  <option key={sender.id} value={sender.id}>
-                    @{sender.username}
-                    {sender.displayName ? ` · ${sender.displayName}` : ""}
-                  </option>
-                ))}
-              </select>
+              <div>
+                <select
+                  id="sender-select"
+                  value={selectedSenderAccountId}
+                  onChange={(e) => setSelectedSenderAccountId(e.target.value)}
+                  disabled={isSubmitting}
+                  className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-xs text-zinc-200 focus:border-rose-500 focus:outline-none"
+                >
+                  {connectedSenders.length > 1 && (
+                    <option value="round_robin">
+                      All Connected Accounts ({connectedSenders.length}) · Sequential Round-Robin (10m Cooldown)
+                    </option>
+                  )}
+                  {connectedSenders.map((sender) => (
+                    <option key={sender.id} value={sender.id}>
+                      @{sender.username}
+                      {sender.displayName ? ` · ${sender.displayName}` : ""}
+                    </option>
+                  ))}
+                </select>
+                {selectedSenderAccountId === "round_robin" && (
+                  <p className="mt-1.5 text-[11px] text-zinc-400">
+                    Sequentially rotates across all {connectedSenders.length} accounts with a 10-minute cooldown per account (Account 1 &rarr; Lead 1, Account 2 &rarr; Lead 2...).
+                  </p>
+                )}
+              </div>
             )}
           </div>
 
@@ -490,6 +508,7 @@ export function BulkMessageModal({
             type="button"
             id="btn-start-bulk-sending"
             disabled={
+              !sendingEnabled ||
               !confirmed ||
               !selectedTemplateId ||
               !selectedSenderAccountId ||
@@ -497,6 +516,7 @@ export function BulkMessageModal({
               !previewData ||
               previewData.eligibleCount === 0
             }
+            title={!sendingEnabled ? "Sending is OFF - discovery only (OUTBOUND_SENDING_ENABLED=false)" : undefined}
             onClick={handleStartSending}
             className="rounded-lg bg-rose-600 px-5 py-2 text-xs font-semibold text-white shadow-lg shadow-rose-900/30 transition hover:bg-rose-500 disabled:opacity-40 disabled:cursor-not-allowed"
           >

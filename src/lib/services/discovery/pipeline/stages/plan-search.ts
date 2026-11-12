@@ -31,7 +31,8 @@ export async function planSearchStage(
   const searchQueries = buildPerKeywordSearchQueries({
     query: input.query,
     category: input.category,
-    location: input.location,
+    location: input.activeDiscoveryMode === "instagram_search" ? input.location : undefined,
+    appendLocation: input.activeDiscoveryMode === "instagram_search",
   });
 
   const effectiveQueries =

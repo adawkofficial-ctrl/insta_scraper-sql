@@ -120,7 +120,7 @@ export async function previewTemplateMessage(
   const rendered = renderTemplate(
     template.body,
     {
-      username: lead.username,
+      username: lead.username ?? "",
       fullName: lead.fullName,
       biography: lead.biography,
       category: lead.category,
@@ -251,7 +251,7 @@ export async function previewAIMessage(
   const renderedBase = renderTemplate(
     template.body,
     {
-      username: lead.username,
+      username: lead.username ?? "",
       fullName: lead.fullName,
       biography: lead.biography,
       category: lead.category,
@@ -264,7 +264,7 @@ export async function previewAIMessage(
   const aiProvider = getAIProvider();
   const aiResult = await aiProvider.generatePersonalizedMessage({
     lead: {
-      username: lead.username,
+      username: lead.username ?? "",
       fullName: lead.fullName,
       biography: lead.biography,
       category: lead.category,

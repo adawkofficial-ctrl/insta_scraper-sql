@@ -272,15 +272,32 @@ export function mapSpariorSearchItem(raw: unknown): MappedSearchItem {
   const isPrivate =
     typeof userObj.is_private === "boolean" ? userObj.is_private : false;
 
+  const profile = mapSpariorProfileToLeadProfile(userObj);
+
   const candidate: DiscoveredProfile = {
     username,
     profileUrl:
       typeof userObj.profile_url === "string" && userObj.profile_url.startsWith("http")
         ? userObj.profile_url.trim()
         : `https://www.instagram.com/${username}/`,
+    fullName: profile?.fullName ?? (typeof userObj.full_name === "string" ? userObj.full_name : null),
+    biography: profile?.biography ?? (typeof userObj.biography === "string" ? userObj.biography : null),
+    category: profile?.category ?? (typeof userObj.category === "string" ? userObj.category : null),
+    businessCategoryName:
+      profile?.businessCategoryName ??
+      (typeof userObj.business_category_name === "string" ? userObj.business_category_name : null),
+    location: profile?.location ?? null,
+    followers: profile?.followers ?? null,
+    followersCount:
+      profile?.followersCount ??
+      (typeof userObj.follower_count === "number" ? userObj.follower_count : null),
+    externalUrl:
+      profile?.externalUrl ??
+      profile?.website ??
+      (typeof userObj.external_url === "string" ? userObj.external_url : null),
+    website: profile?.website ?? null,
+    latestPosts: profile?.latestPosts ?? null,
   };
-
-  const profile = mapSpariorProfileToLeadProfile(userObj);
 
   return {
     candidate,

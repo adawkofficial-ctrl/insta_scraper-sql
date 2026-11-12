@@ -1,5 +1,7 @@
 import "dotenv/config";
 process.env.MESSAGING_PROVIDER = "playwright";
+process.env.SENDER_COOLDOWN_SECONDS = "0";
+process.env.SENDER_COOLDOWN_MINUTES = "0";
 import "./preload_server_only.cjs";
 import { getPrismaClient } from "../src/lib/db/prisma";
 import type { BrowserContext } from "playwright";
@@ -27,6 +29,7 @@ import {
 import {
   sendSingleMessage,
   setMessagingProvider,
+  setSendGateClock,
 } from "../src/lib/services/messaging";
 import { createBulkMessageJob } from "../src/lib/services/messaging/bulk-messaging-service";
 import { dispatchBulkJobQueue } from "../src/lib/services/messaging/bulk-messaging-service";
@@ -241,6 +244,9 @@ async function main() {
     },
   });
 
+  let fakeClockTime = new Date("2026-06-10T14:00:00Z");
+  setSendGateClock(() => fakeClockTime);
+
   console.log("=================================================================");
   console.log("   TASK 18: INSTAGRAM SENDER ACCOUNT / SESSION SUITE (MOCKED)     ");
   console.log("=================================================================\n");
@@ -401,6 +407,36 @@ async function main() {
   });
   check(sentRow?.senderAccountId === senderA.id, "SENT audit message records senderAccountId");
 
+  // ---- 9b. Explicit OUTSIDE_WORKING_HOURS check with fake clock ----
+  console.log("\n[9b] Clock-dependent working hours gate enforcement");
+  const FAKE_OUTSIDE_HOURS = new Date("2026-06-10T03:00:00Z"); // 3 AM UTC (outside 9am-6pm)
+  setSendGateClock(() => FAKE_OUTSIDE_HOURS);
+  let blockedByHours = false;
+  let retryAtSet = false;
+  try {
+    await sendSingleMessage(
+      {
+        leadId: leadA.id,
+        message: "Should be blocked outside working hours",
+        senderAccountId: senderA.id,
+        step: "test_outside_hours",
+      },
+      userA.id,
+    );
+  } catch (err: unknown) {
+    const errorObj = err as { code?: string; userMessage?: string };
+    if (errorObj.code === "OUTSIDE_WORKING_HOURS") {
+      blockedByHours = true;
+      if (errorObj.userMessage && errorObj.userMessage.includes("retry after")) {
+        retryAtSet = true;
+      }
+    }
+  }
+  check(blockedByHours, "send gate blocks dispatch when clock is OUTSIDE_WORKING_HOURS (3 AM)");
+  check(retryAtSet, "OUTSIDE_WORKING_HOURS error message includes retryAt time");
+  fakeClockTime = new Date("2026-06-10T14:05:00Z");
+  setSendGateClock(() => fakeClockTime); // restore working hours
+
   // ---- 10. Bulk job stores sender and worker uses it ----
   console.log("\n[10] Bulk job sender binding + worker");
   const jobResult = await createBulkMessageJob(
@@ -442,6 +478,7 @@ async function main() {
 
   // ---- 11. CAPTCHA / rate limit causes safe pause, never SENT ----
   console.log("\n[11] CAPTCHA causes safe pause");
+  fakeClockTime = new Date(fakeClockTime.getTime() + 60_000);
   const leadCaptcha = await prisma.lead.create({
     data: {
       campaignId: campaignA.id,
@@ -818,6 +855,7 @@ async function main() {
   );
   await cancelSenderLogin(sRight.id, userA.id).catch(() => undefined);
 
+  setSendGateClock(null);
   await prisma.$disconnect();
 
   console.log("\n=================================================================");

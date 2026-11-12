@@ -83,7 +83,7 @@ export const companyFactsCheck: QualityCheck = (ctx) => {
 
   const handleMatches = matches(body, HANDLE_PATTERN);
   const allowedHandles = new Set<string>([
-    normalizeHandle(ctx.lead.username),
+    ...(ctx.lead.username ? [normalizeHandle(ctx.lead.username)] : []),
     ...matches(ctx.company.rawText, HANDLE_PATTERN).map(normalizeHandle),
   ]);
   for (const handle of handleMatches) {

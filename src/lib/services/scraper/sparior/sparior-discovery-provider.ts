@@ -213,7 +213,11 @@ export class SpariorDiscoveryProvider implements DiscoveryProvider {
             continue;
           }
 
-          if (mapped.candidate && !seenUsernames.has(mapped.candidate.username)) {
+          if (
+            mapped.candidate &&
+            mapped.candidate.username &&
+            !seenUsernames.has(mapped.candidate.username)
+          ) {
             seenUsernames.add(mapped.candidate.username);
             candidates.push(mapped.candidate);
             keywordCandidatesCount++;

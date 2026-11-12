@@ -15,12 +15,15 @@ import type {
   DiscoveryRequest,
   DiscoveryRunResult,
 } from "../discovery-service";
+import { getActiveDiscoveryMode } from "../discovery-service";
 import {
   createEmptySkipCounts,
   sumSkipCounts,
 } from "../lead-relevance";
 import { DEFAULT_ENRICHMENT_CRITERIA, type EnrichmentCriteria } from "../enrichment-criteria";
 import { getScraperProviderName } from "@/lib/env";
+import { getActiveEnrichmentActorId } from "@/lib/services/scraper/instagram-profile";
+import { isDryRunMode } from "@/lib/services/scraper/apify-cost-guard";
 import { logStageObservability } from "./observability";
 import { planSearchStage } from "./stages/plan-search";
 import { fetchPlacesStage } from "./stages/fetch-places";
@@ -42,6 +45,15 @@ export async function orchestrateDiscovery(
 ): Promise<DiscoveryRunResult> {
   const prisma = getPrismaClient();
   const providerName = getScraperProviderName();
+  const activeDiscoveryMode = getActiveDiscoveryMode();
+  const discoveryActor =
+    activeDiscoveryMode === "instagram_all_in_one"
+      ? "apify/instagram-scraper"
+      : activeDiscoveryMode === "google_maps"
+        ? "compass/crawler-google-places"
+        : activeDiscoveryMode === "instagram_places"
+          ? "apify/instagram-scraper"
+          : "apify/instagram-search-scraper";
 
   // 1. Ownership & Concurrency Validation
   const campaign = await prisma.campaign.findFirst({
@@ -64,7 +76,13 @@ export async function orchestrateDiscovery(
   }
 
   // 2. Capacity Check
-  const existingLeadCount = await prisma.lead.count({ where: { campaignId: campaign.id } });
+  const isCurrentRunDry = isDryRunMode();
+  const existingLeadCount = await prisma.lead.count({
+    where: {
+      campaignId: campaign.id,
+      ...(!isCurrentRunDry ? { isDryRun: false } : { isDryRun: true }),
+    },
+  });
   const remainingCapacity = Math.max(0, request.maxLeads - existingLeadCount);
   if (remainingCapacity <= 0) {
     const notice = `LIMIT_REACHED: Campaign has reached its limit of ${request.maxLeads} leads.`;
@@ -73,6 +91,7 @@ export async function orchestrateDiscovery(
         campaignId: campaign.id,
         status: ScrapeJobStatus.COMPLETED,
         provider: providerName,
+        isDryRun: isCurrentRunDry,
         inputCount: 0,
         processedCount: 0,
         startedAt: new Date(),
@@ -84,8 +103,8 @@ export async function orchestrateDiscovery(
     return {
       campaignId: campaign.id,
       scrapeJobId: emptyJob.id,
-      discoveryActor: "google-maps",
-      enrichmentActor: "instagram-profile",
+      discoveryActor,
+      enrichmentActor: getActiveEnrichmentActorId(),
       requestedLimit: request.maxLeads,
       existingLeads: existingLeadCount,
       candidatesDiscovered: 0,
@@ -107,14 +126,15 @@ export async function orchestrateDiscovery(
       campaignId: campaign.id,
       status: ScrapeJobStatus.RUNNING,
       provider: providerName,
+      isDryRun: isCurrentRunDry,
       inputCount: 0,
       processedCount: 0,
       startedAt: new Date(),
       query: request.query,
       location: request.location,
       category: request.category,
-      discoveryActor: "google-maps",
-      enrichmentActor: "instagram-profile",
+      discoveryActor,
+      enrichmentActor: getActiveEnrichmentActorId(),
       requestedLimit: request.maxLeads,
     },
   });
@@ -185,7 +205,7 @@ export async function orchestrateDiscovery(
         query: request.query,
         category: request.category ?? undefined,
         location: request.location ?? undefined,
-        activeDiscoveryMode: "google_maps",
+        activeDiscoveryMode,
         priorNextKeywordIndex: 0,
       },
       context,
@@ -203,7 +223,8 @@ export async function orchestrateDiscovery(
         limit: planned.roundCandidateTarget,
         location: request.location ?? undefined,
         category: request.category ?? undefined,
-        providerType: "google_maps",
+        providerType:
+          activeDiscoveryMode === "hybrid" ? "google_maps" : activeDiscoveryMode,
       },
       context,
       deps,
@@ -323,8 +344,8 @@ export async function orchestrateDiscovery(
     return {
       campaignId: campaign.id,
       scrapeJobId: job.id,
-      discoveryActor: "google-maps",
-      enrichmentActor: "instagram-profile",
+      discoveryActor,
+      enrichmentActor: getActiveEnrichmentActorId(),
       requestedLimit: request.maxLeads,
       existingLeads: existingLeadCount,
       candidatesDiscovered: funnelReport.placesFound,

@@ -1,0 +1,6 @@
+-- AlterTable
+ALTER TABLE "OutboundSendIdempotency" ALTER COLUMN "updatedAt" DROP DEFAULT;
+
+-- AlterTable
+ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "role" TEXT NOT NULL DEFAULT 'USER';
+

@@ -30,9 +30,9 @@ export type MessageTemplateSummary = {
 export type TemplateLeadPreview = {
   lead: {
     id: string;
-    username: string;
+    username: string | null;
     fullName: string | null;
-    profileUrl: string;
+    profileUrl: string | null;
     profilePictureUrl: string | null;
     isVerified: boolean | null;
     isBusiness: boolean | null;
@@ -170,7 +170,7 @@ export async function listCampaignTemplates(
 
   return prisma.messageTemplate.findMany({
     where: {
-      OR: [{ campaignId }, { campaignId: null }],
+      campaignId,
     },
     orderBy: { createdAt: "desc" },
     select: TEMPLATE_SELECT,
@@ -389,7 +389,7 @@ export async function previewTemplateForLeads(
     const rendered = renderTemplateDetailed(
       template.body,
       {
-        username: lead.username,
+        username: lead.username ?? "",
         fullName: lead.fullName,
         biography: lead.biography,
         category: lead.category,
@@ -397,7 +397,7 @@ export async function previewTemplateForLeads(
         followingCount: lead.following,
         postsCount: lead.postsCount,
         externalUrl: lead.externalUrl,
-        profileUrl: lead.profileUrl,
+        profileUrl: lead.profileUrl ?? "",
       },
       campaign.name,
       senderName,

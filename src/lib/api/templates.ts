@@ -88,9 +88,9 @@ export async function previewTemplateMessage(
 export type TemplateLeadPreview = {
   lead: {
     id: string;
-    username: string;
+    username: string | null;
     fullName: string | null;
-    profileUrl: string;
+    profileUrl: string | null;
     profilePictureUrl: string | null;
     isVerified: boolean | null;
     isBusiness: boolean | null;

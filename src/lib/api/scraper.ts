@@ -21,8 +21,8 @@ export type ScrapeProfilesResponse = {
 export const DEFAULT_MAX_LEADS = 10;
 export const MIN_MAX_LEADS = 1;
 export const MAX_MAX_LEADS = 100;
-// Mirrors the server-side batch cap in the scraper service.
-export const MAX_PROFILE_BATCH = 100;
+// Mirrors the server-side batch cap in the scraper service (supports up to 200 import rows).
+export const MAX_PROFILE_BATCH = 200;
 
 export async function scrapeProfiles(
   campaignId: string,
@@ -51,6 +51,7 @@ export type DiscoveryStage =
   | "done";
 
 export type DiscoverySkipReason =
+  | "PRE_ENRICHMENT_REJECTED"
   | "IRRELEVANT_CATEGORY"
   | "IRRELEVANT_INTENT"
   | "IRRELEVANT_LOCATION"
@@ -60,7 +61,12 @@ export type DiscoverySkipReason =
   | "CAMPAIGN_CAPACITY_REACHED"
   | "CANDIDATE_BOUND_REACHED"
   | "ACTOR_ERROR"
-  | "ENRICHMENT_FAILED";
+  | "ENRICHMENT_FAILED"
+  | "DNC_SUPPRESSED"
+  | "PRIVATE_PROFILE"
+  | "MALFORMED"
+  | "AI_UNAVAILABLE"
+  | "LOCATION_UNVERIFIED";
 
 export type DiscoverySkipCounts = Partial<Record<DiscoverySkipReason, number>>;
 
@@ -91,6 +97,59 @@ export type DiscoveryMeta = {
   remainingCapacity?: number;
   notice: string | null;
   skipCounts?: DiscoverySkipCounts;
+  apifyCostUsd?: number | null;
+  usageSummary?: {
+    perQueryStats?: Array<{
+      query: string;
+      results: number;
+      accepted: number;
+      rejectedWrongLocation: number;
+      rejectedNonBusiness: number;
+      rejectedPrivate: number;
+      rejectedDuplicate: number;
+      costUsd: number;
+      costPerAcceptedLeadUsd: number | null;
+    }>;
+    resultsConsumed?: { search: number; details: number; total: number };
+    spendUsd?: { estimated: number; actual: number; perSavedLead: number | null };
+    conversionFunnel?: {
+      found: number;
+      afterFreeRules: number;
+      afterLocationVerification: number;
+      afterGeminiPreGate: number;
+      detailed: number;
+      afterCriteria: number;
+      saved: number;
+    };
+    stopReason?: string;
+    mapsCost?: {
+      placesReturned?: number;
+      costUsd?: number;
+      costPerPlaceUsd?: number | null;
+      igReadyLeads?: number;
+      contactableLeads?: number;
+      costPerIgReadyLeadUsd?: number | null;
+      costPerContactableLeadUsd?: number | null;
+      paidPlaces?: number;
+      duplicatePlaces?: number;
+      newPlaces?: number;
+      costPerNewPlaceUsd?: number | null;
+      contactOnlySaved?: number;
+      igReadySaved?: number;
+      costPerContactOnlyLeadUsd?: number | null;
+      wastedSpendUsd?: number;
+      wastedByReason?: Record<string, number>;
+      handleYieldBySource?: Record<string, number>;
+      handleYieldByArea?: Record<string, number>;
+      handleYieldByKeyword?: Record<string, number>;
+      chargedEvents?: Array<{ runId: string; chargedUsd: number; events: unknown }>;
+      coverageSkipped?: number;
+      outcomeCacheSkipped?: number;
+      placeOverlapRatio?: number;
+    };
+  };
+  remainingBudgetUsd?: number | null;
+  isDryRun?: boolean;
 };
 
 export type DiscoverLeadsResponse = {
@@ -104,6 +163,18 @@ export type DiscoverLeadsInput = {
   location?: string | null;
   category?: string | null;
   maxLeads: number;
+  criteria?: {
+    minFollowers?: number | null;
+    maxFollowers?: number | null;
+    minPosts?: number | null;
+    strictMode?: boolean;
+    excludePrivate?: boolean;
+    allowedCategories?: string[] | null;
+    requireContactSignal?: boolean;
+    bioIncludeAny?: string[] | null;
+    bioExclude?: string[] | null;
+  };
+  confirmHighCostRetry?: boolean;
 };
 
 export async function discoverLeads(
@@ -117,8 +188,9 @@ export async function discoverLeads(
     location: input.location,
     category: input.category,
     maxLeads: input.maxLeads,
+    ...(input.criteria ? { criteria: input.criteria } : {}),
+    ...(input.confirmHighCostRetry ? { confirmHighCostRetry: true } : {}),
   };
-
 
   const response = await fetch("/api/scraper/instagram/discover", {
     method: "POST",
@@ -217,3 +289,50 @@ export async function getScrapeJob(
     ScrapeJobItem & { campaign?: { id: string; name: string; status: string } }
   >(`/api/scrape-jobs/${encodeURIComponent(jobId)}`);
 }
+
+export type ScraperBudgetInfo = {
+  monthlyBudgetUsd: number | null;
+  monthlySpendUsd: number;
+  remainingBudgetUsd: number | null;
+  perRunCapUsd: number;
+  perJobCapUsd: number;
+  isDryRun: boolean;
+  isEnabled: boolean;
+  discoveryProvider?: "google_maps" | "instagram_places" | "instagram_search" | "instagram_all_in_one" | "hybrid" | string;
+  activeProviders?: {
+    discoveryProvider: string;
+    enrichmentProvider: string;
+    discoveryActor: string;
+    enrichmentActor: string;
+    mapsActorDisabled: boolean;
+    profileActorDisabled: boolean;
+  };
+  igSearchLimit?: number;
+  igMaxQueriesPerJob?: number;
+  igMaxResultsPerJob?: number;
+  igScraperCostPerResultUsd?: number;
+  discoveryMaxJobUsd?: number | null;
+  costLimitsEnabled?: boolean;
+  discoveryStage?: string;
+  maxLeadsCap?: number;
+  gmapsMaxTotalPlaces?: number;
+  gmapsMaxCities?: number;
+  contactsEnrichmentEnabled?: boolean;
+  mapsRollingCostPerPlaceUsd?: number | null;
+  mapsRollingCostSamples?: number;
+  mapsAreaCooldownDays?: number;
+  mapsMinIgYieldPercent?: number;
+  keywordSuggestions?: Array<{ keyword: string; places: number; igReady: number; yield: number }>;
+  costs?: {
+    mapsRun: number;
+    placeScraped: number;
+    profileEnrichment: number;
+    gemini: number;
+    contactsPerPlace: number;
+  };
+};
+
+export async function getScraperBudget(): Promise<ScraperBudgetInfo> {
+  return apiFetch<ScraperBudgetInfo>("/api/scraper/budget");
+}
+

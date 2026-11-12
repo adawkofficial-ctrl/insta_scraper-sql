@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { listCampaignLeads } from "@/lib/services/lead";
+import { listCampaignLeads, deleteLeads } from "@/lib/services/lead";
 import { requireAuth } from "@/lib/services/auth";
 import { handleRouteError } from "@/lib/errors";
 
@@ -24,3 +24,27 @@ export async function GET(
     return handleRouteError(request, error);
   }
 }
+
+export async function DELETE(
+  request: Request,
+  _context: RouteContext,
+): Promise<Response> {
+  try {
+    const user = await requireAuth(request);
+    const body = (await request.json().catch(() => ({}))) as { leadIds?: string[] };
+    const leadIds = Array.isArray(body?.leadIds) ? body.leadIds : [];
+
+    if (leadIds.length === 0) {
+      return NextResponse.json(
+        { error: "No leadIds provided for deletion" },
+        { status: 400 },
+      );
+    }
+
+    const result = await deleteLeads(leadIds, user.id);
+    return NextResponse.json(result);
+  } catch (error) {
+    return handleRouteError(request, error);
+  }
+}
+

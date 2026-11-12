@@ -13,6 +13,7 @@ import {
   type QualityGateResult,
 } from "../quality";
 import { generateStructured } from "./gemini";
+import { isDryRunLead } from "@/lib/services/messaging";
 import {
   REPLY_DRAFT_PROMPT_VERSION,
   REPLY_DRAFT_RESPONSE_SCHEMA,
@@ -96,6 +97,18 @@ export async function generateReplyDraft(
   }
 
   const lead = message.lead;
+  if (lead.isDryRun || isDryRunLead(lead)) {
+    return {
+      status: "SKIPPED",
+      passed: false,
+      blocked: false,
+      score: 0,
+      regenerationCount: 0,
+      blockers: [],
+      warnings: [],
+      skippedReason: "Dry-run lead cannot be drafted",
+    };
+  }
   const campaign = lead.campaign;
   const intentStr = message.intent ? message.intent.toUpperCase() : "UNCLEAR";
 

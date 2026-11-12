@@ -1,0 +1,12 @@
+[
+  {
+    "username": "partial_account"
+  },
+  {
+    "username": "montreal_marketing_agency",
+    "fullName": "Montreal Marketing Agency",
+    "biography": "We serve clients across Montreal and Quebec.",
+    "locationName": "Montreal, QC",
+    "followersCount": 1200
+  }
+]

@@ -43,7 +43,7 @@ export type GeminiStructuredResult<T> = {
   finishReason: string | null;
 };
 
-const DEFAULT_MODEL = "gemini-3.5-flash";
+const DEFAULT_MODEL = "gemini-2.5-flash";
 const DEFAULT_TIMEOUT_MS = 30_000;
 const MAX_ATTEMPTS = 4;
 
@@ -259,6 +259,9 @@ export async function generateStructured<T>(
           if (status === 401 || status === 403) {
             throw new GeminiApiError("AI_AUTH_FAILED", "Gemini rejected the API key.", status);
           }
+          if (status === 404) {
+            throw new GeminiApiError("AI_UNAVAILABLE", `Gemini model not found (404): ${bodySnippet}`, status);
+          }
           if (status === 400) {
             // 400 can be a schema/request error — retryable in case of transient issues
             lastError = new GeminiApiError("AI_BAD_OUTPUT", `Gemini rejected the request (400): ${bodySnippet}`, status);
@@ -339,8 +342,7 @@ export async function generateStructured<T>(
         if (error instanceof GeminiApiError) {
           if (
             error.code === "AI_RATE_LIMITED" ||
-            error.code === "AI_UNAVAILABLE" ||
-            error.code === "AI_BAD_OUTPUT"
+            error.code === "AI_UNAVAILABLE"
           ) {
             if (attempt < MAX_ATTEMPTS) {
               await sleep(backoffMs(attempt));

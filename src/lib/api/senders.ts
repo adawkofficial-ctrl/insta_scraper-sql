@@ -3,6 +3,10 @@ import { apiFetch } from "./client";
 export type InstagramSenderStatus =
   | "CONNECTING"
   | "CONNECTED"
+  | "ACTIVE"
+  | "WARMING"
+  | "PAUSED"
+  | "NEEDS_ATTENTION"
   | "AUTH_REQUIRED"
   | "EXPIRED"
   | "ERROR"
@@ -39,6 +43,25 @@ export type InstagramSenderAccount = {
   createdAt: string;
   updatedAt: string;
   sessionDiagnostics: SenderSessionDiagnostics | null;
+  sentToday: number;
+  sentThisHour: number;
+  totalSent: number;
+  dailyCap: number | null;
+  effectiveDailyCap: number;
+  hourlyCap: number | null;
+  effectiveHourlyCap: number;
+  warmupStage: string;
+  warmupStartedAt: string | null;
+  pausedUntil: string | null;
+  lastSentAt: string | null;
+  lastErrorCode: string | null;
+  consecutiveErrors: number;
+  customMinGapSeconds: number | null;
+  customMaxGapSeconds: number | null;
+  timezone: string;
+  workingHoursStart: number;
+  workingHoursEnd: number;
+  nextAllowedSendAt?: string | null;
 };
 
 export type ConnectSenderResponse = {
@@ -151,6 +174,54 @@ export async function disconnectSenderAccount(
 ): Promise<InstagramSenderAccount> {
   const data = await apiFetch<{ sender: InstagramSenderAccount }>(
     `/api/instagram/senders/${encodeURIComponent(senderAccountId)}/disconnect`,
+    { method: "POST" },
+  );
+  return data.sender;
+}
+
+export async function deleteSenderAccount(
+  senderAccountId: string,
+): Promise<{ success: true; id: string }> {
+  return apiFetch<{ success: true; id: string }>(
+    `/api/instagram/senders/${encodeURIComponent(senderAccountId)}`,
+    { method: "DELETE" },
+  );
+}
+
+export async function updateSenderSettings(
+  senderAccountId: string,
+  settings: {
+    dailyCap?: number | null;
+    hourlyCap?: number | null;
+    customMinGapSeconds?: number | null;
+    customMaxGapSeconds?: number | null;
+    timezone?: string;
+    workingHoursStart?: number;
+    workingHoursEnd?: number;
+  },
+): Promise<InstagramSenderAccount> {
+  const data = await apiFetch<{ sender: InstagramSenderAccount }>(
+    `/api/instagram/senders/${encodeURIComponent(senderAccountId)}`,
+    { method: "PATCH", body: JSON.stringify(settings) },
+  );
+  return data.sender;
+}
+
+export async function pauseSenderAccount(
+  senderAccountId: string,
+): Promise<InstagramSenderAccount> {
+  const data = await apiFetch<{ sender: InstagramSenderAccount }>(
+    `/api/instagram/senders/${encodeURIComponent(senderAccountId)}/pause`,
+    { method: "POST" },
+  );
+  return data.sender;
+}
+
+export async function resumeSenderAccount(
+  senderAccountId: string,
+): Promise<InstagramSenderAccount> {
+  const data = await apiFetch<{ sender: InstagramSenderAccount }>(
+    `/api/instagram/senders/${encodeURIComponent(senderAccountId)}/resume`,
     { method: "POST" },
   );
   return data.sender;

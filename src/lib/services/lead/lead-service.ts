@@ -240,17 +240,103 @@ export async function listCampaignLeads(
     }
   }
 
+  // Filter by enrichment status ("enriched" or "not_enriched")
+  const rawEnrichment = getParam("enrichmentStatus");
+  if (rawEnrichment !== undefined) {
+    const trimmedEnrichment = rawEnrichment.trim().toLowerCase();
+    if (trimmedEnrichment && trimmedEnrichment !== "all") {
+      if (trimmedEnrichment === "enriched") {
+        conditions.push({
+          OR: [
+            { biography: { not: null } },
+            { followersCount: { not: null } },
+            {
+              rawProfileData: {
+                path: ["enrichmentStatus"],
+                equals: "ENRICHED",
+              },
+            },
+          ],
+        });
+      } else if (trimmedEnrichment === "not_enriched") {
+        conditions.push({
+          OR: [
+            { rawProfileData: { path: ["enrichmentStatus"], equals: "NOT_ENRICHED" } },
+            {
+              AND: [
+                { followersCount: null },
+                { followers: null },
+              ],
+            },
+          ],
+        });
+      }
+    }
+  }
+
+  // Quality Tier filter ("A", "B", "C", "D" or comma-separated "A,B")
+  const rawTier = getParam("tier") ?? getParam("qualityTier");
+  if (rawTier !== undefined) {
+    const tiers = rawTier
+      .split(",")
+      .map((t) => t.trim().toUpperCase())
+      .filter((t) => ["A", "B", "C", "D"].includes(t));
+    if (tiers.length > 0) {
+      conditions.push({ qualityTier: { in: tiers } });
+    }
+  }
+
+  // Quality Flags filter (e.g. "LOW_REVIEWS", "POSSIBLE_CHAIN", etc.)
+  const rawFlags = getParam("flags") ?? getParam("scoreFlags") ?? getParam("flag");
+  if (rawFlags !== undefined) {
+    const flags = rawFlags
+      .split(",")
+      .map((f) => f.trim())
+      .filter(Boolean);
+    if (flags.length > 0) {
+      conditions.push({ scoreFlags: { hasSome: flags } });
+    }
+  }
+
+  // Chain filter
+  const rawChain = getParam("isChain");
+  if (rawChain !== undefined) {
+    const val = rawChain.trim().toLowerCase();
+    if (val === "true" || val === "false") {
+      conditions.push({ isChain: val === "true" });
+    }
+  }
+
   const where: Prisma.LeadWhereInput = {
     AND: conditions,
   };
 
   const skip = (page - 1) * limit;
 
+  // Sorting
+  const sortBy = getParam("sort") ?? getParam("sortBy");
+  const sortOrder =
+    (getParam("order") ?? getParam("sortOrder") ?? "desc").toLowerCase() === "asc"
+      ? "asc"
+      : "desc";
+
+  let orderBy: Prisma.LeadOrderByWithRelationInput[] = [
+    { createdAt: "desc" },
+    { id: "desc" },
+  ];
+  if (sortBy === "qualityScore" || sortBy === "score") {
+    orderBy = [{ qualityScore: sortOrder }, { createdAt: "desc" }, { id: "desc" }];
+  } else if (sortBy === "rating") {
+    orderBy = [{ rating: sortOrder }, { createdAt: "desc" }];
+  } else if (sortBy === "reviewCount") {
+    orderBy = [{ reviewCount: sortOrder }, { createdAt: "desc" }];
+  }
+
   const [total, items] = await Promise.all([
     prisma.lead.count({ where }),
     prisma.lead.findMany({
       where,
-      orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+      orderBy,
       skip,
       take: limit,
     }),
@@ -302,6 +388,24 @@ export async function getLeadById(
       duplicateOf: { select: { id: true, username: true } },
       possibleDuplicateOf: { select: { id: true, username: true } },
       _count: { select: { sightings: true } },
+      followUpMessages: {
+        orderBy: { step: "asc" },
+        select: {
+          id: true,
+          step: true,
+          status: true,
+          templateText: true,
+          renderedBody: true,
+          dueAt: true,
+          sentAt: true,
+          retryAt: true,
+          cancelReason: true,
+          errorCode: true,
+          errorMessage: true,
+          createdAt: true,
+          updatedAt: true,
+        },
+      },
     },
   });
 
@@ -420,3 +524,75 @@ export async function deleteLead(
     deleted: true,
   };
 }
+
+export async function deleteLeads(
+  leadIds: string[],
+  userId?: string,
+): Promise<{
+  deletedCount: number;
+  deletedIds: string[];
+}> {
+  if (!Array.isArray(leadIds) || leadIds.length === 0) {
+    return { deletedCount: 0, deletedIds: [] };
+  }
+
+  const prisma = getPrismaClient();
+
+  // Find all leads that match and belong to user (if userId provided)
+  const whereClause: Parameters<typeof prisma.lead.findMany>[0] = {
+    where: {
+      id: { in: leadIds },
+      ...(userId ? { campaign: { userId } } : {}),
+    },
+    select: { id: true },
+  };
+
+  const matches = await prisma.lead.findMany(whereClause);
+  const idsToDelete = matches.map((m) => m.id);
+
+  if (idsToDelete.length === 0) {
+    return { deletedCount: 0, deletedIds: [] };
+  }
+
+  const result = await prisma.lead.deleteMany({
+    where: { id: { in: idsToDelete } },
+  });
+
+  return {
+    deletedCount: result.count,
+    deletedIds: idsToDelete,
+  };
+}
+
+export async function deleteDryRunLeads(
+  campaignId: string,
+  userId?: string,
+): Promise<{ deletedCount: number }> {
+  const prisma = getPrismaClient();
+
+  const campaign = await prisma.campaign.findFirst({
+    where: {
+      id: campaignId,
+      ...(userId ? { userId } : {}),
+    },
+    select: { id: true },
+  });
+
+  if (!campaign) {
+    throw new NotFoundError("CAMPAIGN_NOT_FOUND", "Campaign not found");
+  }
+
+  const result = await prisma.lead.deleteMany({
+    where: {
+      campaignId,
+      OR: [
+        { source: "dry_run" },
+        { source: "sample" },
+        { username: { startsWith: "sample_" } },
+      ],
+    },
+  });
+
+  return { deletedCount: result.count };
+}
+

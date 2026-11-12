@@ -8,7 +8,7 @@ async function testSend() {
   const active = accounts[0];
 
   try {
-    const res = await unipile.sendDirectMessage({
+    const res = await (unipile.sendDirectMessage as any)({
       accountId: active.id,
       recipientId: "18148000534477039",
       text: "Production readiness test ping from system audit",

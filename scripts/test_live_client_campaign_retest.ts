@@ -1,7 +1,10 @@
 import "./preload_server_only.cjs";
 import "dotenv/config";
+import { assertScriptSafeForApify } from "../src/lib/services/scraper/apify-cost-guard";
 import { getPrismaClient } from "../src/lib/db/prisma";
 import { runDiscovery } from "../src/lib/services/discovery/discovery-service";
+
+assertScriptSafeForApify();
 
 const prisma = getPrismaClient();
 
@@ -11,7 +14,7 @@ async function main() {
   console.log("=================================================");
 
   // Find the exact campaign the client flagged
-  const campaign = await prisma.campaign.findFirst({
+  const campaign: any = await prisma.campaign.findFirst({
     where: {
       OR: [
         { id: "cmuuvcia50002qoth5vz0j5go" },
@@ -72,7 +75,7 @@ async function main() {
 
   console.log(`\nRecently saved leads (${savedLeads.length}):`);
   for (const l of savedLeads) {
-    console.log(`- @${l.username}: "${l.fullName}" | Category: ${l.category || "none"} | Bio snippet: ${(l.bio || "").slice(0, 70)}...`);
+    console.log(`- @${l.username}: "${l.fullName}" | Category: ${l.category || "none"} | Bio snippet: ${(l.biography || "").slice(0, 70)}...`);
   }
 }
 

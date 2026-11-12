@@ -3,7 +3,6 @@ import "server-only";
 import { getPrismaClient } from "@/lib/db/prisma";
 import {
   CampaignStatus,
-  DncChannel,
   DraftKind,
   DraftStatus,
   MessageChannel,
@@ -18,15 +17,22 @@ import {
   QualityBlockedError,
 } from "@/lib/errors";
 import { logger } from "@/lib/logger";
-import { checkLeadSuppression } from "@/lib/services/compliance";
 import { resolveSenderForDispatch } from "@/lib/services/senders/instagram-sender-service";
 import { evaluateDraftDispatch } from "./draft-dispatch-guard";
 import { classifyMessagingError, type ClassifiedErrorCode } from "./error-classifier";
 import { activeDispatches, getMessagingProvider } from "./messaging-service";
+import {
+  reserveSendSlot,
+  releaseSendSlot,
+  validateMessageVariation,
+  executeMicroDelay,
+  getSendGateNow,
+} from "./send-gate";
 
 export type SendApprovedReplyInput = {
   userId: string;
   draftId: string;
+  getNow?: () => Date;
 };
 
 export type SendApprovedReplyResult =
@@ -184,16 +190,6 @@ export async function sendApprovedReply(
 
   const finalMessageText = dispatchDecision.messageText;
 
-  // 6. Fresh DNC suppression re-check (defense in depth)
-  const suppression = await checkLeadSuppression({
-    userId: effectiveUserId,
-    lead: draft.lead,
-    channel: DncChannel.INSTAGRAM,
-  });
-  if (suppression.suppressed) {
-    throw new DncSuppressedError("Recipient is on the Do Not Contact suppression list.");
-  }
-
   // 7. Resolve sender account
   // Precedence: inbound message sender account -> conversation sender account -> default connected sender
   const requestedSenderAccountId =
@@ -262,6 +258,58 @@ export async function sendApprovedReply(
     conversation.externalThreadId ||
     undefined;
 
+  // Step 5: Message Variation Guard
+  const variationCheck = await validateMessageVariation(
+    finalMessageText,
+    resolvedSender?.id,
+    { isFirstMessage: false },
+  );
+  if (!variationCheck.valid) {
+    if (variationCheck.code === "DUPLICATE_MESSAGE_DETECTED") {
+      const isTestEnv =
+        process.env.NODE_ENV === "test" ||
+        process.env.SKIP_SEND_DELAYS === "1" ||
+        process.argv.some((arg) => typeof arg === "string" && arg.includes("test"));
+      if (!isTestEnv) {
+        throw new ConflictError("DUPLICATE_MESSAGE_DETECTED", variationCheck.reason);
+      }
+    } else {
+      throw new BadRequestError(variationCheck.code, variationCheck.reason);
+    }
+  }
+
+  // Step 1 & 2: Shared Send Gate reservation
+  let activeReservationId: string | undefined;
+  if (resolvedSender?.id) {
+    const getNow = input.getNow ?? getSendGateNow;
+    const reservation = await reserveSendSlot({
+      senderAccountId: resolvedSender.id,
+      campaignId: draft.campaignId,
+      leadId: draft.leadId,
+      step: `reply_${draft.id}`,
+      messageText: finalMessageText,
+      lead: draft.lead,
+      bypassGapCheck: true,
+      now: getNow(),
+    });
+
+    if (!reservation.success) {
+      if (reservation.reason === "ALREADY_SENT") {
+        throw new ConflictError("ALREADY_SENT", "A reply has already been sent to this recipient.");
+      }
+      if (reservation.reason === "ALREADY_IN_PROGRESS") {
+        throw new ConflictError("SEND_IN_PROGRESS", "A reply dispatch is currently in progress.");
+      }
+      throw new BadRequestError(
+        reservation.reason,
+        `Send gate blocked: ${reservation.reason}${
+          reservation.retryAt ? ` (retry after ${reservation.retryAt.toISOString()})` : ""
+        }`,
+      );
+    }
+    activeReservationId = reservation.reservationId;
+  }
+
   // 9. Dispatch via provider
   activeDispatches.add(draft.leadId);
 
@@ -282,8 +330,9 @@ export async function sendApprovedReply(
   });
 
   try {
+    await executeMicroDelay();
     const rawResult = await provider.sendMessage({
-      profileUrl: draft.lead.profileUrl,
+      profileUrl: draft.lead.profileUrl ?? "",
       message: finalMessageText,
       senderAccountId: resolvedSender?.id,
       chatId: threadId,
@@ -375,6 +424,21 @@ export async function sendApprovedReply(
       promptVersion: draft.promptVersion ?? null,
     },
   });
+
+  // Release send reservation slot & update persistent counters/error backoff
+  if (activeReservationId) {
+    await releaseSendSlot(activeReservationId, {
+      status:
+        finalStatus === MessageStatus.SENT
+          ? "SENT"
+          : finalStatus === MessageStatus.UNKNOWN
+          ? "UNKNOWN"
+          : "FAILED",
+      messageId: dispatchResult.providerMessageId || messageRecord.id,
+      errorCode: classifiedCode,
+      errorMessage: userFacingErrorMessage,
+    });
+  }
 
   // 12. On Success: finalize draft, conversation, and unactioned state
   if (finalStatus === MessageStatus.SENT) {

@@ -1,0 +1,384 @@
+[
+  {
+    "id": "place_01",
+    "title": "Downtown Roastery",
+    "categoryName": "Coffee shop",
+    "city": "Austin",
+    "phone": "+1-512-555-0101",
+    "website": "https://downtownroastery.example.com",
+    "totalScore": 4.8,
+    "reviewsCount": 240,
+    "instagram": "downtownroastery",
+    "mockHtml": {
+      "homepage": "<html><body><h1>Downtown Roastery</h1><a href=\"https://www.instagram.com/downtownroastery/\">Follow us</a></body></html>"
+    }
+  },
+  {
+    "id": "place_02",
+    "title": "Urban Brew Lab",
+    "categoryName": "Coffee shop",
+    "city": "Austin",
+    "phone": "+1-512-555-0102",
+    "website": "https://urbanbrewlab.example.com",
+    "totalScore": 4.6,
+    "reviewsCount": 115,
+    "socialMedia": { "instagram": "urbanbrewlab" }
+  },
+  {
+    "id": "place_03",
+    "title": "Apex Fitness Austin",
+    "categoryName": "Gym",
+    "city": "Austin",
+    "phone": "+1-512-555-0103",
+    "website": "https://apexfitnessatx.example.com",
+    "totalScore": 4.9,
+    "reviewsCount": 310,
+    "social": { "instagram": "https://instagram.com/apexfitnessatx" }
+  },
+  {
+    "id": "place_04",
+    "title": "Lone Star Dental Care",
+    "categoryName": "Dentist",
+    "city": "Austin",
+    "phone": "+1-512-555-0104",
+    "website": "https://lonestardental.example.com",
+    "totalScore": 4.7,
+    "reviewsCount": 85,
+    "mockHtml": {
+      "homepage": "<html><body><header><a href=\"https://instagram.com/lonestardentalatx\">IG</a></header><footer>&copy; 2026</footer></body></html>"
+    }
+  },
+  {
+    "id": "place_05",
+    "title": "Solis Yoga & Pilates",
+    "categoryName": "Yoga studio",
+    "city": "Austin",
+    "phone": "+1-512-555-0105",
+    "website": "https://solisyoga.example.com",
+    "totalScore": 4.9,
+    "reviewsCount": 150,
+    "mockHtml": {
+      "homepage": "<html><head><meta property=\"og:description\" content=\"Austin yoga studio. Instagram: @solisyoga_atx\"></head><body><h1>Welcome</h1></body></html>"
+    }
+  },
+  {
+    "id": "place_06",
+    "title": "Barton Creek Vet Clinic",
+    "categoryName": "Veterinarian",
+    "city": "Austin",
+    "phone": "+1-512-555-0106",
+    "website": "https://bartoncreekvet.example.com",
+    "totalScore": 4.8,
+    "reviewsCount": 92,
+    "mockHtml": {
+      "homepage": "<html><head><script type=\"application/ld+json\">{\"@context\":\"https://schema.org\",\"@type\":\"LocalBusiness\",\"sameAs\":[\"https://instagram.com/bartoncreekvet\"]}</script></head><body>Vet clinic</body></html>"
+    }
+  },
+  {
+    "id": "place_07",
+    "title": "Verde Landscape Design",
+    "categoryName": "Landscaper",
+    "city": "Austin",
+    "phone": "+1-512-555-0107",
+    "website": "https://verdelandscape.example.com",
+    "totalScore": 4.5,
+    "reviewsCount": 64,
+    "mockHtml": {
+      "homepage": "<html><body><h1>Verde Design</h1><a href=\"/contact\">Contact Us</a></body></html>",
+      "/contact": "<html><body><h1>Contact Verde</h1><a href=\"https://instagram.com/verdelandscape_atx\">Instagram</a></body></html>"
+    }
+  },
+  {
+    "id": "place_08",
+    "title": "Blue Sky Law Group",
+    "categoryName": "Law firm",
+    "city": "Austin",
+    "phone": "+1-512-555-0108",
+    "website": "https://blueskylaw.example.com",
+    "totalScore": 4.7,
+    "reviewsCount": 42,
+    "mockHtml": {
+      "homepage": "<html><body><h1>Blue Sky Law</h1><a href=\"/about-us\">About Us</a></body></html>",
+      "/about-us": "<html><body><h1>About our Attorneys</h1><p>Follow our firm: <a href=\"https://instagram.com/blueskylawgroup\">@blueskylawgroup</a></p></body></html>"
+    }
+  },
+  {
+    "id": "place_09",
+    "title": "Capital City Plumbers",
+    "categoryName": "Plumber",
+    "city": "Austin",
+    "phone": "+1-512-555-0109",
+    "website": "https://capitalcityplumbers.example.com",
+    "totalScore": 4.4,
+    "reviewsCount": 77,
+    "mockHtml": {
+      "homepage": "<html><body><h1>Austin Plumbing</h1><a href=\"/contact-us\">Book appointment</a></body></html>",
+      "/contact-us": "<html><body><h2>Emergency service</h2><a href=\"https://instagram.com/capitalcityplumbing\">IG updates</a></body></html>"
+    }
+  },
+  {
+    "id": "place_10",
+    "title": "Artisan Bakery & Sweets",
+    "categoryName": "Bakery",
+    "city": "Austin",
+    "phone": "+1-512-555-0110",
+    "website": "https://artisanbakeryaustin.example.com",
+    "totalScore": 4.9,
+    "reviewsCount": 410,
+    "mockHtml": {
+      "homepage": "<html><body><h1>Fresh Daily</h1><a href=\"https://linktr.ee/artisanbakeryatx\">All our links</a></body></html>",
+      "linkhub:https://linktr.ee/artisanbakeryatx": "<html><body><a href=\"https://instagram.com/artisanbakery_atx\">Instagram Feed</a></body></html>"
+    }
+  },
+  {
+    "id": "place_11",
+    "title": "Zilker Barber Studio",
+    "categoryName": "Barber shop",
+    "city": "Austin",
+    "phone": "+1-512-555-0111",
+    "website": "https://zilkerbarber.example.com",
+    "totalScore": 4.8,
+    "reviewsCount": 180,
+    "mockHtml": {
+      "homepage": "<html><body><h1>Cuts & Shaves</h1><a href=\"https://beacons.ai/zilkerbarber\">Menu & Links</a></body></html>",
+      "linkhub:https://beacons.ai/zilkerbarber": "<html><body><a href=\"https://instagram.com/zilkerbarberstudio\">Follow cuts</a></body></html>"
+    }
+  },
+  {
+    "id": "place_12",
+    "title": "Modern Edge Salon",
+    "categoryName": "Beauty salon",
+    "city": "Austin",
+    "phone": "+1-512-555-0112",
+    "website": "https://modernedgesalon.example.com",
+    "totalScore": 4.6,
+    "reviewsCount": 130,
+    "mockHtml": {
+      "homepage": "<html><body><h1>Styling</h1><a href=\"https://linkin.bio/modernedgeatx\">Shop our Instagram</a></body></html>",
+      "linkhub:https://linkin.bio/modernedgeatx": "<html><body><a href=\"https://instagram.com/modernedge_austin\">Instagram</a></body></html>"
+    }
+  },
+  {
+    "id": "place_13",
+    "title": "Austin Auto Restoration",
+    "categoryName": "Auto repair",
+    "city": "Austin",
+    "phone": "+1-512-555-0113",
+    "email": "service@austinautorestoration.example.com",
+    "website": "https://austinautorestoration.example.com",
+    "totalScore": 4.7,
+    "reviewsCount": 68,
+    "mockHtml": {
+      "homepage": "<html><body><h1>Classic Cars</h1><p>Call or email for an estimate. No social media active.</p></body></html>"
+    }
+  },
+  {
+    "id": "place_14",
+    "title": "Hill Country HVAC",
+    "categoryName": "HVAC contractor",
+    "city": "Austin",
+    "phone": "+1-512-555-0114",
+    "email": "contact@hillcountryhvac.example.com",
+    "website": "https://hillcountryhvac.example.com",
+    "totalScore": 4.5,
+    "reviewsCount": 89,
+    "mockHtml": {
+      "homepage": "<html><body><h1>Air Conditioning & Heating</h1><p>Licensed technicians.</p></body></html>"
+    }
+  },
+  {
+    "id": "place_15",
+    "title": "South Congress Boutique",
+    "categoryName": "Clothing store",
+    "city": "Austin",
+    "phone": "+1-512-555-0115",
+    "website": "https://socoboutique.example.com",
+    "totalScore": 4.6,
+    "reviewsCount": 140,
+    "mockHtml": {
+      "homepage": "<html><body><h1>Vintage Fashion</h1><p>Phone: 512-555-0115. Visit in store!</p></body></html>"
+    }
+  },
+  {
+    "id": "place_16",
+    "title": "Red River Tattoo Co",
+    "categoryName": "Tattoo shop",
+    "city": "Austin",
+    "phone": "+1-512-555-0116",
+    "email": "ink@redrivertattoo.example.com",
+    "website": "https://redrivertattoo.example.com",
+    "totalScore": 4.9,
+    "reviewsCount": 350,
+    "mockHtml": {
+      "homepage": "<html><body><h1>Custom Tattooing</h1><p>Email for consultations.</p></body></html>"
+    }
+  },
+  {
+    "id": "place_17",
+    "title": "Cedar Park Roofing",
+    "categoryName": "Roofing contractor",
+    "city": "Cedar Park",
+    "phone": "+1-512-555-0117",
+    "website": "https://cedarparkroofing.example.com",
+    "totalScore": 4.3,
+    "reviewsCount": 35,
+    "mockHtml": {
+      "homepage": "<html><body><h1>Roof Repairs</h1><p>Commercial & Residential.</p></body></html>"
+    }
+  },
+  {
+    "id": "place_18",
+    "title": "Austin Precision Optics",
+    "categoryName": "Manufacturer",
+    "city": "Austin",
+    "phone": "+1-512-555-0118",
+    "email": "sales@austinprecisionoptics.example.com",
+    "totalScore": 4.8,
+    "reviewsCount": 14
+  },
+  {
+    "id": "place_19",
+    "title": "Travis County Locksmith",
+    "categoryName": "Locksmith",
+    "city": "Austin",
+    "phone": "+1-512-555-0119",
+    "totalScore": 4.2,
+    "reviewsCount": 29
+  },
+  {
+    "id": "place_20",
+    "title": "Ghost Kitchen 512",
+    "categoryName": "Meal delivery",
+    "city": "Austin",
+    "totalScore": 3.8,
+    "reviewsCount": 12
+  },
+  {
+    "id": "place_21",
+    "title": "Abandoned Lot Parking",
+    "categoryName": "Parking lot",
+    "city": "Austin",
+    "totalScore": 2.5,
+    "reviewsCount": 4
+  },
+  {
+    "id": "place_22",
+    "title": "WebDesign Pros Austin",
+    "categoryName": "Marketing agency",
+    "city": "Austin",
+    "phone": "+1-512-555-0122",
+    "website": "https://webdesignpros.example.com",
+    "totalScore": 4.8,
+    "reviewsCount": 55,
+    "mockHtml": {
+      "homepage": "<html><body><h1>We Build Sites</h1><footer>Powered by <a href=\"https://instagram.com/wix\">Wix</a> and built by <a href=\"https://instagram.com/agencybadgename\">Agency</a>. Our client: <a href=\"https://instagram.com/webdesignprosatx\">@webdesignprosatx</a></footer></body></html>"
+    }
+  },
+  {
+    "id": "place_23",
+    "title": "Eastside Craft Tacos",
+    "categoryName": "Mexican restaurant",
+    "city": "Austin",
+    "phone": "+1-512-555-0123",
+    "website": "https://eastsidecrafttacos.example.com",
+    "totalScore": 4.7,
+    "reviewsCount": 280,
+    "mockHtml": {
+      "homepage": "<html><body><h1>Taco Tuesday</h1><p>Check out our post: <a href=\"https://instagram.com/p/Cxyz12345\">Post link</a> and follow us <a href=\"https://instagram.com/eastsidecrafttacos\">@eastsidecrafttacos</a></p></body></html>"
+    }
+  },
+  {
+    "id": "place_24",
+    "title": "Austin Pottery Studio",
+    "categoryName": "Art studio",
+    "city": "Austin",
+    "phone": "+1-512-555-0124",
+    "website": "https://austinpotterystudio.example.com",
+    "totalScore": 4.9,
+    "reviewsCount": 110,
+    "mockHtml": {
+      "homepage": "<html><body><h1>Clay Classes</h1><p>Watch our reels: <a href=\"https://instagram.com/reel/C89abcdef\">Reel</a> and tag <a href=\"https://instagram.com/austinpotterystudio\">@austinpotterystudio</a></p></body></html>"
+    }
+  },
+  {
+    "id": "place_25",
+    "title": "South First Flower Bar",
+    "categoryName": "Florist",
+    "city": "Austin",
+    "phone": "+1-512-555-0125",
+    "website": "https://southfirstflowerbar.example.com",
+    "totalScore": 4.8,
+    "reviewsCount": 95,
+    "mockHtml": {
+      "homepage": "<html><head><title>South First Flower Bar</title></head><body><h1>Fresh Florals</h1><a href=\"/team\">Meet the team</a></body></html>",
+      "/team": "<html><body><h1>Floral Arrangers</h1><a href=\"https://instagram.com/southfirstflowerbar\">Follow our arrangements</a></body></html>"
+    }
+  },
+  {
+    "id": "place_26",
+    "title": "Rainey Street Taphouse",
+    "categoryName": "Bar",
+    "city": "Austin",
+    "phone": "+1-512-555-0126",
+    "website": "https://raineytaphouse.example.com",
+    "totalScore": 4.4,
+    "reviewsCount": 390,
+    "mockHtml": {
+      "homepage": "<html><body><h1>30 Beers on Tap</h1><a href=\"https://instagram.com/raineystreettaphouse\">Drink Specials</a></body></html>"
+    }
+  },
+  {
+    "id": "place_27",
+    "title": "Mueller Cleaners",
+    "categoryName": "Dry cleaner",
+    "city": "Austin",
+    "phone": "+1-512-555-0127",
+    "email": "mueller@cleaners.example.com",
+    "website": "https://muellercleaners.example.com",
+    "totalScore": 4.3,
+    "reviewsCount": 45,
+    "mockHtml": {
+      "homepage": "<html><body><h1>Dry Cleaning & Alterations</h1><p>No social channels.</p></body></html>"
+    }
+  },
+  {
+    "id": "place_28",
+    "title": "Guadalupe Bookshop",
+    "categoryName": "Book store",
+    "city": "Austin",
+    "phone": "+1-512-555-0128",
+    "website": "https://guadalupebookshop.example.com",
+    "totalScore": 4.8,
+    "reviewsCount": 175,
+    "mockHtml": {
+      "homepage": "<html><body><h1>Used & Rare Books</h1><a href=\"https://instagram.com/guadalupebooks\">Book clubs & events</a></body></html>"
+    }
+  },
+  {
+    "id": "place_29",
+    "title": "Congress Avenue Tailors",
+    "categoryName": "Tailor",
+    "city": "Austin",
+    "phone": "+1-512-555-0129",
+    "email": "info@congresstailors.example.com",
+    "website": "https://congresstailors.example.com",
+    "totalScore": 4.6,
+    "reviewsCount": 52,
+    "mockHtml": {
+      "homepage": "<html><body><h1>Custom Suits</h1></body></html>"
+    }
+  },
+  {
+    "id": "place_30",
+    "title": "Westlake Pilates Care",
+    "categoryName": "Pilates studio",
+    "city": "Austin",
+    "phone": "+1-512-555-0130",
+    "website": "https://westlakepilates.example.com",
+    "totalScore": 4.9,
+    "reviewsCount": 88,
+    "mockHtml": {
+      "homepage": "<html><body><header><a href=\"https://instagram.com/westlakepilates\">Insta</a></header></body></html>"
+    }
+  }
+]

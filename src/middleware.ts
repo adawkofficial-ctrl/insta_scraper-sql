@@ -49,8 +49,13 @@ export async function middleware(req: NextRequest) {
 
   const authenticated = await isValidSession(req);
 
-  // Allow unauthenticated access to login and register pages
-  if (pathname === "/login" || pathname === "/register") {
+  // Registration UI is disabled; redirect /register to /login
+  if (pathname === "/register") {
+    return withRequestId(NextResponse.redirect(new URL("/login", req.url)));
+  }
+
+  // Allow unauthenticated access to login page
+  if (pathname === "/login") {
     if (authenticated && !req.nextUrl.searchParams.has("force")) {
       return withRequestId(NextResponse.redirect(new URL("/", req.url)));
     }

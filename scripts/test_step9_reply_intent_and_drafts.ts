@@ -1,4 +1,5 @@
 import "./preload_server_only.cjs";
+process.env.ENABLE_AI_REPLY_CLASSIFICATION = "true";
 /**
  * STEP 9 TEST SUITE: Reply Intent Classification + AI-Suggested Reply Drafts
  *

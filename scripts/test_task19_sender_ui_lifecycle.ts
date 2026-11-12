@@ -3,7 +3,7 @@ import { chromium, type Page } from "playwright";
 import { PrismaClient } from "../src/generated/prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 
-const BASE_URL = process.env.TEST_BASE_URL || "http://localhost:3001";
+const BASE_URL = process.env.TEST_BASE_URL || "http://localhost:3005";
 const prisma = new PrismaClient({
   adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL! }),
 });
@@ -115,7 +115,7 @@ async function main() {
   // O: polling runs while CONNECTING and stops after a terminal status.
   console.log("\n[O] Polling lifecycle");
   const countAtStart = listRequests;
-  await sleep(3600);
+  await sleep(4500);
   const pollsWhileConnecting = listRequests - countAtStart;
   check(pollsWhileConnecting >= 2, `[O] UI polls while CONNECTING (got ${pollsWhileConnecting})`);
 

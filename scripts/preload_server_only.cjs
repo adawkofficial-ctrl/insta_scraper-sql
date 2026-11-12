@@ -16,3 +16,9 @@ Module.prototype.require = function (id) {
   }
   return orig.apply(this, arguments);
 };
+
+const { assertSafeTestDatabase } = require("./test_db_guard.cjs");
+if (process.env.DATABASE_URL || process.env.DATABASE_URL_TEST) {
+  assertSafeTestDatabase();
+}
+

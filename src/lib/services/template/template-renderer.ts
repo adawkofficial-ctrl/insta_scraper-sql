@@ -39,6 +39,8 @@ export const TEMPLATE_VARIABLE_DEFINITIONS: TemplateVariableDefinition[] = [
   { name: "externalUrl", label: "Website", description: "External website", sample: "https://www.natgeo.com" },
   { name: "profileUrl", label: "Profile URL", description: "Instagram profile link", sample: "https://www.instagram.com/natgeo/" },
   { name: "campaignName", label: "Campaign Name", description: "Current campaign name", sample: "Outreach" },
+  { name: "campaignDescription", label: "Campaign Description", description: "Services or description of the campaign", sample: "Custom dental marketing and patient acquisition" },
+  { name: "services", label: "Services", description: "Services offered in this campaign", sample: "Custom dental marketing and patient acquisition" },
   { name: "senderName", label: "Sender Name", description: "Your account display name", sample: "Alex" },
 ];
 
@@ -48,6 +50,8 @@ export const TEMPLATE_VARIABLE_ALIASES: Record<string, string> = {
   category: "businessCategory",
   followers: "followersCount",
   following: "followingCount",
+  services: "campaignDescription",
+  description: "campaignDescription",
 };
 
 export const SUPPORTED_TEMPLATE_VARIABLES = [
@@ -115,9 +119,19 @@ function lookupVariable(
   return Object.prototype.hasOwnProperty.call(map, key) ? map[key] : null;
 }
 
+export type CampaignContextData =
+  | string
+  | {
+      name?: string | null;
+      description?: string | null;
+      intent?: string | null;
+      category?: string | null;
+    }
+  | null;
+
 function buildVariableMap(
   lead: TemplateLeadContext,
-  campaignContext?: string | null,
+  campaignContext?: CampaignContextData,
   senderName?: string | null,
 ): Record<string, string> {
   const firstName = resolveFirstName(lead.fullName, lead.username);
@@ -149,7 +163,17 @@ function buildVariableMap(
   const profileUrl =
     lead.profileUrl?.trim() ||
     (username ? `https://www.instagram.com/${username}/` : "");
-  const campaignName = campaignContext?.trim() || "";
+
+  let campaignName = "";
+  let campaignDescription = "";
+  if (typeof campaignContext === "string") {
+    campaignName = campaignContext.trim();
+  } else if (campaignContext && typeof campaignContext === "object") {
+    campaignName = campaignContext.name?.trim() || "";
+    campaignDescription =
+      campaignContext.description?.trim() || campaignContext.intent?.trim() || "";
+  }
+
   const sender = senderName?.trim() || "";
 
   return {
@@ -164,6 +188,9 @@ function buildVariableMap(
     externalurl: externalUrl,
     profileurl: profileUrl,
     campaignname: campaignName,
+    campaigndescription: campaignDescription,
+    services: campaignDescription,
+    description: campaignDescription,
     sendername: sender,
     // aliases
     bio: biography,
@@ -187,7 +214,7 @@ export type RenderedTemplate = {
 export function renderTemplateDetailed(
   templateBody: string,
   lead: TemplateLeadContext,
-  campaignContext?: string | null,
+  campaignContext?: CampaignContextData,
   senderName?: string | null,
 ): RenderedTemplate {
   if (!templateBody) {
@@ -216,7 +243,7 @@ export function renderTemplateDetailed(
 export function renderTemplate(
   templateBody: string,
   lead: TemplateLeadContext,
-  campaignContext?: string | null,
+  campaignContext?: CampaignContextData,
   senderName?: string | null,
 ): string {
   return renderTemplateDetailed(templateBody, lead, campaignContext, senderName)

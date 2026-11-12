@@ -67,6 +67,11 @@ export async function listCampaignScrapeJobs(
       candidatesDiscovered: true,
       candidatesEnriched: true,
       candidatesSkipped: true,
+      isDryRun: true,
+      usage: true,
+      stopReason: true,
+      costUsd: true,
+      costBreakdown: true,
     },
   });
 

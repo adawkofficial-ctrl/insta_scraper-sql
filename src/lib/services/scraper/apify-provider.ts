@@ -12,19 +12,18 @@ import type {
 } from "@/lib/types";
 
 import { ProviderError, toProviderError } from "../provider-error";
-import { getServerEnv } from "@/lib/env";
 import { getApifyClient } from "./apify-client";
+import { runActorSafely, type SafeActorRunResult } from "./apify-cost-guard";
 import {
-  INSTAGRAM_PROFILE_ACTOR_ID,
-  extractActorError,
+  getIgEnrichmentActorMode,
+  getActiveEnrichmentActorId,
+  buildInstagramProfileUrls,
   normalizeInstagramProfileItem,
 } from "./instagram-profile";
 import type { ScrapeResults, ScraperProvider } from "./scraper-provider";
 import type { ProfileProvider } from "./profile-provider";
 import { classifyApifyProviderError } from "./apify-error-classifier";
-
-const RUN_WAIT_SECS = 180;
-const RUN_TIMEOUT_SECS = 300;
+import { assertEnrichmentActorEnabled } from "./provider-switch";
 
 function log(message: string): void {
   if (process.env.NODE_ENV === "production") {
@@ -33,6 +32,9 @@ function log(message: string): void {
 
   console.log(message);
 }
+
+// In-memory cache for runs executed via runActorSafely
+const cachedSafeRuns = new Map<string, SafeActorRunResult<unknown>>();
 
 export class ApifyProvider implements ScraperProvider, ProfileProvider {
   readonly name = "apify";
@@ -48,10 +50,9 @@ export class ApifyProvider implements ScraperProvider, ProfileProvider {
       );
     }
 
-    const client = getApifyClient();
-    // Actor id is configurable for production without code changes.
-    const actorId =
-      getServerEnv("APIFY_PROFILE_ACTOR_ID") ?? INSTAGRAM_PROFILE_ACTOR_ID;
+    const actorMode = getIgEnrichmentActorMode();
+    const actorId = getActiveEnrichmentActorId();
+    assertEnrichmentActorEnabled(actorId);
 
     const requestedLimit =
       input.limit === undefined
@@ -59,60 +60,42 @@ export class ApifyProvider implements ScraperProvider, ProfileProvider {
         : Math.min(input.limit, usernames.length);
 
     log(
-      `[SCRAPE] actor=${actorId} profiles=${usernames.join(", ")} maxItems=${requestedLimit}`,
+      `[SCRAPE] actorMode=${actorMode} actor=${actorId} profiles=${usernames.join(", ")} maxItems=${requestedLimit}`,
     );
 
-    let run: ActorRun;
-    try {
-      run = await client.actor(actorId).call(
-        { usernames },
-        {
-          waitSecs: RUN_WAIT_SECS,
-          timeout: RUN_TIMEOUT_SECS,
-          maxItems: requestedLimit,
-          log: null,
-        },
-      );
-    } catch (error) {
-      throw toProviderError(
-        this.name,
-        "startJob",
-        error,
-        classifyApifyProviderError(error) ?? "actor_start_failed",
-      );
+    let actorInput: Record<string, unknown>;
+    if (actorMode === "instagram_scraper_details") {
+      const directUrls = buildInstagramProfileUrls(usernames);
+      actorInput = {
+        directUrls,
+        resultsType: "details",
+        resultsLimit: directUrls.length,
+      };
+    } else {
+      actorInput = {
+        usernames,
+        includeAboutSection: false,
+      };
     }
 
-    log(
-      `[SCRAPE] run started id=${run.id} status=${run.status} dataset=${run.defaultDatasetId ?? "none"}`,
+    const safeResult = await runActorSafely(
+      actorId,
+      actorInput,
+      {
+        maxItems: requestedLimit,
+        campaignId: input.campaignId,
+        userId: input.userId,
+        operationName:
+          actorMode === "instagram_scraper_details"
+            ? "profile_enrichment_details"
+            : "profile_enrichment",
+      },
     );
 
-    if (run.status === "READY" || run.status === "RUNNING") {
-      try {
-        await client.run(run.id).abort();
-      } catch {
-        // The run may have finished between polling and the abort attempt.
-      }
+    const run = safeResult.run;
+    cachedSafeRuns.set(run.id, safeResult);
 
-      throw new ProviderError(
-        this.name,
-        "startJob",
-        `Apify run ${run.id} did not finish within ${RUN_WAIT_SECS}s (status ${run.status}).`,
-        { code: "run_timeout" },
-      );
-    }
-
-    if (run.status !== "SUCCEEDED") {
-      throw new ProviderError(
-        this.name,
-        "startJob",
-        `Apify run ${run.id} finished with status ${run.status}${
-          run.statusMessage === undefined ? "" : `: ${run.statusMessage}`
-        }.`,
-        { code: "actor_failed" },
-      );
-    }
-
-    log("[SCRAPE] run completed");
+    log(`[SCRAPE] run completed id=${run.id} isDryRun=${safeResult.isDryRun}`);
 
     return {
       jobId: run.id,
@@ -128,6 +111,17 @@ export class ApifyProvider implements ScraperProvider, ProfileProvider {
   }
 
   async getJobStatus(jobId: string): Promise<ScrapeJobStatus> {
+    const cached = cachedSafeRuns.get(jobId);
+    if (cached) {
+      return {
+        jobId,
+        state: "succeeded",
+        providerJobId: cached.run.id,
+        progress: null,
+        error: null,
+      };
+    }
+
     const client = getApifyClient();
 
     let run: ActorRun | undefined;
@@ -161,69 +155,66 @@ export class ApifyProvider implements ScraperProvider, ProfileProvider {
   }
 
   async getResults(jobId: string): Promise<ScrapeResults> {
-    const client = getApifyClient();
-
+    const cached = cachedSafeRuns.get(jobId);
     let items: unknown[];
-    try {
-      const { items: datasetItems } = await client
-        .run(jobId)
-        .dataset()
-        .listItems();
-      items = datasetItems;
-    } catch (error) {
-      throw toProviderError(
-        this.name,
-        "getResults",
-        error,
-        classifyApifyProviderError(error) ?? "dataset_failed",
-      );
-    }
+    let usageTotalUsd: number | undefined;
+    let computeUnits: number | undefined;
+    let isTimedOut: boolean | undefined;
+    let isWasted: boolean | undefined;
 
-    log(`[SCRAPE] dataset fetched runId=${jobId} items=${items.length}`);
+    if (cached) {
+      items = cached.items;
+      usageTotalUsd = cached.usageTotalUsd;
+      computeUnits = cached.computeUnits;
+      isTimedOut = cached.isTimedOut;
+      isWasted = cached.isWasted;
+    } else {
+      const client = getApifyClient();
+      try {
+        const { items: datasetItems } = await client
+          .run(jobId)
+          .dataset()
+          .listItems();
+        items = datasetItems;
+      } catch (error) {
+        throw toProviderError(
+          this.name,
+          "getResults",
+          error,
+          classifyApifyProviderError(error) ?? "dataset_failed",
+        );
+      }
+
+      try {
+        const run = await client.run(jobId).get();
+        usageTotalUsd = (run as unknown as { usageTotalUsd?: number })?.usageTotalUsd;
+        computeUnits = run?.stats?.computeUnits;
+      } catch {
+        // Non-fatal if run details fail to load
+      }
+    }
 
     const scrapedAt = new Date().toISOString();
     const profiles: LeadProfile[] = [];
     const skipped: SkippedScrapeProfile[] = [];
-    let malformed = 0;
 
     for (const item of items) {
-      // The Actor reports unfetchable profiles as error items; do not persist them.
-      const actorError = extractActorError(item);
-      if (actorError !== null) {
-        skipped.push(actorError);
-        continue;
+      const normalized = normalizeInstagramProfileItem(item, scrapedAt);
+      if (normalized) {
+        profiles.push(normalized);
+      } else {
+        const username =
+          typeof (item as { username?: unknown })?.username === "string"
+            ? (item as { username: string }).username
+            : "unknown";
+        skipped.push({
+          username,
+          reason: "normalization_failed",
+        });
       }
-
-      const profile = normalizeInstagramProfileItem(item, scrapedAt);
-      if (profile === null) {
-        malformed += 1;
-        continue;
-      }
-
-      profiles.push(profile);
     }
 
-    if (skipped.length > 0) {
-      log(
-        `[SCRAPE] skipped actor error items=${skipped.length} reasons=${skipped
-          .map((entry) => `${entry.username}=${entry.reason}`)
-          .join(", ")}`,
-      );
-    }
-    if (malformed > 0) {
-      log(`[SCRAPE] skipped malformed profile items=${malformed}`);
-    }
-    let usageTotalUsd: number | undefined;
-    let computeUnits: number | undefined;
-    try {
-      const run = await client.run(jobId).get();
-      usageTotalUsd = (run as unknown as { usageTotalUsd?: number })?.usageTotalUsd;
-      computeUnits = run?.stats?.computeUnits;
-    } catch {
-      // Non-fatal if run details fail to load
-    }
-
-    return { profiles, skipped, usageTotalUsd, computeUnits };
+    return { profiles, skipped, usageTotalUsd, computeUnits, isTimedOut, isWasted };
   }
 
   /**
@@ -246,7 +237,7 @@ export class ApifyProvider implements ScraperProvider, ProfileProvider {
     const { profiles } = await this.getProfiles([username]);
     return (
       profiles.find(
-        (profile) => profile.username.replace(/^@/, "").trim().toLowerCase() === normalized,
+        (profile) => profile.username?.replace(/^@/, "").trim().toLowerCase() === normalized,
       ) ??
       profiles[0] ??
       null

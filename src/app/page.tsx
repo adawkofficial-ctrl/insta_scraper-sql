@@ -8,7 +8,9 @@ import { getDashboardOverview, type DashboardOverview } from "@/lib/api/analytic
 import { ApiClientError } from "@/lib/api/client";
 import { Navbar } from "@/components/navbar";
 import { CreateCampaignModal } from "@/components/create-campaign-modal";
+import { EditCampaignModal } from "@/components/edit-campaign-modal";
 import { ConfirmModal } from "@/components/confirm-modal";
+import { Button, Card, CardTitle, CardDescription, Badge } from "@/components/ui";
 
 export default function CampaignsPage() {
   const router = useRouter();
@@ -17,6 +19,9 @@ export default function CampaignsPage() {
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
   const [isCreateModalOpen, setIsCreateModalOpen] = useState(false);
+
+  // Edit campaign state
+  const [editingCampaign, setEditingCampaign] = useState<CampaignSummary | null>(null);
 
   // Deletion state
   const [deletingCampaign, setDeletingCampaign] = useState<CampaignSummary | null>(null);
@@ -106,32 +111,28 @@ export default function CampaignsPage() {
     switch (status) {
       case "RUNNING":
         return (
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-500/10 px-2.5 py-0.5 text-xs font-medium text-amber-400 border border-amber-500/20">
-            <span className="h-1.5 w-1.5 rounded-full bg-amber-400 animate-ping" />
+          <Badge variant="warning" dot className="animate-pulse">
             RUNNING
-          </span>
+          </Badge>
         );
       case "COMPLETED":
         return (
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-500/10 px-2.5 py-0.5 text-xs font-medium text-emerald-400 border border-emerald-500/20">
-            <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
+          <Badge variant="success" dot>
             COMPLETED
-          </span>
+          </Badge>
         );
       case "FAILED":
         return (
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-rose-500/10 px-2.5 py-0.5 text-xs font-medium text-rose-400 border border-rose-500/20">
-            <span className="h-1.5 w-1.5 rounded-full bg-rose-400" />
+          <Badge variant="danger" dot>
             FAILED
-          </span>
+          </Badge>
         );
       case "DRAFT":
       default:
         return (
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-zinc-800 px-2.5 py-0.5 text-xs font-medium text-zinc-300 border border-zinc-700">
-            <span className="h-1.5 w-1.5 rounded-full bg-zinc-400" />
+          <Badge variant="neutral" dot>
             DRAFT
-          </span>
+          </Badge>
         );
     }
   };
@@ -140,63 +141,99 @@ export default function CampaignsPage() {
   const activeRuns = campaigns.filter((c) => c.status === "RUNNING").length;
 
   return (
-    <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col">
+    <div className="min-h-screen bg-app text-primary flex flex-col transition-colors duration-150">
       <Navbar onNewCampaign={() => setIsCreateModalOpen(true)} />
 
       <main className="flex-1 mx-auto w-full max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
         {/* Top Header & Stats */}
-        <div className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between border-b border-zinc-800/80 pb-6">
+        <div className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between border-b border-subtle pb-6">
           <div>
-            <h1 className="text-2xl font-bold tracking-tight text-white sm:text-3xl">
+            <h1 className="text-2xl font-bold tracking-tight text-primary sm:text-3xl">
               Campaigns Dashboard
             </h1>
-            <p className="mt-1 text-sm text-zinc-400">
+            <p className="mt-1 text-sm text-muted">
               Manage Instagram outreach campaigns, scraped leads, and profile datasets.
             </p>
           </div>
 
           <div className="flex items-center gap-3">
-            <button
-              onClick={() => setIsCreateModalOpen(true)}
+            <Button
               id="header-create-campaign-btn"
-              className="inline-flex items-center gap-2 rounded-lg bg-rose-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:bg-rose-500"
+              onClick={() => setIsCreateModalOpen(true)}
+              className="gap-2"
             >
               <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
               </svg>
               <span>Create Campaign</span>
-            </button>
+            </Button>
           </div>
         </div>
 
         {/* Metrics Grid */}
         <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-5 shadow-xs">
-            <div className="text-xs font-semibold uppercase tracking-wider text-zinc-400">Total Campaigns</div>
-            <div className="mt-2 text-3xl font-extrabold text-white">{overview?.stats.totalCampaigns ?? campaigns.length}</div>
-          </div>
+          <Card className="p-5">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold uppercase tracking-wider text-muted">Total Campaigns</span>
+              <span className="p-2 rounded-lg bg-indigo-500/10 text-indigo-600 dark:text-indigo-400">
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M19 11H5m14 0a2 2 0 012 2v6a2 2 0 01-2 2H5a2 2 0 01-2-2v-6a2 2 0 012-2m14 0V9a2 2 0 00-2-2M5 11V9a2 2 0 012-2m0 0V5a2 2 0 012-2h6a2 2 0 012 2v2M7 7h10" />
+                </svg>
+              </span>
+            </div>
+            <div className="mt-2 text-3xl font-extrabold tracking-tight text-primary">
+              {overview?.stats.totalCampaigns ?? campaigns.length}
+            </div>
+          </Card>
 
-          <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-5 shadow-xs">
-            <div className="text-xs font-semibold uppercase tracking-wider text-zinc-400">Total Leads Gathered</div>
-            <div className="mt-2 text-3xl font-extrabold text-rose-400">{(overview?.stats.totalLeads ?? totalLeads).toLocaleString()}</div>
-          </div>
+          <Card className="p-5">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold uppercase tracking-wider text-muted">Total Leads Gathered</span>
+              <span className="p-2 rounded-lg bg-indigo-500/10 text-indigo-600 dark:text-indigo-400">
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M17 20h5v-2a3 3 0 00-5.356-1.857M17 20H7m10 0v-2c0-.656-.126-1.283-.356-1.857M7 20H2v-2a3 3 0 015.356-1.857M7 20v-2c0-.656.126-1.283.356-1.857m0 0a5.002 5.002 0 019.288 0M15 7a3 3 0 11-6 0 3 3 0 016 0zm6 3a2 2 0 11-4 0 2 2 0 014 0zM7 10a2 2 0 11-4 0 2 2 0 014 0z" />
+                </svg>
+              </span>
+            </div>
+            <div className="mt-2 text-3xl font-extrabold tracking-tight text-indigo-600 dark:text-indigo-400">
+              {(overview?.stats.totalLeads ?? totalLeads).toLocaleString()}
+            </div>
+          </Card>
 
-          <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-5 shadow-xs">
-            <div className="text-xs font-semibold uppercase tracking-wider text-zinc-400">Total Messages</div>
-            <div className="mt-2 text-3xl font-extrabold text-emerald-400">{overview?.stats.totalMessages ?? 0}</div>
-          </div>
+          <Card className="p-5">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold uppercase tracking-wider text-muted">Total Messages</span>
+              <span className="p-2 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
+                </svg>
+              </span>
+            </div>
+            <div className="mt-2 text-3xl font-extrabold tracking-tight text-emerald-600 dark:text-emerald-400">
+              {overview?.stats.totalMessages ?? 0}
+            </div>
+          </Card>
 
-          <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-5 shadow-xs">
-            <div className="text-xs font-semibold uppercase tracking-wider text-zinc-400">Active Scraping Jobs</div>
-            <div className="mt-2 text-3xl font-extrabold text-amber-400">{overview?.stats.activeRuns ?? activeRuns}</div>
-          </div>
+          <Card className="p-5">
+            <div className="flex items-center justify-between">
+              <span className="text-xs font-semibold uppercase tracking-wider text-muted">Active Scraping Jobs</span>
+              <span className="p-2 rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-400">
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M13 10V3L4 14h7v7l9-11h-7z" />
+                </svg>
+              </span>
+            </div>
+            <div className="mt-2 text-3xl font-extrabold tracking-tight text-amber-600 dark:text-amber-400">
+              {overview?.stats.activeRuns ?? activeRuns}
+            </div>
+          </Card>
         </div>
 
         {/* Error Alert */}
         {error && (
-          <div className="mt-6 rounded-xl border border-rose-500/30 bg-rose-500/10 p-4 flex items-center justify-between text-sm text-rose-300">
+          <div className="mt-6 rounded-xl border border-rose-500/20 bg-rose-500/10 p-4 flex items-center justify-between text-sm text-rose-700 dark:text-rose-300">
             <div className="flex items-center gap-3">
-              <svg className="h-5 w-5 text-rose-400 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <svg className="h-5 w-5 text-rose-500 shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                 <path
                   strokeLinecap="round"
                   strokeLinejoin="round"
@@ -208,7 +245,7 @@ export default function CampaignsPage() {
             </div>
             <button
               onClick={fetchCampaigns}
-              className="rounded-lg bg-rose-500/20 px-3 py-1 text-xs font-medium text-rose-200 hover:bg-rose-500/30"
+              className="rounded-lg bg-rose-500/20 px-3 py-1 text-xs font-medium text-rose-700 dark:text-rose-200 hover:bg-rose-500/30 transition cursor-pointer"
             >
               Retry
             </button>
@@ -218,11 +255,11 @@ export default function CampaignsPage() {
         {/* Main Campaigns List Content */}
         <div className="mt-8">
           <div className="flex items-center justify-between mb-4">
-            <h2 className="text-base font-semibold text-zinc-200">Active & Saved Campaigns</h2>
+            <h2 className="text-base font-semibold text-primary">Active & Saved Campaigns</h2>
             <button
               onClick={fetchCampaigns}
               disabled={isLoading}
-              className="text-xs text-zinc-400 hover:text-zinc-200 transition flex items-center gap-1.5"
+              className="text-xs text-muted hover:text-primary transition flex items-center gap-1.5 cursor-pointer disabled:opacity-50"
             >
               <svg
                 className={`h-3.5 w-3.5 ${isLoading ? "animate-spin" : ""}`}
@@ -245,23 +282,23 @@ export default function CampaignsPage() {
             /* Loading Skeleton */
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {[1, 2, 3].map((i) => (
-                <div key={i} className="h-44 rounded-2xl border border-zinc-800 bg-zinc-900/40 p-5 animate-pulse">
+                <Card key={i} className="h-44 p-5 animate-pulse">
                   <div className="flex justify-between items-start">
-                    <div className="h-5 w-36 rounded bg-zinc-800" />
-                    <div className="h-5 w-16 rounded-full bg-zinc-800" />
+                    <div className="h-5 w-36 rounded bg-subtle" />
+                    <div className="h-5 w-16 rounded-full bg-subtle" />
                   </div>
-                  <div className="mt-4 h-4 w-48 rounded bg-zinc-800/60" />
+                  <div className="mt-4 h-4 w-48 rounded bg-subtle" />
                   <div className="mt-8 flex justify-between">
-                    <div className="h-4 w-20 rounded bg-zinc-800" />
-                    <div className="h-4 w-24 rounded bg-zinc-800" />
+                    <div className="h-4 w-20 rounded bg-subtle" />
+                    <div className="h-4 w-24 rounded bg-subtle" />
                   </div>
-                </div>
+                </Card>
               ))}
             </div>
           ) : campaigns.length === 0 ? (
             /* Empty State */
-            <div className="rounded-2xl border border-dashed border-zinc-800 bg-zinc-900/30 p-12 text-center">
-              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-zinc-900 text-zinc-400 border border-zinc-800 shadow-inner">
+            <div className="rounded-2xl border border-dashed border-subtle bg-surface p-12 text-center shadow-card">
+              <div className="mx-auto flex h-14 w-14 items-center justify-center rounded-2xl bg-subtle text-muted border border-subtle shadow-inner">
                 <svg className="h-7 w-7" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                   <path
                     strokeLinecap="round"
@@ -271,85 +308,86 @@ export default function CampaignsPage() {
                   />
                 </svg>
               </div>
-              <h3 className="mt-4 text-base font-semibold text-zinc-100">No campaigns yet</h3>
-              <p className="mt-1 text-sm text-zinc-400 max-w-sm mx-auto">
+              <h3 className="mt-4 text-base font-semibold text-primary">No campaigns yet</h3>
+              <p className="mt-1 text-sm text-muted max-w-sm mx-auto">
                 Create your first campaign to scrape Instagram profiles, categorize accounts, and build your lead list.
               </p>
-              <button
-                onClick={() => setIsCreateModalOpen(true)}
+              <Button
                 id="empty-create-btn"
-                className="mt-5 inline-flex items-center gap-2 rounded-lg bg-rose-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:bg-rose-500"
+                onClick={() => setIsCreateModalOpen(true)}
+                className="mt-5 gap-2"
               >
-                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                  <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
                 </svg>
                 <span>Create Campaign</span>
-              </button>
+              </Button>
             </div>
           ) : (
             /* Populated Campaign Grid */
             <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
               {campaigns.map((campaign) => (
-                <div
+                <Card
                   key={campaign.id}
-                  className="group relative flex flex-col justify-between rounded-2xl border border-zinc-800 bg-zinc-900/60 p-5 transition hover:border-zinc-700 hover:bg-zinc-900/90 shadow-sm"
+                  hoverable
+                  className="group relative flex flex-col justify-between p-5"
                 >
                   <div>
                     <div className="flex items-start justify-between gap-3">
                       <Link
                         href={`/campaigns/${campaign.id}`}
-                        className="text-base font-bold text-zinc-100 group-hover:text-rose-400 transition truncate"
+                        className="text-base font-bold text-primary group-hover:text-indigo-600 dark:group-hover:text-indigo-400 transition truncate"
                       >
                         {campaign.name}
                       </Link>
                       {getStatusBadge(campaign.status)}
                     </div>
 
-                    <p className="mt-2 text-xs text-zinc-400 line-clamp-2 min-h-[32px]">
+                    <p className="mt-2 text-xs text-muted line-clamp-2 min-h-[32px]">
                       {campaign.description || "No description provided."}
                     </p>
 
-                    {/* Step 14 Intent & Discovery Configuration */}
-                    <div className="mt-3 rounded-xl border border-zinc-800/80 bg-zinc-950/60 p-3 text-xs space-y-1.5">
+                    {/* Intent & Discovery Configuration */}
+                    <div className="mt-3 rounded-xl border border-subtle bg-subtle p-3 text-xs space-y-1.5">
                       <div className="flex items-start justify-between gap-2">
-                        <span className="text-zinc-500 font-medium shrink-0">Intent:</span>
-                        <span className="text-zinc-200 text-right truncate" title={campaign.intent || undefined}>
+                        <span className="text-muted font-medium shrink-0">Intent:</span>
+                        <span className="text-primary text-right truncate font-medium" title={campaign.intent || undefined}>
                           {campaign.intent?.trim() ? campaign.intent : "Not specified"}
                         </span>
                       </div>
                       <div className="flex items-center justify-between gap-2">
-                        <span className="text-zinc-500 font-medium shrink-0">Location:</span>
-                        <span className="text-zinc-200 text-right truncate">
+                        <span className="text-muted font-medium shrink-0">Location:</span>
+                        <span className="text-primary text-right truncate font-medium">
                           {campaign.location?.trim() ? campaign.location : "Not specified"}
                         </span>
                       </div>
                       <div className="flex items-center justify-between gap-2">
-                        <span className="text-zinc-500 font-medium shrink-0">Category:</span>
-                        <span className="text-zinc-200 text-right truncate">
+                        <span className="text-muted font-medium shrink-0">Category:</span>
+                        <span className="text-primary text-right truncate font-medium">
                           {campaign.category?.trim() ? campaign.category : "Not specified"}
                         </span>
                       </div>
                       <div className="flex items-center justify-between gap-2">
-                        <span className="text-zinc-500 font-medium shrink-0">Lead Limit:</span>
-                        <span className="font-semibold text-rose-400">
+                        <span className="text-muted font-medium shrink-0">Lead Limit:</span>
+                        <span className="font-semibold text-indigo-600 dark:text-indigo-400">
                           {campaign.leadLimit != null ? campaign.leadLimit : "Not specified"}
                         </span>
                       </div>
                     </div>
                   </div>
 
-                  <div className="mt-6 border-t border-zinc-800/80 pt-4">
-                    <div className="flex items-center justify-between text-xs text-zinc-400">
+                  <div className="mt-6 border-t border-subtle pt-4">
+                    <div className="flex items-center justify-between text-xs text-muted">
                       <div className="flex items-center gap-4">
                         <div>
-                          <span className="font-bold text-zinc-200">{campaign.leadCount || 0}</span> leads
+                          <span className="font-bold text-primary">{campaign.leadCount || 0}</span> leads
                         </div>
                         <div>
-                          <span className="font-bold text-zinc-200">{campaign.scrapeJobCount || 0}</span> scrapes
+                          <span className="font-bold text-primary">{campaign.scrapeJobCount || 0}</span> scrapes
                         </div>
                       </div>
 
-                      <span className="text-[11px] text-zinc-500">
+                      <span className="text-[11px] text-muted">
                         {new Date(campaign.createdAt).toLocaleDateString()}
                       </span>
                     </div>
@@ -357,14 +395,30 @@ export default function CampaignsPage() {
                     <div className="mt-4 flex items-center justify-between gap-2">
                       <Link
                         href={`/campaigns/${campaign.id}`}
-                        className="flex-1 text-center rounded-lg bg-zinc-800/80 py-2 text-xs font-medium text-zinc-200 transition hover:bg-zinc-700 hover:text-white"
+                        className="flex-1 text-center rounded-lg bg-subtle hover:bg-surface-hover border border-subtle py-2 text-xs font-medium text-secondary hover:text-primary transition shadow-card"
                       >
                         Open Campaign &rarr;
                       </Link>
                       <button
                         type="button"
+                        id={`edit-campaign-${campaign.id}`}
+                        onClick={() => setEditingCampaign(campaign)}
+                        className="rounded-lg p-2 text-muted hover:bg-indigo-500/10 hover:text-indigo-600 dark:hover:text-indigo-400 transition cursor-pointer"
+                        title="Edit Campaign"
+                      >
+                        <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                          <path
+                            strokeLinecap="round"
+                            strokeLinejoin="round"
+                            strokeWidth={2}
+                            d="M16.862 4.487l1.687-1.688a1.875 1.875 0 112.652 2.652L10.582 16.07a4.5 4.5 0 01-1.897 1.13L6 18l.8-2.685a4.5 4.5 0 011.13-1.897l8.932-8.931zm0 0L19.5 7.125M18 14v4.75A2.25 2.25 0 0115.75 21H5.25A2.25 2.25 0 013 18.75V8.25A2.25 2.25 0 015.25 6H10"
+                          />
+                        </svg>
+                      </button>
+                      <button
+                        type="button"
                         onClick={() => setDeletingCampaign(campaign)}
-                        className="rounded-lg p-2 text-zinc-500 hover:bg-rose-500/10 hover:text-rose-400 transition"
+                        className="rounded-lg p-2 text-muted hover:bg-rose-500/10 hover:text-rose-600 dark:hover:text-rose-400 transition cursor-pointer"
                         title="Delete Campaign"
                       >
                         <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -378,7 +432,7 @@ export default function CampaignsPage() {
                       </button>
                     </div>
                   </div>
-                </div>
+                </Card>
               ))}
             </div>
           )}
@@ -387,15 +441,15 @@ export default function CampaignsPage() {
         {/* Real Activity & Scrape Operations Grid */}
         <div className="mt-10 grid grid-cols-1 gap-6 lg:grid-cols-2">
           {/* Recent System Activity */}
-          <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-5">
-            <div className="flex items-center justify-between border-b border-zinc-800 pb-3 mb-4">
+          <Card className="p-5">
+            <div className="flex items-center justify-between border-b border-subtle pb-3 mb-4">
               <div>
-                <h3 className="text-sm font-semibold text-zinc-100">Recent System Activity</h3>
-                <p className="text-xs text-zinc-500">Live operational events derived from real database records</p>
+                <CardTitle className="text-sm">Recent System Activity</CardTitle>
+                <CardDescription>Live operational events derived from real database records</CardDescription>
               </div>
-              <span className="rounded bg-zinc-800 px-2 py-0.5 text-[11px] font-mono text-zinc-400">
+              <Badge variant="neutral">
                 {overview?.recentActivity.length ?? 0} events
-              </span>
+              </Badge>
             </div>
 
             {overview && overview.recentActivity.length > 0 ? (
@@ -403,54 +457,54 @@ export default function CampaignsPage() {
                 {overview.recentActivity.map((activity) => (
                   <div
                     key={activity.id}
-                    className="flex items-start gap-3 rounded-lg border border-zinc-800/80 bg-zinc-950/50 p-3"
+                    className="flex items-start gap-3 rounded-xl border border-subtle bg-subtle p-3"
                   >
                     <div className="mt-0.5">
                       {activity.type === "SCRAPE_COMPLETED" ? (
-                        <div className="h-6 w-6 rounded-full bg-emerald-500/10 text-emerald-400 flex items-center justify-center text-xs font-bold">✓</div>
+                        <div className="h-6 w-6 rounded-full bg-emerald-500/15 text-emerald-600 dark:text-emerald-400 flex items-center justify-center text-xs font-bold">✓</div>
                       ) : activity.type === "SCRAPE_FAILED" || activity.type === "MESSAGE_FAILED" ? (
-                        <div className="h-6 w-6 rounded-full bg-rose-500/10 text-rose-400 flex items-center justify-center text-xs font-bold">✕</div>
+                        <div className="h-6 w-6 rounded-full bg-rose-500/15 text-rose-600 dark:text-rose-400 flex items-center justify-center text-xs font-bold">✕</div>
                       ) : activity.type === "MESSAGE_SENT" ? (
-                        <div className="h-6 w-6 rounded-full bg-blue-500/10 text-blue-400 flex items-center justify-center text-xs font-bold">✈</div>
+                        <div className="h-6 w-6 rounded-full bg-sky-500/15 text-sky-600 dark:text-sky-400 flex items-center justify-center text-xs font-bold">✈</div>
                       ) : (
-                        <div className="h-6 w-6 rounded-full bg-zinc-800 text-zinc-300 flex items-center justify-center text-xs font-bold">★</div>
+                        <div className="h-6 w-6 rounded-full bg-slate-500/15 text-slate-600 dark:text-slate-300 flex items-center justify-center text-xs font-bold">★</div>
                       )}
                     </div>
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center justify-between">
-                        <span className="text-xs font-semibold text-zinc-200 truncate">{activity.title}</span>
-                        <span className="text-[10px] text-zinc-500 shrink-0 ml-2">
+                        <span className="text-xs font-semibold text-primary truncate">{activity.title}</span>
+                        <span className="text-[10px] text-muted shrink-0 ml-2">
                           {new Date(activity.timestamp).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" })}
                         </span>
                       </div>
-                      <p className="text-xs text-zinc-400 mt-0.5">{activity.description}</p>
+                      <p className="text-xs text-muted mt-0.5">{activity.description}</p>
                     </div>
                   </div>
                 ))}
               </div>
             ) : (
-              <div className="py-8 text-center text-xs text-zinc-500">
+              <div className="py-8 text-center text-xs text-muted">
                 No recent activity recorded yet.
               </div>
             )}
-          </div>
+          </Card>
 
           {/* Recent Scrape Jobs Across Campaigns */}
-          <div className="rounded-2xl border border-zinc-800 bg-zinc-900/40 p-5">
-            <div className="flex items-center justify-between border-b border-zinc-800 pb-3 mb-4">
+          <Card className="p-5">
+            <div className="flex items-center justify-between border-b border-subtle pb-3 mb-4">
               <div>
-                <h3 className="text-sm font-semibold text-zinc-100">Recent Scrape Jobs</h3>
-                <p className="text-xs text-zinc-500">Recent Apify profile extraction runs across all campaigns</p>
+                <CardTitle className="text-sm">Recent Scrape Jobs</CardTitle>
+                <CardDescription>Recent Apify profile extraction runs across all campaigns</CardDescription>
               </div>
-              <span className="rounded bg-zinc-800 px-2 py-0.5 text-[11px] font-mono text-zinc-400">
+              <Badge variant="neutral">
                 {overview?.recentScrapeJobs.length ?? 0} jobs
-              </span>
+              </Badge>
             </div>
 
             {overview && overview.recentScrapeJobs.length > 0 ? (
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs">
-                  <thead className="border-b border-zinc-800 text-zinc-400">
+                  <thead className="border-b border-subtle text-muted">
                     <tr>
                       <th className="pb-2 font-semibold">Campaign</th>
                       <th className="pb-2 font-semibold">Provider</th>
@@ -458,38 +512,36 @@ export default function CampaignsPage() {
                       <th className="pb-2 text-right font-semibold">Processed</th>
                     </tr>
                   </thead>
-                  <tbody className="divide-y divide-zinc-800/60">
+                  <tbody className="divide-y divide-subtle">
                     {overview.recentScrapeJobs.map((job) => (
-                      <tr key={job.id} className="hover:bg-zinc-800/20">
-                        <td className="py-2.5 font-medium text-zinc-200 max-w-[140px] truncate">
-                          <Link href={`/campaigns/${job.campaignId}`} className="hover:text-rose-400 transition">
+                      <tr key={job.id} className="hover:bg-surface-hover transition-colors">
+                        <td className="py-2.5 font-medium text-primary max-w-[140px] truncate">
+                          <Link href={`/campaigns/${job.campaignId}`} className="hover:text-indigo-600 dark:hover:text-indigo-400 transition">
                             {job.campaignName}
                           </Link>
                         </td>
-                        <td className="py-2.5 font-mono uppercase text-zinc-400 text-[11px]">{job.provider}</td>
+                        <td className="py-2.5 font-mono uppercase text-muted text-[11px]">{job.provider}</td>
                         <td className="py-2.5">
-                          <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[10px] font-medium border ${
-                            job.status === "COMPLETED"
-                              ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/20"
-                              : job.status === "FAILED"
-                              ? "bg-rose-500/10 text-rose-400 border-rose-500/20"
-                              : "bg-amber-500/10 text-amber-400 border-amber-500/20"
-                          }`}>
-                            {job.status}
-                          </span>
+                          {job.status === "COMPLETED" ? (
+                            <Badge variant="success" dot>{job.status}</Badge>
+                          ) : job.status === "FAILED" ? (
+                            <Badge variant="danger" dot>{job.status}</Badge>
+                          ) : (
+                            <Badge variant="warning" dot>{job.status}</Badge>
+                          )}
                         </td>
-                        <td className="py-2.5 text-right font-medium text-zinc-300">{job.processedCount}</td>
+                        <td className="py-2.5 text-right font-semibold text-primary">{job.processedCount}</td>
                       </tr>
                     ))}
                   </tbody>
                 </table>
               </div>
             ) : (
-              <div className="py-8 text-center text-xs text-zinc-500">
+              <div className="py-8 text-center text-xs text-muted">
                 No scrape jobs executed yet.
               </div>
             )}
-          </div>
+          </Card>
         </div>
       </main>
 
@@ -511,6 +563,19 @@ export default function CampaignsPage() {
         onConfirm={handleDeleteCampaign}
         onCancel={() => setDeletingCampaign(null)}
       />
+
+      {/* Edit Campaign Modal */}
+      {editingCampaign && (
+        <EditCampaignModal
+          isOpen={editingCampaign !== null}
+          campaign={editingCampaign}
+          onClose={() => setEditingCampaign(null)}
+          onUpdated={() => {
+            fetchCampaigns();
+            setEditingCampaign(null);
+          }}
+        />
+      )}
     </div>
   );
 }

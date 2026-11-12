@@ -1,0 +1,41 @@
+[
+  {
+    "username": "toronto_dental_studio",
+    "fullName": "Toronto Dental Studio",
+    "biography": "Cosmetic & family dentistry in Toronto. Book online \u2193",
+    "followersCount": 4820,
+    "followsCount": 210,
+    "postsCount": 186,
+    "isBusinessAccount": true,
+    "businessCategoryName": "Dentist",
+    "verified": false,
+    "private": false,
+    "externalUrl": "https://torontodentalstudio.example.com",
+    "externalUrls": [
+      { "title": "Website", "url": "https://torontodentalstudio.example.com" },
+      { "title": "Booking", "url": "https://torontodentalstudio.example.com/book" }
+    ],
+    "public_email": "hello@torontodentalstudio.example.com",
+    "public_phone_number": "+1 416 555 0123",
+    "business_address_json": {
+      "street_address": "120 King St W",
+      "city_name": "Toronto",
+      "zip_code": "M5H 1J9"
+    },
+    "locationName": "Toronto, Ontario",
+    "latestPosts": [
+      {
+        "caption": "Smile makeover results",
+        "timestamp": "2026-10-28T15:20:00.000Z",
+        "likesCount": 142,
+        "commentsCount": 9
+      },
+      {
+        "caption": "Meet the team",
+        "timestamp": "2026-10-21T11:05:00.000Z",
+        "likesCount": 98,
+        "commentsCount": 4
+      }
+    ]
+  }
+]

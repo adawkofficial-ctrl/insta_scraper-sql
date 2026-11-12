@@ -173,9 +173,9 @@ export type CampaignMessagesResponse = {
     sentAt: Date | null;
     createdAt: Date;
     lead: {
-      username: string;
+      username: string | null;
       fullName: string | null;
-      profileUrl: string;
+      profileUrl: string | null;
     };
     attempts: Array<{
       id: string;

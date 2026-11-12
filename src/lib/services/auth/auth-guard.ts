@@ -2,7 +2,7 @@ import "server-only";
 
 import { cookies } from "next/headers";
 import { getPrismaClient } from "@/lib/db/prisma";
-import { NotFoundError, UnauthorizedError } from "@/lib/errors";
+import { ForbiddenError, NotFoundError, UnauthorizedError } from "@/lib/errors";
 import {
   SESSION_COOKIE_NAME,
   verifySessionToken,
@@ -68,6 +68,14 @@ export async function requireAuth(request?: Request): Promise<SafeUser> {
   const user = await getCurrentUser(request);
   if (!user) {
     throw new UnauthorizedError("AUTH_REQUIRED", "Authentication is required to perform this action.");
+  }
+  return user;
+}
+
+export async function requireAdmin(request?: Request): Promise<SafeUser> {
+  const user = await requireAuth(request);
+  if (user.role !== "ADMIN") {
+    throw new ForbiddenError("FORBIDDEN", "Administrator privileges are required to access this resource.");
   }
   return user;
 }

@@ -75,7 +75,7 @@ export async function notifyLeadReplied(params: {
 export async function notifyHighValueLead(params: {
   leadId: string;
   userId: string;
-  username: string;
+  username?: string | null;
   score: number;
   quality?: string | null;
   campaignName?: string | null;
@@ -86,7 +86,8 @@ export async function notifyHighValueLead(params: {
       return;
     }
 
-    const title = `⭐ High-Value Lead: @${params.username}`;
+    const leadName = params.username ? `@${params.username}` : "lead";
+    const title = `⭐ High-Value Lead: ${leadName}`;
     const details = [
       `Lead Score: ${params.score}/100`,
       params.quality ? `Quality: ${params.quality}` : null,

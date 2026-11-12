@@ -4,7 +4,7 @@ import { PrismaClient } from "../src/generated/prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 import { BulkMessageItemStatus } from "../src/generated/prisma/enums";
 
-const BASE_URL = process.env.TEST_BASE_URL || "http://localhost:3001";
+const BASE_URL = process.env.TEST_BASE_URL || "http://localhost:3005";
 const COOKIE = "insta_session";
 
 let passed = 0;
@@ -115,7 +115,7 @@ async function main() {
       ["malformed campaignId", { campaignId: "bad id!", query: "fitness", maxLeads: 5 }],
     ] as Array<[string, unknown]>) {
       const r = await call("/api/scraper/instagram/discover", A.cookie, "POST", payload);
-      check([400, 422].includes(r.status), `discover ${label} -> ${r.status}`);
+      check(r.status === 400, `discover ${label} -> ${r.status}`);
     }
     const crossDiscover = await call("/api/scraper/instagram/discover", B.cookie, "POST", { campaignId: cA.id, query: "fitness", maxLeads: 5 });
     check(crossDiscover.status === 404, `discover into another tenant campaign -> 404 (${crossDiscover.status})`);

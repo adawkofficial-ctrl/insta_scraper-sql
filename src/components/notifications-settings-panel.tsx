@@ -68,40 +68,30 @@ export function NotificationSettingsPanel() {
       "SESSION_EXPIRED",
       "SENDER_ERROR",
       "SYSTEM_ERROR",
-      "DAILY_SUMMARY",
     ],
   });
 
-  const [tokenInput, setTokenInput] = useState("");
-  const [isEditingToken, setIsEditingToken] = useState(false);
-  const [isLoading, setIsLoading] = useState(false);
+  const [isLoading, setIsLoading] = useState(true);
   const [isSaving, setIsSaving] = useState(false);
   const [isTesting, setIsTesting] = useState(false);
   const [isSendingSummary, setIsSendingSummary] = useState(false);
+  const [tokenInput, setTokenInput] = useState("");
+  const [isEditingToken, setIsEditingToken] = useState(false);
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
   const [successMsg, setSuccessMsg] = useState<string | null>(null);
   const [logs, setLogs] = useState<NotificationLogItem[]>([]);
   const [loadingLogs, setLoadingLogs] = useState(false);
 
   const fetchConfig = useCallback(async () => {
-    setIsLoading(true);
-    setErrorMsg(null);
     try {
       const res = await fetch("/api/notifications/config");
       if (!res.ok) throw new Error("Failed to load notification settings");
       const data = await res.json();
       if (data.config) {
-        setConfig({
-          ntfyTopic: data.config.ntfyTopic || "",
-          ntfyServerUrl: data.config.ntfyServerUrl || "https://ntfy.sh",
-          hasAccessToken: Boolean(data.config.hasAccessToken),
-          maskedAccessToken: data.config.maskedAccessToken || null,
-          enabled: Boolean(data.config.enabled),
-          eventTypes: Array.isArray(data.config.eventTypes) ? data.config.eventTypes : [],
-        });
+        setConfig(data.config);
       }
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : "Failed to load config");
+      setErrorMsg(err instanceof Error ? err.message : "Error loading settings");
     } finally {
       setIsLoading(false);
     }
@@ -110,52 +100,40 @@ export function NotificationSettingsPanel() {
   const fetchLogs = useCallback(async () => {
     setLoadingLogs(true);
     try {
-      const res = await fetch("/api/notifications/log?pageSize=5");
+      const res = await fetch("/api/notifications/log?limit=5");
       if (res.ok) {
         const data = await res.json();
         setLogs(data.logs || []);
       }
     } catch {
-      // safe ignore
+      // Non-critical, ignore
     } finally {
       setLoadingLogs(false);
     }
   }, []);
 
   useEffect(() => {
-    let ignore = false;
-    Promise.resolve().then(() => {
-      if (!ignore) {
-        void fetchConfig();
-        void fetchLogs();
-      }
-    });
-    return () => {
-      ignore = true;
-    };
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    fetchConfig();
+    fetchLogs();
   }, [fetchConfig, fetchLogs]);
 
   const handleToggleEventType = (key: string) => {
     setConfig((prev) => {
-      const current = prev.eventTypes;
-      const next = current.includes(key)
-        ? current.filter((t) => t !== key)
-        : [...current, key];
-      return { ...prev, eventTypes: next };
+      const exists = prev.eventTypes.includes(key);
+      const updated = exists
+        ? prev.eventTypes.filter((t) => t !== key)
+        : [...prev.eventTypes, key];
+      return { ...prev, eventTypes: updated };
     });
   };
 
   const handleSave = async (e: React.FormEvent) => {
     e.preventDefault();
+    setIsSaving(true);
     setErrorMsg(null);
     setSuccessMsg(null);
 
-    if (!config.ntfyTopic.trim()) {
-      setErrorMsg("Please enter an ntfy topic name.");
-      return;
-    }
-
-    setIsSaving(true);
     try {
       const payload: Record<string, unknown> = {
         ntfyTopic: config.ntfyTopic.trim(),
@@ -165,7 +143,7 @@ export function NotificationSettingsPanel() {
       };
 
       if (isEditingToken) {
-        payload.ntfyAccessToken = tokenInput.trim() || null;
+        payload.accessToken = tokenInput.trim() || null;
       }
 
       const res = await fetch("/api/notifications/config", {
@@ -176,69 +154,50 @@ export function NotificationSettingsPanel() {
 
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data.error?.message || "Failed to save notification settings");
+        throw new Error(data.error?.message || "Failed to save settings");
       }
 
-      setSuccessMsg("Notification settings saved successfully.");
+      setConfig(data.config);
       setIsEditingToken(false);
       setTokenInput("");
-      if (data.config) {
-        setConfig({
-          ntfyTopic: data.config.ntfyTopic,
-          ntfyServerUrl: data.config.ntfyServerUrl,
-          hasAccessToken: Boolean(data.config.hasAccessToken),
-          maskedAccessToken: data.config.maskedAccessToken,
-          enabled: Boolean(data.config.enabled),
-          eventTypes: data.config.eventTypes,
-        });
-      }
-      fetchLogs();
+      setSuccessMsg("Notification settings saved successfully.");
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : "Failed to save settings");
+      setErrorMsg(err instanceof Error ? err.message : "Failed to save");
     } finally {
       setIsSaving(false);
     }
   };
 
   const handleSendTest = async () => {
+    setIsTesting(true);
     setErrorMsg(null);
     setSuccessMsg(null);
 
-    if (!config.ntfyTopic.trim()) {
-      setErrorMsg("Please specify a topic name before testing.");
-      return;
-    }
-
-    setIsTesting(true);
     try {
       const res = await fetch("/api/notifications/test", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          ntfyTopic: config.ntfyTopic.trim(),
-          ntfyServerUrl: config.ntfyServerUrl.trim() || "https://ntfy.sh",
-          ntfyAccessToken: isEditingToken ? tokenInput.trim() || undefined : undefined,
-        }),
       });
 
       const data = await res.json();
       if (!res.ok) {
-        throw new Error(data.error?.message || "Test notification delivery failed");
+        throw new Error(data.error?.message || "Failed to send test notification");
       }
 
-      setSuccessMsg(`Test alert delivered successfully (${data.latencyMs ?? 0}ms)! Check your ntfy client.`);
+      setSuccessMsg(
+        `Test push sent to topic "${data.topic}"! Check your ntfy client. (Latency: ${data.latencyMs ?? 0}ms)`,
+      );
       fetchLogs();
     } catch (err) {
-      setErrorMsg(err instanceof Error ? err.message : "Test notification failed");
+      setErrorMsg(err instanceof Error ? err.message : "Failed to send test");
     } finally {
       setIsTesting(false);
     }
   };
 
   const handleSendDailySummary = async () => {
+    setIsSendingSummary(true);
     setErrorMsg(null);
     setSuccessMsg(null);
-    setIsSendingSummary(true);
 
     try {
       const res = await fetch("/api/notifications/daily-summary", {
@@ -260,13 +219,13 @@ export function NotificationSettingsPanel() {
   };
 
   return (
-    <div className="rounded-lg border border-zinc-800 bg-zinc-900 p-6 space-y-6">
-      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-zinc-800 pb-4">
+    <div className="rounded-2xl border border-subtle bg-surface shadow-card p-6 space-y-6 transition-colors">
+      <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4 border-b border-subtle pb-4">
         <div>
-          <h2 className="text-lg font-semibold text-zinc-100 flex items-center gap-2">
+          <h2 className="text-lg font-bold text-primary flex items-center gap-2">
             <span>🔔</span> Push Notifications (ntfy.sh)
           </h2>
-          <p className="mt-1 text-xs text-zinc-400">
+          <p className="mt-1 text-xs text-muted">
             Instant mobile and desktop push notifications for replies, high-value leads, and sender health.
             Free, no account or paid subscription needed.
           </p>
@@ -280,22 +239,22 @@ export function NotificationSettingsPanel() {
               checked={config.enabled}
               onChange={(e) => setConfig((prev) => ({ ...prev, enabled: e.target.checked }))}
             />
-            <div className="w-11 h-6 bg-zinc-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-zinc-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-blue-600"></div>
+            <div className="w-11 h-6 bg-subtle border border-subtle peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
           </label>
-          <span className="text-sm font-medium text-zinc-300">
+          <span className="text-sm font-semibold text-primary">
             {config.enabled ? "Active" : "Disabled"}
           </span>
         </div>
       </div>
 
       {errorMsg && (
-        <div className="p-3 text-sm text-red-400 bg-red-950/40 border border-red-800/60 rounded-md">
+        <div className="rounded-xl border border-rose-500/20 bg-rose-500/10 p-3.5 text-xs text-rose-700 dark:text-rose-300">
           {errorMsg}
         </div>
       )}
 
       {successMsg && (
-        <div className="p-3 text-sm text-emerald-400 bg-emerald-950/40 border border-emerald-800/60 rounded-md">
+        <div className="rounded-xl border border-emerald-500/20 bg-emerald-500/10 p-3.5 text-xs text-emerald-700 dark:text-emerald-300">
           {successMsg}
         </div>
       )}
@@ -303,8 +262,8 @@ export function NotificationSettingsPanel() {
       <form onSubmit={handleSave} className="space-y-5">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
-            <label className="block text-xs font-medium text-zinc-300 mb-1">
-              ntfy Topic Name <span className="text-red-400">*</span>
+            <label className="block text-xs font-medium text-secondary mb-1">
+              ntfy Topic Name <span className="text-rose-500">*</span>
             </label>
             <input
               type="text"
@@ -312,15 +271,15 @@ export function NotificationSettingsPanel() {
               placeholder="e.g. Instagram_notification"
               value={config.ntfyTopic}
               onChange={(e) => setConfig((prev) => ({ ...prev, ntfyTopic: e.target.value }))}
-              className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:border-blue-500 focus:outline-none"
+              className="w-full rounded-lg border border-subtle bg-surface px-3 py-2 text-xs text-primary placeholder-muted focus:border-indigo-500 focus:outline-none transition-colors"
             />
-            <p className="mt-1 text-xs text-zinc-500">
+            <p className="mt-1 text-xs text-muted">
               Download the <strong>ntfy app</strong> on your phone (iOS / Android) and subscribe to this topic name.
             </p>
           </div>
 
           <div>
-            <label className="block text-xs font-medium text-zinc-300 mb-1">
+            <label className="block text-xs font-medium text-secondary mb-1">
               Server URL
             </label>
             <input
@@ -328,21 +287,21 @@ export function NotificationSettingsPanel() {
               placeholder="https://ntfy.sh"
               value={config.ntfyServerUrl}
               onChange={(e) => setConfig((prev) => ({ ...prev, ntfyServerUrl: e.target.value }))}
-              className="w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:border-blue-500 focus:outline-none"
+              className="w-full rounded-lg border border-subtle bg-surface px-3 py-2 text-xs text-primary placeholder-muted focus:border-indigo-500 focus:outline-none transition-colors"
             />
-            <p className="mt-1 text-xs text-zinc-500">
+            <p className="mt-1 text-xs text-muted">
               Leave as <code>https://ntfy.sh</code> to use the public server, or enter your self-hosted URL.
             </p>
           </div>
         </div>
 
         <div>
-          <label className="block text-xs font-medium text-zinc-300 mb-1">
+          <label className="block text-xs font-medium text-secondary mb-1">
             Access Token (Optional for protected topics)
           </label>
           {!isEditingToken && config.hasAccessToken ? (
             <div className="flex items-center gap-3">
-              <span className="font-mono text-sm text-zinc-400 bg-zinc-800/80 px-3 py-1.5 rounded border border-zinc-700">
+              <span className="font-mono text-xs text-secondary bg-subtle px-3 py-1.5 rounded-lg border border-subtle">
                 {config.maskedAccessToken || "****"}
               </span>
               <button
@@ -351,7 +310,7 @@ export function NotificationSettingsPanel() {
                   setIsEditingToken(true);
                   setTokenInput("");
                 }}
-                className="text-xs text-blue-400 hover:text-blue-300 underline"
+                className="text-xs text-indigo-600 dark:text-indigo-400 hover:underline cursor-pointer"
               >
                 Change Token
               </button>
@@ -361,7 +320,7 @@ export function NotificationSettingsPanel() {
                   setIsEditingToken(true);
                   setTokenInput("");
                 }}
-                className="text-xs text-zinc-400 hover:text-zinc-300 underline"
+                className="text-xs text-muted hover:text-primary underline cursor-pointer"
               >
                 Clear
               </button>
@@ -373,26 +332,26 @@ export function NotificationSettingsPanel() {
                 placeholder={config.hasAccessToken ? "Enter new token or leave empty to clear" : "tk_..."}
                 value={tokenInput}
                 onChange={(e) => setTokenInput(e.target.value)}
-                className="max-w-md w-full rounded-md border border-zinc-700 bg-zinc-800 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:border-blue-500 focus:outline-none"
+                className="max-w-md w-full rounded-lg border border-subtle bg-surface px-3 py-2 text-xs text-primary placeholder-muted focus:border-indigo-500 focus:outline-none transition-colors"
               />
               {config.hasAccessToken && (
                 <button
                   type="button"
                   onClick={() => setIsEditingToken(false)}
-                  className="text-xs text-zinc-400 hover:text-zinc-300 px-2 py-1"
+                  className="text-xs text-muted hover:text-primary px-2 py-1 cursor-pointer"
                 >
                   Cancel
                 </button>
               )}
             </div>
           )}
-          <p className="mt-1 text-xs text-zinc-500">
+          <p className="mt-1 text-xs text-muted">
             Only required if your topic is protected with an ntfy write token.
           </p>
         </div>
 
-        <div className="border-t border-zinc-800 pt-4">
-          <label className="block text-xs font-semibold text-zinc-300 uppercase tracking-wider mb-3">
+        <div className="border-t border-subtle pt-4">
+          <label className="block text-xs font-semibold text-muted uppercase tracking-wider mb-3">
             Subscribed Events
           </label>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -401,23 +360,23 @@ export function NotificationSettingsPanel() {
               return (
                 <label
                   key={ev.key}
-                  className={`flex items-start gap-3 p-3 rounded-lg border cursor-pointer transition-colors ${
+                  className={`flex items-start gap-3 p-3 rounded-xl border cursor-pointer transition-all ${
                     isChecked
-                      ? "border-blue-700/60 bg-blue-950/20"
-                      : "border-zinc-800 bg-zinc-800/40 hover:border-zinc-700"
+                      ? "border-indigo-500/30 bg-indigo-500/10"
+                      : "border-subtle bg-subtle hover:bg-surface-hover"
                   }`}
                 >
                   <input
                     type="checkbox"
                     checked={isChecked}
                     onChange={() => handleToggleEventType(ev.key)}
-                    className="mt-1 h-4 w-4 rounded border-zinc-600 bg-zinc-700 text-blue-600 focus:ring-blue-500"
+                    className="mt-1 h-4 w-4 rounded border-subtle bg-surface text-indigo-600 focus:ring-indigo-500"
                   />
                   <div>
-                    <span className="text-sm font-medium text-zinc-200 block">
+                    <span className="text-xs font-semibold text-primary block">
                       {ev.label}
                     </span>
-                    <span className="text-xs text-zinc-400 block mt-0.5">
+                    <span className="text-xs text-muted block mt-0.5">
                       {ev.desc}
                     </span>
                   </div>
@@ -427,13 +386,13 @@ export function NotificationSettingsPanel() {
           </div>
         </div>
 
-        <div className="flex flex-wrap items-center justify-between gap-3 pt-3 border-t border-zinc-800">
+        <div className="flex flex-wrap items-center justify-between gap-3 pt-4 border-t border-subtle">
           <div className="flex items-center gap-2">
             <button
               type="button"
               disabled={isTesting || !config.ntfyTopic}
               onClick={handleSendTest}
-              className="inline-flex items-center justify-center rounded-md border border-zinc-700 bg-zinc-800 px-3.5 py-2 text-xs font-medium text-zinc-200 hover:bg-zinc-700 disabled:opacity-50 transition"
+              className="inline-flex items-center justify-center rounded-lg border border-subtle bg-surface hover:bg-surface-hover px-3.5 py-2 text-xs font-medium text-secondary hover:text-primary disabled:opacity-50 transition shadow-card cursor-pointer"
             >
               {isTesting ? "Testing..." : "Send Test Push"}
             </button>
@@ -441,7 +400,7 @@ export function NotificationSettingsPanel() {
               type="button"
               disabled={isSendingSummary || !config.enabled}
               onClick={handleSendDailySummary}
-              className="inline-flex items-center justify-center rounded-md border border-zinc-700 bg-zinc-800 px-3.5 py-2 text-xs font-medium text-zinc-200 hover:bg-zinc-700 disabled:opacity-50 transition"
+              className="inline-flex items-center justify-center rounded-lg border border-subtle bg-surface hover:bg-surface-hover px-3.5 py-2 text-xs font-medium text-secondary hover:text-primary disabled:opacity-50 transition shadow-card cursor-pointer"
             >
               {isSendingSummary ? "Sending..." : "Send Daily Summary Now"}
             </button>
@@ -450,7 +409,7 @@ export function NotificationSettingsPanel() {
           <button
             type="submit"
             disabled={isSaving || isLoading}
-            className="inline-flex items-center justify-center rounded-md bg-blue-600 px-4 py-2 text-xs font-medium text-white hover:bg-blue-500 disabled:opacity-50 transition"
+            className="inline-flex items-center justify-center rounded-lg bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 px-4 py-2 text-xs font-semibold text-white shadow-sm shadow-indigo-500/20 disabled:opacity-50 transition cursor-pointer"
           >
             {isSaving ? "Saving..." : "Save Settings"}
           </button>
@@ -458,67 +417,67 @@ export function NotificationSettingsPanel() {
       </form>
 
       {/* Recent Delivery Logs */}
-      <div className="border-t border-zinc-800 pt-4">
+      <div className="border-t border-subtle pt-4">
         <div className="flex items-center justify-between mb-3">
-          <h3 className="text-xs font-semibold text-zinc-400 uppercase tracking-wider">
+          <h3 className="text-xs font-semibold text-muted uppercase tracking-wider">
             Recent Delivery Logs (Past 5)
           </h3>
           <button
             type="button"
             onClick={fetchLogs}
             disabled={loadingLogs}
-            className="text-xs text-zinc-400 hover:text-zinc-200 underline"
+            className="text-xs text-muted hover:text-primary underline cursor-pointer"
           >
             {loadingLogs ? "Refreshing..." : "Refresh Logs"}
           </button>
         </div>
 
         {logs.length === 0 ? (
-          <p className="text-xs text-zinc-500 italic py-2">
+          <p className="text-xs text-muted italic py-2">
             No notification logs yet. Send a test push to verify delivery.
           </p>
         ) : (
-          <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs text-zinc-300">
-              <thead className="bg-zinc-800/60 text-zinc-400 border-b border-zinc-800">
+          <div className="overflow-x-auto rounded-xl border border-subtle">
+            <table className="w-full text-left text-xs text-secondary">
+              <thead className="bg-subtle text-muted border-b border-subtle text-[11px] font-semibold uppercase tracking-wider">
                 <tr>
-                  <th className="py-2 px-3">Event</th>
-                  <th className="py-2 px-3">Status</th>
-                  <th className="py-2 px-3">Latency</th>
-                  <th className="py-2 px-3">Time</th>
-                  <th className="py-2 px-3">Details</th>
+                  <th className="py-2.5 px-3">Event</th>
+                  <th className="py-2.5 px-3">Status</th>
+                  <th className="py-2.5 px-3">Latency</th>
+                  <th className="py-2.5 px-3">Time</th>
+                  <th className="py-2.5 px-3">Details</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-zinc-800">
+              <tbody className="divide-y divide-subtle bg-surface">
                 {logs.map((log) => (
-                  <tr key={log.id} className="hover:bg-zinc-800/30">
-                    <td className="py-2 px-3 font-mono text-[11px] text-zinc-300">
+                  <tr key={log.id} className="hover:bg-surface-hover transition-colors">
+                    <td className="py-2 px-3 font-mono text-[11px] text-primary">
                       {log.eventType}
                     </td>
                     <td className="py-2 px-3">
                       <span
-                        className={`inline-block px-2 py-0.5 rounded text-[10px] font-semibold ${
+                        className={`inline-block px-2 py-0.5 rounded-full text-[10px] font-semibold border ${
                           log.status === "SENT"
-                            ? "bg-emerald-950/80 text-emerald-300 border border-emerald-800/60"
+                            ? "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/20"
                             : log.status === "SKIPPED_DISABLED"
-                            ? "bg-zinc-800 text-zinc-400"
-                            : "bg-red-950/80 text-red-300 border border-red-800/60"
+                            ? "bg-slate-500/10 text-slate-700 dark:text-slate-300 border-slate-500/20"
+                            : "bg-rose-500/10 text-rose-700 dark:text-rose-400 border-rose-500/20"
                         }`}
                       >
                         {log.status}
                       </span>
                     </td>
-                    <td className="py-2 px-3 text-zinc-400">
+                    <td className="py-2 px-3 text-muted">
                       {log.latencyMs !== null ? `${log.latencyMs}ms` : "-"}
                     </td>
-                    <td className="py-2 px-3 text-zinc-400">
+                    <td className="py-2 px-3 text-muted">
                       {new Date(log.createdAt).toLocaleTimeString([], {
                         hour: "2-digit",
                         minute: "2-digit",
                         second: "2-digit",
                       })}
                     </td>
-                    <td className="py-2 px-3 text-zinc-400 truncate max-w-xs">
+                    <td className="py-2 px-3 text-muted truncate max-w-xs">
                       {log.errorReason || "-"}
                     </td>
                   </tr>

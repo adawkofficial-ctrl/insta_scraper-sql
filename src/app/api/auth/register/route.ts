@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { registerUser, SESSION_COOKIE_NAME, SESSION_COOKIE_OPTIONS } from "@/lib/services/auth";
-import { checkRateLimit, getClientIp } from "@/lib/services/auth/rate-limiter";
+import { checkAuthRateLimit, getClientIp } from "@/lib/services/auth/rate-limiter";
 import { handleRouteError } from "@/lib/errors";
 
 export const runtime = "nodejs";
@@ -8,9 +8,30 @@ export const dynamic = "force-dynamic";
 
 export async function POST(request: Request): Promise<Response> {
   try {
-    // Rate limit: 5 registration attempts per 15 minutes per IP
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      return NextResponse.json(
+        {
+          error: {
+            code: "INVALID_JSON",
+            message: "Invalid JSON request body.",
+          },
+        },
+        { status: 400 },
+      );
+    }
+
+    const payload = (body && typeof body === "object" ? body : {}) as {
+      email?: string;
+      password?: string;
+      name?: string;
+    };
+
+    // Rate limit: 5 registration attempts per 15 minutes per IP and email
     const clientIp = getClientIp(request);
-    const rateCheck = checkRateLimit(`register:${clientIp}`, 5, 15 * 60_000);
+    const rateCheck = checkAuthRateLimit("register", clientIp, payload.email);
 
     if (!rateCheck.allowed) {
       return NextResponse.json(
@@ -26,21 +47,6 @@ export async function POST(request: Request): Promise<Response> {
             "Retry-After": Math.ceil(rateCheck.resetMs / 1000).toString(),
           },
         },
-      );
-    }
-
-    let body: unknown;
-    try {
-      body = await request.json();
-    } catch {
-      return NextResponse.json(
-        {
-          error: {
-            code: "INVALID_JSON",
-            message: "Invalid JSON request body.",
-          },
-        },
-        { status: 400 },
       );
     }
 

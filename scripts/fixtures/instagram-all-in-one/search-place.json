@@ -1,0 +1,18 @@
+[
+  {
+    "name": "Toronto Dental Studio",
+    "address": "120 King St W, Toronto, ON",
+    "city": "Toronto",
+    "category": "Dentist",
+    "latitude": 43.6487,
+    "longitude": -79.3817
+  },
+  {
+    "name": "Old Montreal Dental",
+    "address": "400 Rue Saint-Paul, Montreal, QC",
+    "city": "Montreal",
+    "category": "Dentist",
+    "latitude": 45.5019,
+    "longitude": -73.5537
+  }
+]

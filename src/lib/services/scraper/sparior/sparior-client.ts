@@ -31,24 +31,25 @@ export type SpariorRequestContext = {
 };
 
 export function maskEnvValue(val: string | undefined): string {
-  if (!val) return "(undefined)";
-  const trimmed = val.trim();
-  if (trimmed.length <= 4) return trimmed;
-  return `***${trimmed.slice(-4)}`;
+  if (!val || val.trim().length === 0) return "missing";
+  return "set";
 }
 
 export function logRuntimeSpariorEnv(prefix = "[SPARIOR-RUNTIME-ENV]"): void {
+  // Only log Sparior configuration if Sparior is the active provider
+  if (process.env.SCRAPER_PROVIDER !== "sparior") {
+    return;
+  }
   console.log(
     `${prefix} ` +
-      `SCRAPER_PROVIDER=${process.env.SCRAPER_PROVIDER ?? "(undefined)"} ` +
+      `SCRAPER_PROVIDER=sparior ` +
       `SPARIOR_API_KEY=${maskEnvValue(process.env.SPARIOR_API_KEY)} ` +
       `SPARIOR_API_HOST=${maskEnvValue(process.env.SPARIOR_API_HOST)} ` +
       `SPARIOR_BASE_URL=${maskEnvValue(process.env.SPARIOR_BASE_URL)}`,
   );
 }
 
-// One-time log at module load
-logRuntimeSpariorEnv("[SPARIOR-MODULE-LOAD]");
+// Module-load log removed per log hygiene requirements.
 
 export class SpariorClient {
   private readonly apiKey: string;

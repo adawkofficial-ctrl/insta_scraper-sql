@@ -4,7 +4,7 @@ import path from "node:path";
 import { PrismaClient } from "../src/generated/prisma/client";
 import { PrismaPg } from "@prisma/adapter-pg";
 
-const BASE_URL = process.env.TEST_BASE_URL || "http://localhost:3001";
+const BASE_URL = process.env.TEST_BASE_URL || "http://localhost:3005";
 const COOKIE_NAME = "insta_session";
 
 let passed = 0;
@@ -218,7 +218,7 @@ async function main() {
 
     for (const [label, limit] of [["0", 0], ["-1", -1], ["101", 101], ["999999", 999999], ['"abc"', "abc"]] as Array<[string, unknown]>) {
       const res = await status(`/api/campaigns/${campA.id}`, A.cookie, "PATCH", { leadLimit: limit });
-      check([400, 422].includes(res.status), `campaign leadLimit=${label} -> 400/422 (got ${res.status})`);
+      check(res.status === 400, `campaign leadLimit=${label} -> 400 (got ${res.status})`);
     }
     const massAssign = await status(`/api/campaigns/${campA.id}`, A.cookie, "PATCH", { userId: B.userId, name: "ok" });
     check(massAssign.status === 400, `mass-assignment userId rejected -> 400 (got ${massAssign.status})`);

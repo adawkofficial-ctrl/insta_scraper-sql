@@ -1,6 +1,6 @@
 import { NextResponse } from "next/server";
 import { loginUser, SESSION_COOKIE_NAME, SESSION_COOKIE_OPTIONS } from "@/lib/services/auth";
-import { checkRateLimit, getClientIp } from "@/lib/services/auth/rate-limiter";
+import { checkAuthRateLimit, getClientIp } from "@/lib/services/auth/rate-limiter";
 import { handleRouteError } from "@/lib/errors";
 
 export const runtime = "nodejs";
@@ -8,27 +8,6 @@ export const dynamic = "force-dynamic";
 
 export async function POST(request: Request): Promise<Response> {
   try {
-    // Rate limit: 10 attempts per minute per IP
-    const clientIp = getClientIp(request);
-    const rateCheck = checkRateLimit(`login:${clientIp}`, 10, 60_000);
-
-    if (!rateCheck.allowed) {
-      return NextResponse.json(
-        {
-          error: {
-            code: "RATE_LIMITED",
-            message: "Too many login attempts. Please try again in a few moments.",
-          },
-        },
-        {
-          status: 429,
-          headers: {
-            "Retry-After": Math.ceil(rateCheck.resetMs / 1000).toString(),
-          },
-        },
-      );
-    }
-
     let body: unknown;
     try {
       body = await request.json();
@@ -41,6 +20,29 @@ export async function POST(request: Request): Promise<Response> {
           },
         },
         { status: 400 },
+      );
+    }
+
+    const payload = (body && typeof body === "object" ? body : {}) as { email?: string; password?: string };
+
+    // Rate limit: 5 attempts per 15 minutes per IP and email
+    const clientIp = getClientIp(request);
+    const rateCheck = checkAuthRateLimit("login", clientIp, payload.email);
+
+    if (!rateCheck.allowed) {
+      return NextResponse.json(
+        {
+          error: {
+            code: "RATE_LIMITED",
+            message: "Too many login attempts. Please try again later.",
+          },
+        },
+        {
+          status: 429,
+          headers: {
+            "Retry-After": Math.ceil(rateCheck.resetMs / 1000).toString(),
+          },
+        },
       );
     }
 

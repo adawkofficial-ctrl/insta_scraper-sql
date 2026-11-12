@@ -1,12 +1,9 @@
 import "server-only";
 
-import { type ActorRun } from "apify-client";
 
 import { getServerEnv } from "@/lib/env";
-import { getApifyClient } from "../scraper/apify-client";
-import { classifyApifyProviderError } from "../scraper/apify-error-classifier";
+import { runActorSafely } from "../scraper/apify-cost-guard";
 import { normalizeInstagramUsername } from "../scraper/instagram-profile";
-import { ProviderError, toProviderError } from "../provider-error";
 import type {
   DiscoveredProfile,
   DiscoveryInput,
@@ -21,8 +18,6 @@ import type {
 export const DISCOVERY_ACTOR_ID = "apify/instagram-search-scraper";
 
 const SEARCH_TYPE_PROFILE = "user";
-const RUN_WAIT_SECS = 180;
-const RUN_TIMEOUT_SECS = 300;
 
 function log(message: string): void {
   if (process.env.NODE_ENV === "production") {
@@ -53,108 +48,49 @@ export class ApifyDiscoveryProvider implements DiscoveryProvider {
   readonly name = "apify";
 
   async discover(input: DiscoveryInput): Promise<DiscoveryResult> {
-    const client = getApifyClient();
     const actorId = getServerEnv("APIFY_DISCOVERY_ACTOR_ID") ?? DISCOVERY_ACTOR_ID;
 
     const executedQueries =
       input.queries && input.queries.length > 0 ? input.queries : [input.query];
     const searchTerm = executedQueries.join(", ");
 
+    const envSearchLimit = process.env.APIFY_DISCOVERY_SEARCH_LIMIT
+      ? Number.parseInt(process.env.APIFY_DISCOVERY_SEARCH_LIMIT, 10)
+      : 500;
     const actorInput = {
       search: searchTerm,
       searchType: SEARCH_TYPE_PROFILE,
-      searchLimit: Math.min(input.limit, 250),
+      searchLimit: Math.min(input.limit, envSearchLimit > 0 ? envSearchLimit : 500),
     };
 
     log(
       `[DISCOVERY] actor=${actorId} input=${describeDiscoveryActorInput(actorInput)}`,
     );
 
-    let run: ActorRun;
-    try {
-      run = await client.actor(actorId).call(actorInput, {
-        waitSecs: RUN_WAIT_SECS,
-        timeout: RUN_TIMEOUT_SECS,
-        log: null,
-      });
-    } catch (error) {
-      throw toProviderError(
-        this.name,
-        "discover",
-        error,
-        classifyApifyProviderError(error) ?? "actor_start_failed",
-      );
-    }
-
-    if (run.status === "READY" || run.status === "RUNNING") {
-      try {
-        await client.run(run.id).abort();
-      } catch {
-        // The run may have finished between polling and the abort attempt.
-      }
-      throw new ProviderError(
-        this.name,
-        "discover",
-        `Discovery run ${run.id} did not finish within ${RUN_WAIT_SECS}s.`,
-        { code: "run_timeout" },
-      );
-    }
-
-    if (run.status !== "SUCCEEDED") {
-      throw new ProviderError(
-        this.name,
-        "discover",
-        `Discovery run ${run.id} finished with status ${run.status}${
-          run.statusMessage === undefined ? "" : `: ${run.statusMessage}`
-        }.`,
-        { code: "actor_failed" },
-      );
-    }
-
-    const datasetId = run.defaultDatasetId ?? null;
-    if (datasetId === null) {
-      throw new ProviderError(
-        this.name,
-        "discover",
-        `Discovery run ${run.id} did not produce a dataset.`,
-        { code: "dataset_failed" },
-      );
-    }
-
-    let items: unknown[];
-    try {
-      const { items: datasetItems } = await client
-        .dataset(datasetId)
-        .listItems();
-      items = datasetItems;
-    } catch (error) {
-      throw toProviderError(
-        this.name,
-        "discover",
-        error,
-        classifyApifyProviderError(error) ?? "dataset_failed",
-      );
-    }
-
-    const usageTotalUsd = (run as unknown as { usageTotalUsd?: number })?.usageTotalUsd;
-    const computeUnits = run.stats?.computeUnits;
+    const safeResult = await runActorSafely(actorId, actorInput, {
+      maxItems: actorInput.searchLimit,
+      campaignId: input.campaignId ?? undefined,
+      userId: input.userId ?? undefined,
+      operationName: "instagram_search",
+    });
 
     return {
-      candidates: extractCandidates(items),
-      runId: run.id,
-      datasetId,
+      candidates: extractCandidates(safeResult.items),
+      runId: safeResult.run.id,
+      datasetId: safeResult.run.defaultDatasetId ?? "none",
       actor: actorId,
       executedQueries,
-      usageTotalUsd,
-      computeUnits,
+      usageTotalUsd: safeResult.usageTotalUsd,
+      computeUnits: safeResult.computeUnits,
     };
   }
 }
 
 /**
- * Discovery only needs profile identifiers. The search Actor's "user" results
- * include `username` + `url` (plus full profile data we deliberately ignore here
- * so enrichment stays in the existing profile scraper).
+ * Discovery returns profile identifiers plus lightweight search-stage data
+ * (bio snippet, category, follower count, business address, posts) used by the
+ * pre-enrichment relevance filter to reject obvious mismatches before spending
+ * expensive enrichment calls.
  */
 function extractCandidates(items: unknown[]): DiscoveredProfile[] {
   const seen = new Set<string>();
@@ -182,9 +118,58 @@ function extractCandidates(items: unknown[]): DiscoveredProfile[] {
     }
 
     seen.add(username);
+
+    const fullName = typeof record.fullName === "string" ? record.fullName : null;
+    const biography =
+      typeof record.biography === "string"
+        ? record.biography
+        : typeof record.bio === "string"
+          ? record.bio
+          : null;
+    const category = typeof record.category === "string" ? record.category : null;
+    const businessCategoryName =
+      typeof record.businessCategoryName === "string"
+        ? record.businessCategoryName
+        : null;
+    const location = typeof record.location === "string" ? record.location : null;
+    const followers =
+      typeof record.followersCount === "number"
+        ? record.followersCount
+        : typeof record.followers === "number"
+          ? record.followers
+          : null;
+    const externalUrl =
+      typeof record.externalUrl === "string"
+        ? record.externalUrl
+        : typeof record.website === "string"
+          ? record.website
+          : null;
+    const businessAddress =
+      record.businessAddress && typeof record.businessAddress === "object"
+        ? (record.businessAddress as {
+            city_name?: string;
+            street_address?: string;
+            zip_code?: string;
+          })
+        : null;
+    const latestPosts = Array.isArray(record.latestPosts)
+      ? (record.latestPosts as Array<{ caption?: string; locationName?: string }>)
+      : null;
+
     candidates.push({
       username,
       profileUrl: rawUrl ?? `https://www.instagram.com/${username}`,
+      fullName,
+      biography,
+      category,
+      businessCategoryName,
+      location,
+      followers,
+      followersCount: followers,
+      externalUrl,
+      website: externalUrl,
+      businessAddress,
+      latestPosts,
     });
   }
 

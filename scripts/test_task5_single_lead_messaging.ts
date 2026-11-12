@@ -134,7 +134,7 @@ async function main() {
     const rendered = renderTemplate(
       "Hi {{firstName}}, loved your {{category}} content at @{{username}}!",
       {
-        username: leadA.username,
+        username: leadA.username!,
         fullName: leadA.fullName,
         category: leadA.category,
       },

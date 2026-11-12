@@ -1,1 +1,197 @@
 @import "tailwindcss";
+
+/* ==========================================================================
+   INSTASCRAPER DESIGN SYSTEM TOKENS (Tailwind v4)
+   Light & Dark Mode Token Specifications
+   Default is DARK mode on first load for consistency with brand identity.
+   ========================================================================== */
+
+:root {
+  /* Font Families */
+  --font-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+
+  /* Backgrounds */
+  --bg-app: #f8fafc;                  /* Canvas / page background */
+  --bg-surface: #ffffff;              /* Standard card & container surface */
+  --bg-surface-elevated: #ffffff;     /* Modals, dropdowns, floating panels */
+  --bg-surface-hover: #f1f5f9;        /* Hover state for interactive items */
+  --bg-subtle: #f1f5f9;               /* Light contrast panels / inner wells */
+  --bg-input: #ffffff;                /* Form input background */
+
+  /* Borders */
+  --border-subtle: #e2e8f0;           /* Soft divider / card perimeter */
+  --border-default: #cbd5e1;          /* Interactive borders & inputs */
+  --border-strong: #94a3b8;           /* High contrast borders */
+
+  /* Typography Colors */
+  --text-primary: #0f172a;            /* Main titles, headings, high-contrast text */
+  --text-secondary: #334155;          /* Subtitles, body text, card labels */
+  --text-muted: #64748b;              /* Captions, timestamps, disabled indicators */
+  --text-faint: #94a3b8;              /* Micro-labels, subtle dividers */
+
+  /* Brand Accent — Modern Indigo/Violet */
+  --primary: #4f46e5;                 /* Primary buttons & active nav indicators */
+  --primary-hover: #4338ca;           /* Button hover / active */
+  --primary-fg: #ffffff;              /* Text on primary */
+  --primary-subtle: #eef2ff;          /* Primary tint backgrounds */
+  --primary-border: #c7d2fe;          /* Primary boundary borders */
+
+  /* Semantic — Success (Leads Contacted / Approved / Scrape Completed) */
+  --success: #059669;
+  --success-hover: #047857;
+  --success-subtle: #ecfdf5;
+  --success-border: #a7f3d0;
+  --success-fg: #065f46;
+
+  /* Semantic — Warning (Pending Review / Running / In Progress) */
+  --warning: #d97706;
+  --warning-hover: #b45309;
+  --warning-subtle: #fffbeb;
+  --warning-border: #fde68a;
+  --warning-fg: #92400e;
+
+  /* Semantic — Danger (Failed / Blocked / Rejected / DNC) */
+  --danger: #e11d48;
+  --danger-hover: #be123c;
+  --danger-subtle: #fff1f2;
+  --danger-border: #fecdd3;
+  --danger-fg: #9f1239;
+
+  /* Semantic — Info / Notice (Queued / Idle / New Leads) */
+  --info: #0284c7;
+  --info-hover: #0369a1;
+  --info-subtle: #f0f9ff;
+  --info-border: #bae6fd;
+  --info-fg: #075985;
+
+  /* Elevation & Shadows */
+  --shadow-card: 0 1px 3px 0 rgb(0 0 0 / 0.05), 0 1px 2px -1px rgb(0 0 0 / 0.05);
+  --shadow-card-hover: 0 4px 6px -1px rgb(0 0 0 / 0.07), 0 2px 4px -2px rgb(0 0 0 / 0.05);
+  --shadow-popover: 0 10px 15px -3px rgb(0 0 0 / 0.08), 0 4px 6px -4px rgb(0 0 0 / 0.05);
+}
+
+.dark {
+  /* Backgrounds */
+  --bg-app: #090d16;                  /* Deep obsidian page background */
+  --bg-surface: #0f172a;              /* Slate-900 surface for cards */
+  --bg-surface-elevated: #162032;     /* Slightly lighter for elevated panels */
+  --bg-surface-hover: #1e293b;        /* Slate-800 hover state */
+  --bg-subtle: #141d2e;               /* Inner card wells & code blocks */
+  --bg-input: #0b1120;                /* Input background */
+
+  /* Borders */
+  --border-subtle: #1e293b;           /* Slate-800 soft borders */
+  --border-default: #334155;          /* Slate-700 interactive borders */
+  --border-strong: #475569;           /* Slate-600 high contrast */
+
+  /* Typography Colors */
+  --text-primary: #f8fafc;            /* Crisp white/slate-50 titles */
+  --text-secondary: #cbd5e1;          /* Slate-300 secondary text */
+  --text-muted: #94a3b8;              /* Slate-400 captions & meta */
+  --text-faint: #64748b;              /* Slate-500 micro-labels */
+
+  /* Brand Accent — Modern Indigo/Violet (tuned for dark background luminance) */
+  --primary: #6366f1;
+  --primary-hover: #818cf8;
+  --primary-fg: #ffffff;
+  --primary-subtle: rgba(99, 102, 241, 0.15);
+  --primary-border: rgba(99, 102, 241, 0.35);
+
+  /* Semantic — Success */
+  --success: #34d399;
+  --success-hover: #6ee7b7;
+  --success-subtle: rgba(16, 185, 129, 0.14);
+  --success-border: rgba(16, 185, 129, 0.3);
+  --success-fg: #6ee7b7;
+
+  /* Semantic — Warning */
+  --warning: #fbbf24;
+  --warning-hover: #fcd34d;
+  --warning-subtle: rgba(245, 158, 11, 0.14);
+  --warning-border: rgba(245, 158, 11, 0.3);
+  --warning-fg: #fde68a;
+
+  /* Semantic — Danger */
+  --danger: #f43f5e;
+  --danger-hover: #fb7185;
+  --danger-subtle: rgba(244, 63, 94, 0.14);
+  --danger-border: rgba(244, 63, 94, 0.3);
+  --danger-fg: #fecdd3;
+
+  /* Semantic — Info / Notice */
+  --info: #38bdf8;
+  --info-hover: #7dd3fc;
+  --info-subtle: rgba(56, 189, 248, 0.14);
+  --info-border: rgba(56, 189, 248, 0.3);
+  --info-fg: #bae6fd;
+
+  /* Elevation & Shadows */
+  --shadow-card: 0 1px 3px 0 rgb(0 0 0 / 0.35), 0 1px 2px -1px rgb(0 0 0 / 0.35);
+  --shadow-card-hover: 0 4px 6px -1px rgb(0 0 0 / 0.45), 0 2px 4px -2px rgb(0 0 0 / 0.4);
+  --shadow-popover: 0 10px 15px -3px rgb(0 0 0 / 0.5), 0 4px 6px -4px rgb(0 0 0 / 0.4);
+}
+
+/* ==========================================================================
+   SEMANTIC UTILITY ALIASES
+   These classes automatically adapt based on light/dark mode without extra variants.
+   ========================================================================== */
+
+.bg-app {
+  background-color: var(--bg-app);
+}
+
+.bg-surface {
+  background-color: var(--bg-surface);
+}
+
+.bg-surface-elevated {
+  background-color: var(--bg-surface-elevated);
+}
+
+.bg-surface-hover {
+  background-color: var(--bg-surface-hover);
+}
+
+.bg-subtle {
+  background-color: var(--bg-subtle);
+}
+
+.border-subtle {
+  border-color: var(--border-subtle);
+}
+
+.border-default {
+  border-color: var(--border-default);
+}
+
+.border-strong {
+  border-color: var(--border-strong);
+}
+
+.text-primary {
+  color: var(--text-primary);
+}
+
+.text-secondary {
+  color: var(--text-secondary);
+}
+
+.text-muted {
+  color: var(--text-muted);
+}
+
+.text-faint {
+  color: var(--text-faint);
+}
+
+.shadow-card {
+  box-shadow: var(--shadow-card);
+}
+
+.shadow-card-hover {
+  box-shadow: var(--shadow-card-hover);
+}
+
+.shadow-popover {
+  box-shadow: var(--shadow-popover);
+}

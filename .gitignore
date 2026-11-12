@@ -57,8 +57,17 @@ storage_state.json
 *.session
 
 # Instagram sender account browser sessions (one profile dir per sender)
+data/instagram-sessions
 /data/instagram-sessions/
 /data/
+
+# Debug screenshots & images
+*.png
+
+# Build artifacts & caches
+tsconfig.tsbuildinfo
+node_modules
+/node_modules
 
 # Local tooling output (duplicate reports, etc.)
 /tmp/
