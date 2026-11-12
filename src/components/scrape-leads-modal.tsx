@@ -594,25 +594,60 @@ export function ScrapeLeadsModal({
               </div>
             )}
             <div className="flex items-center gap-2 font-semibold">
-              {discoverResult.meta.persisted > 0 ? (
+              {discoverResult.meta.persisted > 0 || (discoverResult.meta.usageSummary as { contactOnlyCount?: number })?.contactOnlyCount ? (
                 <>
                   <svg className="h-5 w-5 text-emerald-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
                   </svg>
-                  <span>Discovery Finished: {discoverResult.meta.persisted} Leads Added!</span>
+                  <span>
+                    {(discoverResult.meta.usageSummary as { summaryHeadline?: string })?.summaryHeadline ||
+                      (discoverResult.meta.notice?.startsWith("IG-ready:")
+                        ? discoverResult.meta.notice
+                        : `Discovery Finished: ${discoverResult.meta.persisted} Leads Added!`)}
+                  </span>
                 </>
               ) : (
                 <>
                   <svg className="h-5 w-5 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                     <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
                   </svg>
-                  <span>Discovery Finished (0 Leads Added)</span>
+                  <span>
+                    {(discoverResult.meta.usageSummary as { summaryHeadline?: string })?.summaryHeadline ||
+                      "Discovery Finished (0 Leads Added)"}
+                  </span>
                 </>
               )}
             </div>
-            {discoverResult.meta.notice && (
+            {discoverResult.meta.notice && !discoverResult.meta.notice.startsWith("IG-ready:") && (
               <p className="mt-1 text-xs text-amber-200/90">{discoverResult.meta.notice}</p>
             )}
+            {/* Skip Table */}
+            {Array.isArray((discoverResult.meta.usageSummary as { skipTable?: Array<{ reason: string; count: number; examples: string[] }> })?.skipTable) &&
+              ((discoverResult.meta.usageSummary as { skipTable: Array<{ reason: string; count: number; examples: string[] }> }).skipTable.length > 0) && (
+                <div className="mt-2 rounded border border-zinc-800 bg-zinc-950/60 p-2 text-xs font-mono">
+                  <div className="text-[10px] uppercase font-bold text-zinc-400 mb-1">Skip / Rejection Summary</div>
+                  <table className="w-full text-left text-[11px]">
+                    <thead>
+                      <tr className="border-b border-zinc-800 text-zinc-500">
+                        <th className="py-1">Reason</th>
+                        <th className="py-1 text-right">Count</th>
+                        <th className="py-1 pl-3">Examples</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {(discoverResult.meta.usageSummary as { skipTable: Array<{ reason: string; count: number; examples: string[] }> }).skipTable.map((row) => (
+                        <tr key={row.reason} className="border-b border-zinc-900 text-zinc-300">
+                          <td className="py-1 font-semibold text-amber-400">{row.reason}</td>
+                          <td className="py-1 text-right">{row.count}</td>
+                          <td className="py-1 pl-3 text-zinc-400 truncate max-w-[200px]" title={row.examples.join(", ")}>
+                            {row.examples.join(", ") || "—"}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              )}
             <p className="mt-1 text-[11px] text-zinc-400 font-mono">
               Provider: {discoverResult.meta.discoveryActor} &bull; Enrichment:{" "}
               {discoverResult.meta.enrichmentActor} &bull; Cost per saved lead:{" "}

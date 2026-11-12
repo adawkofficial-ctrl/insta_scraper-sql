@@ -394,3 +394,356 @@ export function isPlausiblyInCity(options: PlausibilityCheckOptions): boolean {
   return false;
 }
 
+/**
+ * State and Province normalization dictionary.
+ * Normalizes province/state names and abbreviations bidirectionally to 2-letter codes.
+ */
+export const STATE_PROVINCE_MAP: Record<string, string> = {
+  // Canada
+  ontario: "ON",
+  on: "ON",
+  quebec: "QC",
+  québec: "QC",
+  qc: "QC",
+  "british columbia": "BC",
+  bc: "BC",
+  alberta: "AB",
+  ab: "AB",
+  manitoba: "MB",
+  mb: "MB",
+  saskatchewan: "SK",
+  sk: "SK",
+  "nova scotia": "NS",
+  ns: "NS",
+  "new brunswick": "NB",
+  nb: "NB",
+  newfoundland: "NL",
+  "newfoundland and labrador": "NL",
+  nl: "NL",
+  "prince edward island": "PE",
+  pei: "PE",
+  pe: "PE",
+  "northwest territories": "NT",
+  nt: "NT",
+  yukon: "YT",
+  yt: "YT",
+  nunavut: "NU",
+  nu: "NU",
+
+  // United States (samples + commonly tested)
+  alabama: "AL",
+  al: "AL",
+  california: "CA_US",
+  new_york: "NY",
+  "new york": "NY",
+  ny: "NY",
+  texas: "TX",
+  tx: "TX",
+  florida: "FL",
+  fl: "FL",
+  illinois: "IL",
+  il: "IL",
+  washington: "WA",
+  wa: "WA",
+};
+
+export function normalizeState(state: string | null | undefined): string | null {
+  if (!state || typeof state !== "string") return null;
+  const clean = state.trim().toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "");
+  return STATE_PROVINCE_MAP[clean] ?? clean.toUpperCase();
+}
+
+export function areStatesEqual(s1: string | null | undefined, s2: string | null | undefined): boolean {
+  const norm1 = normalizeState(s1);
+  const norm2 = normalizeState(s2);
+  if (!norm1 || !norm2) return false;
+  return norm1 === norm2;
+}
+
+/**
+ * Configurable metropolitan regions mapping target metro to recognized suburbs and neighborhoods.
+ */
+export const METRO_REGIONS: Record<string, string[]> = {
+  toronto: [
+    "toronto",
+    "markham",
+    "scarborough",
+    "north york",
+    "etobicoke",
+    "mississauga",
+    "vaughan",
+    "richmond hill",
+    "ajax",
+    "pickering",
+    "brampton",
+    "oakville",
+    "milton",
+    "whitby",
+    "oshawa",
+    "newmarket",
+    "aurora",
+    "east york",
+    "york",
+    "downtown toronto",
+    "greater toronto area",
+    "gta",
+  ],
+};
+
+/**
+ * Maps Canadian Forward Sortation Area (first 3 chars of postal code) to city and metro.
+ */
+export function mapCanadianFsaToMetro(postalCode: string | null | undefined): {
+  city: string;
+  metro: string;
+  suburb?: string;
+} | null {
+  if (!postalCode || typeof postalCode !== "string") return null;
+  const match = postalCode.trim().toUpperCase().match(/^([A-Z]\d[A-Z])/);
+  if (!match) return null;
+  const fsa = match[1];
+
+  // All 'M' FSAs are in the City of Toronto / Metropolitan Toronto
+  if (fsa.startsWith("M1")) {
+    return { city: "Scarborough", metro: "Toronto", suburb: "Scarborough" };
+  }
+  if (fsa.startsWith("M2") || fsa.startsWith("M3")) {
+    return { city: "North York", metro: "Toronto", suburb: "North York" };
+  }
+  if (fsa.startsWith("M4")) {
+    return { city: "East York", metro: "Toronto", suburb: "East York" };
+  }
+  if (fsa.startsWith("M5") || fsa.startsWith("M6") || fsa.startsWith("M7")) {
+    return { city: "Toronto", metro: "Toronto" };
+  }
+  if (fsa.startsWith("M8") || fsa.startsWith("M9")) {
+    return { city: "Etobicoke", metro: "Toronto", suburb: "Etobicoke" };
+  }
+  if (fsa.startsWith("M")) {
+    return { city: "Toronto", metro: "Toronto" };
+  }
+
+  // Common GTA 905 FSAs
+  if (/^L(3R|3S|6B|6C|6E)/.test(fsa)) {
+    return { city: "Markham", metro: "Toronto", suburb: "Markham" };
+  }
+  if (/^L(4B|4C|4S)/.test(fsa)) {
+    return { city: "Richmond Hill", metro: "Toronto", suburb: "Richmond Hill" };
+  }
+  if (/^L(4H|4J|4K|4L)/.test(fsa)) {
+    return { city: "Vaughan", metro: "Toronto", suburb: "Vaughan" };
+  }
+  if (/^L(4T|4W|4X|4Y|4Z|5)/.test(fsa)) {
+    return { city: "Mississauga", metro: "Toronto", suburb: "Mississauga" };
+  }
+  if (/^L(6P|6R|6S|6T|6V|6W|6X|6Y|6Z)/.test(fsa)) {
+    return { city: "Brampton", metro: "Toronto", suburb: "Brampton" };
+  }
+  if (/^L(1S|1T|1Z)/.test(fsa)) {
+    return { city: "Ajax", metro: "Toronto", suburb: "Ajax" };
+  }
+  if (/^L(1V|1W|1X)/.test(fsa)) {
+    return { city: "Pickering", metro: "Toronto", suburb: "Pickering" };
+  }
+
+  return null;
+}
+
+export const DEFAULT_MAPS_LOCATION_RADIUS_KM = 60;
+
+export function getMapsRadiusKm(): number {
+  if (typeof process !== "undefined" && process.env?.MAPS_LOCATION_RADIUS_KM) {
+    const val = Number.parseFloat(process.env.MAPS_LOCATION_RADIUS_KM);
+    if (!Number.isNaN(val) && val > 0) return val;
+  }
+  return DEFAULT_MAPS_LOCATION_RADIUS_KM;
+}
+
+export type DerivedLocationResult = {
+  city: string;
+  state: string | null;
+  countryCode: string | null;
+  locationConfidence: "high" | "medium";
+  derivedFrom: "explicit_city" | "postal_code" | "neighborhood" | "address_text" | "coordinates" | "search_area";
+  isExplicitMismatch: boolean;
+  mismatchReason?: string;
+};
+
+/**
+ * Derives location when city is null and validates against explicit mismatches only.
+ */
+export function derivePlaceLocation(
+  place: {
+    city?: string | null;
+    neighborhood?: string | null;
+    postalCode?: string | null;
+    street?: string | null;
+    address?: string | null;
+    state?: string | null;
+    countryCode?: string | null;
+    location?: { lat?: number | null; lng?: number | null } | null;
+    lat?: number | null;
+    lng?: number | null;
+  },
+  searchArea: string,
+  targetLocation?: string | null,
+  options?: { gtaEnabled?: boolean; strictCityOnly?: boolean; radiusKm?: number },
+): DerivedLocationResult {
+  const normTargetLoc = (targetLocation || searchArea || "").toLowerCase();
+  const isGtaTarget =
+    options?.gtaEnabled ??
+    (normTargetLoc.includes("gta") ||
+      normTargetLoc.includes("greater toronto") ||
+      normTargetLoc.includes("scarborough") ||
+      normTargetLoc.includes("markham") ||
+      normTargetLoc.includes("/") ||
+      !options?.strictCityOnly);
+
+  const isStrictCity = options?.strictCityOnly ?? (normTargetLoc === "toronto" || normTargetLoc.includes("strict"));
+
+  const targetCountry = resolveCountryCode(targetLocation || searchArea) || "CA";
+  const placeCountry = place.countryCode?.trim().toUpperCase() || null;
+
+  // 1. Explicit Country Mismatch
+  if (placeCountry && targetCountry && placeCountry !== targetCountry) {
+    return {
+      city: place.city || searchArea,
+      state: place.state || null,
+      countryCode: placeCountry,
+      locationConfidence: "high",
+      derivedFrom: "explicit_city",
+      isExplicitMismatch: true,
+      mismatchReason: `Country mismatch: got ${placeCountry}, expected ${targetCountry}`,
+    };
+  }
+
+  // 2. Explicit State / Province Mismatch
+  const placeStateNorm = normalizeState(place.state);
+  const targetStateNorm =
+    targetCountry === "CA" && (normTargetLoc.includes("toronto") || normTargetLoc.includes("on") || normTargetLoc.includes("ontario"))
+      ? "ON"
+      : null;
+
+  if (placeStateNorm && targetStateNorm && placeStateNorm !== targetStateNorm) {
+    return {
+      city: place.city || searchArea,
+      state: place.state || null,
+      countryCode: placeCountry || targetCountry,
+      locationConfidence: "high",
+      derivedFrom: "explicit_city",
+      isExplicitMismatch: true,
+      mismatchReason: `State/Province mismatch: got ${place.state} (${placeStateNorm}), expected ${targetStateNorm}`,
+    };
+  }
+
+  // 3. Coordinates Radius Check
+  const lat = place.location?.lat ?? place.lat;
+  const lng = place.location?.lng ?? place.lng;
+  const radius = options?.radiusKm ?? getMapsRadiusKm();
+  const searchCityKey = normalizeCityKey(searchArea);
+  const searchCoords = CITY_COORDINATES[searchCityKey] || CITY_COORDINATES.toronto;
+
+  if (typeof lat === "number" && typeof lng === "number" && searchCoords) {
+    const dist = haversineDistanceKm(searchCoords.lat, searchCoords.lng, lat, lng);
+    if (dist > radius) {
+      return {
+        city: place.city || searchArea,
+        state: place.state || null,
+        countryCode: placeCountry || targetCountry,
+        locationConfidence: "medium",
+        derivedFrom: "coordinates",
+        isExplicitMismatch: true,
+        mismatchReason: `Coordinates distance (${dist.toFixed(1)} km) exceeds radius (${radius} km)`,
+      };
+    }
+  }
+
+  // 4. City Derivation
+  let derivedCity: string | null = null;
+  let derivedFrom: DerivedLocationResult["derivedFrom"] = "search_area";
+  let locationConfidence: "high" | "medium" = "medium";
+
+  // Check explicit place.city
+  if (typeof place.city === "string" && place.city.trim().length > 0) {
+    derivedCity = place.city.trim();
+    derivedFrom = "explicit_city";
+    locationConfidence = "high";
+  }
+
+  // Derivation from Canadian FSA postal code
+  if (!derivedCity && place.postalCode) {
+    const fsaMatch = mapCanadianFsaToMetro(place.postalCode);
+    if (fsaMatch) {
+      derivedCity = fsaMatch.city;
+      derivedFrom = "postal_code";
+      locationConfidence = "high";
+    }
+  }
+
+  // Derivation from neighborhood
+  if (!derivedCity && place.neighborhood) {
+    const neigh = place.neighborhood.trim();
+    const neighLower = neigh.toLowerCase();
+    const gtaSuburbs = METRO_REGIONS.toronto;
+    for (const sub of gtaSuburbs) {
+      if (neighLower.includes(sub)) {
+        derivedCity = sub.charAt(0).toUpperCase() + sub.slice(1);
+        derivedFrom = "neighborhood";
+        locationConfidence = "high";
+        break;
+      }
+    }
+    if (!derivedCity) {
+      derivedCity = neigh;
+      derivedFrom = "neighborhood";
+      locationConfidence = "high";
+    }
+  }
+
+  // Derivation from street / address text
+  if (!derivedCity && (place.street || place.address)) {
+    const addrText = `${place.street || ""} ${place.address || ""}`.toLowerCase();
+    for (const sub of METRO_REGIONS.toronto) {
+      if (addrText.includes(sub)) {
+        derivedCity = sub.charAt(0).toUpperCase() + sub.slice(1);
+        derivedFrom = "address_text";
+        locationConfidence = "high";
+        break;
+      }
+    }
+  }
+
+  // Fallback to search area
+  if (!derivedCity) {
+    const cleanSearch = searchArea.split(/[/,]/)[0].trim();
+    derivedCity = cleanSearch.charAt(0).toUpperCase() + cleanSearch.slice(1);
+    derivedFrom = "search_area";
+    locationConfidence = "medium";
+  }
+
+  // 5. Explicit City / Region Mismatch
+  const derivedCityLower = derivedCity.toLowerCase();
+  if (isStrictCity && !isGtaTarget) {
+    if (derivedCityLower === "markham" || (derivedCityLower !== "toronto" && !derivedCityLower.includes("toronto"))) {
+      return {
+        city: derivedCity,
+        state: place.state || null,
+        countryCode: placeCountry || targetCountry,
+        locationConfidence,
+        derivedFrom,
+        isExplicitMismatch: true,
+        mismatchReason: `Explicit city mismatch: "${derivedCity}" outside strict target "${targetLocation || searchArea}"`,
+      };
+    }
+  }
+
+  return {
+    city: derivedCity,
+    state: place.state || null,
+    countryCode: placeCountry || targetCountry,
+    locationConfidence,
+    derivedFrom,
+    isExplicitMismatch: false,
+  };
+}
+

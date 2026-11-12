@@ -61,6 +61,45 @@ export async function freeRulesStage(
       continue;
     }
 
+    // 1b. Non-target entity check (government / public bodies)
+    const websiteLower = (candidate.website || candidate.externalUrl || "").toLowerCase();
+    const fullNameLower = (candidate.fullName || candidate.username || "").toLowerCase();
+    const allCategories = [
+      candidate.gmapsCategory,
+      ...(candidate.gmapsCategories ?? []),
+      candidate.category,
+      candidate.businessCategoryName,
+    ]
+      .filter((c): c is string => typeof c === "string")
+      .map((c) => c.toLowerCase());
+
+    const isGovOrPublic =
+      websiteLower.includes("toronto.ca") ||
+      websiteLower.includes(".gov") ||
+      websiteLower.includes(".gc.ca") ||
+      websiteLower.includes("gov.") ||
+      fullNameLower.includes("public health") ||
+      fullNameLower.includes("hospital") ||
+      fullNameLower.includes("university") ||
+      allCategories.some(
+        (c) =>
+          c.includes("public health") ||
+          c.includes("government") ||
+          c.includes("hospital") ||
+          c.includes("university"),
+      );
+
+    if (isGovOrPublic) {
+      counters.nonTargetEntity = (counters.nonTargetEntity || 0) + 1;
+      rejected.push({
+        id: candidate.fullName ?? candidate.username ?? candidate.gmapsPlaceId ?? "unknown",
+        reason: "NON_TARGET_ENTITY",
+        detail: `Public or government entity detected (${websiteLower || fullNameLower})`,
+        gate: "freeRules",
+      });
+      continue;
+    }
+
     // 2. Minimum rating threshold
     if (
       context.campaign.minRating !== null &&

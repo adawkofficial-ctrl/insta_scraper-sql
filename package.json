@@ -11,6 +11,8 @@
     "test": "tsx scripts/run-all-tests.ts",
     "preflight": "tsx scripts/preflight.ts",
     "cleanup:dryrun": "tsx scripts/cleanup-dry-run-data.ts",
+    "replay:gmaps": "tsx -r ./scripts/preload_server_only.cjs scripts/replay_gmaps.ts",
+    "rehandle": "tsx -r ./scripts/preload_server_only.cjs scripts/rehandle_leads.ts",
     "test:db:setup": "node scripts/setup-test-db.cjs",
     "prisma:validate": "prisma validate",
     "prisma:generate": "prisma generate",

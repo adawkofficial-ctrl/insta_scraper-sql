@@ -82,6 +82,9 @@ export type LeadProfile = {
   rating?: number | null;
   reviewCount?: number | null;
   city?: string | null;
+  locationConfidence?: "high" | "medium" | "low" | string | null;
+  fieldSources?: Record<string, string> | null;
+  mapsUrl?: string | null;
   handleSource?: string | null;
   handleConfidence?: string | null;
   instagramId: string | null;

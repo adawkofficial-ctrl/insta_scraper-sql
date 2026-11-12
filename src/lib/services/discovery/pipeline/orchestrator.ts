@@ -323,6 +323,44 @@ export async function orchestrateDiscovery(
     funnelReport.totalSpendUsd = Number(totalSpendUsd.toFixed(4));
     funnelReport.durationMs = Date.now() - startJobTime;
 
+    // Aggregate rejections, duplicates, and skip reasons with examples
+    const allRejections = [
+      ...freeRulesResult.rejected,
+      ...chainResult.rejected,
+      ...mapsGateResult.rejected,
+      ...handleResult.rejected,
+      ...enrichResult.rejected,
+      ...criteriaResult.rejected,
+      ...finalGateResult.rejected,
+      ...persistResult.rejected,
+    ];
+
+    const skipExamplesMap = new Map<string, { count: number; examples: string[] }>();
+    for (const rej of allRejections) {
+      const entry = skipExamplesMap.get(rej.reason) || { count: 0, examples: [] };
+      entry.count++;
+      if (entry.examples.length < 3 && rej.id && rej.id !== "unknown" && !entry.examples.includes(rej.id)) {
+        entry.examples.push(rej.id);
+      }
+      skipExamplesMap.set(rej.reason, entry);
+    }
+
+    const skipTable = Array.from(skipExamplesMap.entries()).map(([reason, data]) => ({
+      reason,
+      count: data.count,
+      examples: data.examples,
+    }));
+
+    const igReadyCount = persistedProfiles.filter((p) => Boolean(p.username)).length;
+    const contactOnlyCount = persistedProfiles.filter((p) => !p.username).length;
+    const duplicateRejections = (skipExamplesMap.get("DUPLICATE")?.count || 0) +
+      (persistResult.counters.softDuplicates || 0) +
+      (persistResult.counters.hardDuplicates || 0);
+    const nonDuplicateRejections = allRejections.filter((r) => r.reason !== "DUPLICATE").length;
+
+    const summaryHeadline = `IG-ready: ${igReadyCount} | Contact-only: ${contactOnlyCount} | Rejected: ${nonDuplicateRejections} | Duplicates: ${duplicateRejections}`;
+    const notice = summaryHeadline;
+
     // Update ScrapeJob completion
     const finalStatus = totalPersisted >= context.remainingCapacity ? ScrapeJobStatus.COMPLETED : ScrapeJobStatus.COMPLETED;
     await prisma.scrapeJob.update({
@@ -335,11 +373,15 @@ export async function orchestrateDiscovery(
           funnel: funnelReport,
           totalUsd: totalSpendUsd,
           stopReason,
+          summaryHeadline,
+          igReadyCount,
+          contactOnlyCount,
+          rejectedCount: nonDuplicateRejections,
+          duplicatesCount: duplicateRejections,
+          skipTable,
         } as unknown as Prisma.InputJsonValue,
       },
     });
-
-    const notice = `DISCOVERY_COMPLETED: Saved ${totalPersisted} leads. Candidates discovered: ${funnelReport.placesFound}. Spend: $${totalSpendUsd.toFixed(4)}.`;
 
     return {
       campaignId: campaign.id,
@@ -358,6 +400,14 @@ export async function orchestrateDiscovery(
       skipCounts,
       profiles: persistedProfiles,
       apifyCostUsd: totalSpendUsd,
+      usageSummary: {
+        summaryHeadline,
+        igReadyCount,
+        contactOnlyCount,
+        rejectedCount: nonDuplicateRejections,
+        duplicatesCount: duplicateRejections,
+        skipTable,
+      },
     };
   } catch (err: unknown) {
     // Stage failure handling: keep already saved leads and record spend

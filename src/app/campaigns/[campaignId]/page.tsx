@@ -96,6 +96,7 @@ export default function CampaignDetailPage() {
   const [isScrapeModalOpen, setIsScrapeModalOpen] = useState(false);
   const [isCsvUploadModalOpen, setIsCsvUploadModalOpen] = useState(false);
   const [isExportingCsv, setIsExportingCsv] = useState(false);
+  const [isRehandling, setIsRehandling] = useState(false);
   const [showDeleteCampaignModal, setShowDeleteCampaignModal] = useState(false);
   const [isDeletingCampaign, setIsDeletingCampaign] = useState(false);
   const [activeLeadId, setActiveLeadId] = useState<string | null>(null);
@@ -721,6 +722,33 @@ export default function CampaignDetailPage() {
       alert(err instanceof Error ? err.message : "Failed to export CSV");
     } finally {
       setIsExportingCsv(false);
+    }
+  };
+
+  const handleRehandleLeads = async () => {
+    if (!campaignId) return;
+    setIsRehandling(true);
+    try {
+      const res = await fetch(`/api/campaigns/${campaignId}/leads/rehandle`, {
+        method: "POST",
+      });
+      if (!res.ok) {
+        const errJson = await res.json().catch(() => null);
+        throw new Error(
+          errJson?.error || `Rehandle failed with status ${res.status}`,
+        );
+      }
+      const data = await res.json();
+      alert(
+        `Handle search complete!\nChecked: ${data.totalChecked}\nFound: ${data.found}\nNot found: ${data.notFound}\nCooldown skipped (last run <7d): ${data.cooldownSkipped}`,
+      );
+      await fetchLeads();
+    } catch (err) {
+      alert(
+        err instanceof Error ? err.message : "Failed to re-run handle search",
+      );
+    } finally {
+      setIsRehandling(false);
     }
   };
 
@@ -1611,6 +1639,19 @@ export default function CampaignDetailPage() {
                       ? `Export Selected (${selectedLeadIds.length})`
                       : "Export CSV"}
                   </span>
+                </button>
+                <button
+                  type="button"
+                  id="btn-rehandle-leads-toolbar"
+                  onClick={handleRehandleLeads}
+                  disabled={isRehandling || !campaign}
+                  title="Re-run handle search for all no-handle leads"
+                  className="rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-1.5 font-medium text-zinc-300 transition hover:bg-zinc-800 hover:text-white flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  <svg className="h-3.5 w-3.5 text-zinc-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                    <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
+                  </svg>
+                  <span>{isRehandling ? "Searching Handles..." : "Re-run handle search for all no-handle leads"}</span>
                 </button>
               </div>
 

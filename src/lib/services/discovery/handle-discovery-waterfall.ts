@@ -1,6 +1,10 @@
 import "server-only";
 
 import dns from "node:dns/promises";
+import {
+  extractTitleAndH1,
+  isSocialOrAggregatorUrl,
+} from "./name-website-matcher";
 
 // ============================================================================
 // Types
@@ -36,6 +40,10 @@ export type WaterfallResult = {
   candidates: WaterfallCandidate[];
   socialLinks?: Record<string, string | null>;
   linkHubUrl?: string | null;
+  homepageHtml?: string | null;
+  homepageTitle?: string | null;
+  homepageH1?: string | null;
+  ogSiteName?: string | null;
 };
 
 // ============================================================================
@@ -384,6 +392,16 @@ export function cleanAndValidateHandle(rawUrlOrHandle: string): string | null {
   let candidate = rawUrlOrHandle.trim();
   if (!candidate) return null;
 
+  // Handle protocol-relative URL (e.g. //www.instagram.com/myhandle)
+  if (candidate.startsWith("//")) {
+    candidate = `https:${candidate}`;
+  }
+
+  // Handle leading / before domain
+  if (candidate.startsWith("/") && (candidate.includes("instagram.com") || candidate.includes("instagr.am"))) {
+    candidate = `https://${candidate.replace(/^\/+/, "")}`;
+  }
+
   // If it's a URL, parse path
   if (candidate.startsWith("http://") || candidate.startsWith("https://") || candidate.includes("instagram.com/") || candidate.includes("instagr.am/")) {
     try {
@@ -524,21 +542,32 @@ export function parseHtmlForHandles(
     }
   };
 
-  // 1. Separate header and footer sections for prominence weighting
+  // 1. Separate header, footer, and navigation sections for prominence weighting
   const socialLinks: Record<string, string | null> = {};
   const headerMatch = /<header[\s\S]*?<\/header>/i.exec(html);
   const footerMatch = /<footer[\s\S]*?<\/footer>/i.exec(html);
+  const navMatch = /<nav[\s\S]*?<\/nav>/i.exec(html);
   const headerHtml = headerMatch ? headerMatch[0] : "";
   const footerHtml = footerMatch ? footerMatch[0] : "";
+  const navHtml = navMatch ? navMatch[0] : "";
 
-  // 2. Parse <a href="..."> links
-  const anchorRegex = /<a\b[^>]*\bhref=["']([^"']+)["'][^>]*>/gi;
+  // 2. Parse <a href="..."> links (including image/svg-only anchors, uppercase href, unquoted href)
+  const anchorRegex = /<a\b[^>]*\bhref\s*=\s*(?:"([^"]*)"|'([^']*)'|([^\s>]+))[^>]*>/gi;
   let match: RegExpExecArray | null;
 
   while ((match = anchorRegex.exec(html)) !== null) {
-    const href = match[1];
+    let href = match[1] || match[2] || match[3] || "";
+    if (href.startsWith("//")) {
+      href = `https:${href}`;
+    }
     if (href.includes("instagram.com/") || href.includes("instagr.am/")) {
-      const inHf = headerHtml.includes(href) || footerHtml.includes(href);
+      const tagStr = match[0];
+      const inHf =
+        headerHtml.includes(href) ||
+        footerHtml.includes(href) ||
+        navHtml.includes(href) ||
+        /class=["'][^"']*(?:social|footer|header|nav)[^"']*["']/i.test(tagStr) ||
+        /id=["'][^"']*(?:social|footer|header|nav)[^"']*["']/i.test(tagStr);
       const weight = inHf ? 5 : 3;
       recordHandle(href, weight, inHf);
     }
@@ -637,32 +666,35 @@ export function parseHtmlForHandles(
   const candidates: WaterfallCandidate[] = [];
   const entries = Array.from(handleStats.entries());
 
-  for (const [handle, stats] of entries) {
+  // Rank entries: prefer repeated most, in header/footer, and best matching name
+  entries.sort((a, b) => {
+    const scoreA =
+      a[1].frequency * 3 +
+      (a[1].inHeaderFooter ? 6 : 0) +
+      computeBusinessNameMatch(a[0], businessName) * 10;
+    const scoreB =
+      b[1].frequency * 3 +
+      (b[1].inHeaderFooter ? 6 : 0) +
+      computeBusinessNameMatch(b[0], businessName) * 10;
+    return scoreB - scoreA;
+  });
+
+  for (let i = 0; i < entries.length; i++) {
+    const [handle, stats] = entries[i];
     const matchScore = computeBusinessNameMatch(handle, businessName);
 
-    // Confidence determination:
-    // - Header/footer + good match -> high
-    // - Moderate match -> medium
-    // - Poor name match and not in header/footer -> low
+    // Lead's own website link: top candidate in header/footer or matching name is high confidence.
     let confidence: HandleConfidence = "medium";
-    if (entries.length === 1) {
-      if (stats.inHeaderFooter && matchScore >= 0.3) {
+    if (i === 0) {
+      if (stats.inHeaderFooter || matchScore >= 0.3) {
         confidence = "high";
-      } else if (matchScore >= 0.5 || (stats.frequency >= 2 && matchScore >= 0.3)) {
-        confidence = "high";
-      } else if (matchScore >= 0.3 || stats.inHeaderFooter) {
-        confidence = "medium";
       } else {
         confidence = "low";
       }
+    } else if (stats.inHeaderFooter || matchScore >= 0.5) {
+      confidence = "medium";
     } else {
-      if (matchScore >= 0.7 && (stats.inHeaderFooter || stats.frequency >= 2)) {
-        confidence = "high";
-      } else if (matchScore >= 0.4 || stats.inHeaderFooter) {
-        confidence = "medium";
-      } else {
-        confidence = "low";
-      }
+      confidence = "low";
     }
 
     candidates.push({
@@ -702,6 +734,14 @@ const CONTACT_PAGE_PATHS = [
 // Main Handle Discovery Waterfall
 // ============================================================================
 
+let mockWaterfallRunner: ((input: WaterfallInput) => Promise<WaterfallResult>) | null = null;
+
+export function setMockWaterfallRunnerForTesting(
+  runner: ((input: WaterfallInput) => Promise<WaterfallResult>) | null,
+): void {
+  mockWaterfallRunner = runner;
+}
+
 /**
  * Runs the 4-step discovery waterfall for a place:
  * 1. Maps actor data (including social/contacts fields when the flag is on).
@@ -714,13 +754,16 @@ const CONTACT_PAGE_PATHS = [
 export async function runHandleDiscoveryWaterfall(
   input: WaterfallInput,
 ): Promise<WaterfallResult> {
+  if (mockWaterfallRunner) {
+    return await mockWaterfallRunner(input);
+  }
   const stepsAttempted: HandleSource[] = [];
   const allCandidates: WaterfallCandidate[] = [];
   let discoveredSocialLinks: Record<string, string | null> = {};
   let discoveredLinkHubUrl: string | null = null;
 
   // -------------------------------------------------------------
-  // STEP 1: Maps Actor Data
+  // STEP 1: Maps Actor Data & Social URL Interception
   // -------------------------------------------------------------
   stepsAttempted.push("maps");
 
@@ -774,6 +817,57 @@ export async function runHandleDiscoveryWaterfall(
     }
   }
 
+  // Intercept social URLs given as website
+  if (input.websiteUrl) {
+    const socialCheck = isSocialOrAggregatorUrl(input.websiteUrl);
+    if (socialCheck.isSocial) {
+      // Facebook pages are stored as social links, never fetched as business websites
+      if (socialCheck.platform === "facebook") {
+        discoveredSocialLinks.facebook = input.websiteUrl;
+        return {
+          handle: null,
+          handleSource: null,
+          handleConfidence: null,
+          stepsAttempted,
+          candidates: allCandidates,
+          socialLinks: { ...(input.mapsSocial ?? {}), ...discoveredSocialLinks },
+          linkHubUrl: null,
+        };
+      }
+
+      // Instagram profile URL is directly the handle
+      if (socialCheck.platform === "instagram") {
+        const parsed = socialCheck.cleanHandle ? cleanAndValidateHandle(socialCheck.cleanHandle) : null;
+        if (parsed) {
+          const candidate: WaterfallCandidate = {
+            handle: parsed,
+            source: "maps",
+            confidence: "high",
+            frequency: 1,
+            inHeaderFooter: true,
+            matchScore: 1.0,
+          };
+          allCandidates.push(candidate);
+          discoveredSocialLinks.instagram = input.websiteUrl;
+          return {
+            handle: parsed,
+            handleSource: "maps",
+            handleConfidence: "high",
+            stepsAttempted,
+            candidates: allCandidates,
+            socialLinks: { ...(input.mapsSocial ?? {}), ...discoveredSocialLinks },
+            linkHubUrl: null,
+          };
+        }
+      }
+
+      // Link-in-bio hub (linktr.ee, beacons.ai, etc.): proceed directly to link hub step
+      if (socialCheck.platform === "linkhub") {
+        discoveredLinkHubUrl = input.websiteUrl;
+      }
+    }
+  }
+
   // If no website URL, waterfall ends here
   if (!input.websiteUrl || typeof input.websiteUrl !== "string" || !input.websiteUrl.trim()) {
     return {
@@ -787,62 +881,121 @@ export async function runHandleDiscoveryWaterfall(
   }
 
   const startTime = Date.now();
-  const PER_SITE_BUDGET_MS = input.totalSiteBudgetMs ?? 12000;
-  const timeoutMs = input.timeoutPerFetchMs ?? 6000;
-  const doFetch = input.fetchFn
-    ? input.fetchFn
-    : async (url: string, toMs?: number) => {
-        const timeout = toMs ?? timeoutMs;
-        const first = await safeFetchHtml(url, timeout, 3);
-        if (first.ok) return first;
-        // One free retry with the opposite www/non-www host (SSRF guards stay in safeFetchHtml).
-        try {
-          const parsed = new URL(/^https?:\/\//i.test(url) ? url : `https://${url}`);
-          if (parsed.hostname.startsWith("www.")) {
-            parsed.hostname = parsed.hostname.slice(4);
-          } else {
-            parsed.hostname = `www.${parsed.hostname}`;
-          }
-          if (parsed.hostname === new URL(url).hostname) return first;
-          return await safeFetchHtml(parsed.toString(), timeout, 3);
-        } catch {
-          return first;
+  const PER_SITE_BUDGET_MS = input.totalSiteBudgetMs ?? 15000;
+  // 12s timeout for homepage, one retry on timeout; keep /contact & linkhub fallbacks
+  const homepageTimeoutMs = input.timeoutPerFetchMs ?? 12000;
+  const subpageTimeoutMs = Math.min(homepageTimeoutMs, 6000);
+
+  const fetchWithRetries = async (
+    rawUrl: string,
+    timeout: number,
+  ): Promise<{ ok: boolean; html?: string; finalUrl?: string; error?: string }> => {
+    const first = await safeFetchHtml(rawUrl, timeout, 3);
+    if (first.ok && first.html) return first;
+
+    // Retry 1: Canonical URL without query string (strip ?utm_campaign=...)
+    try {
+      const parsed = new URL(/^https?:\/\//i.test(rawUrl) ? rawUrl : `https://${rawUrl}`);
+      if (parsed.search) {
+        const canonical = `${parsed.origin}${parsed.pathname}`;
+        const canRes = await safeFetchHtml(canonical, timeout, 3);
+        if (canRes.ok && canRes.html) return canRes;
+      }
+    } catch {
+      // ignore
+    }
+
+    // Retry 2: Timeout retry
+    if (first.error && /timeout|abort|ETIMEDOUT/i.test(first.error)) {
+      const retryTimeout = await safeFetchHtml(rawUrl, timeout, 3);
+      if (retryTimeout.ok && retryTimeout.html) return retryTimeout;
+    }
+
+    // Retry 3: Toggle www / non-www
+    try {
+      const parsed = new URL(/^https?:\/\//i.test(rawUrl) ? rawUrl : `https://${rawUrl}`);
+      if (parsed.hostname.startsWith("www.")) {
+        parsed.hostname = parsed.hostname.slice(4);
+      } else {
+        parsed.hostname = `www.${parsed.hostname}`;
+      }
+      if (parsed.hostname !== new URL(rawUrl).hostname) {
+        const altRes = await safeFetchHtml(parsed.toString(), timeout, 3);
+        if (altRes.ok && altRes.html) return altRes;
+      }
+    } catch {
+      // ignore
+    }
+
+    return first;
+  };
+
+  const doFetch = async (url: string, toMs?: number) => {
+    const timeout = toMs ?? homepageTimeoutMs;
+    if (input.fetchFn) {
+      const res = await input.fetchFn(url, timeout);
+      if (res.ok && res.html) return res;
+      // Also retry with canonical URL without query string in fetchFn (for tests/mocks)
+      try {
+        const parsed = new URL(/^https?:\/\//i.test(url) ? url : `https://${url}`);
+        if (parsed.search) {
+          const canonical = `${parsed.origin}${parsed.pathname}`;
+          const retryRes = await input.fetchFn(canonical, timeout);
+          if (retryRes.ok && retryRes.html) return retryRes;
         }
-      };
+      } catch {
+        // ignore
+      }
+      return res;
+    }
+    return await fetchWithRetries(url, timeout);
+  };
+
+  let pageMeta: { title: string | null; h1: string | null; ogSiteName: string | null } | null = null;
+  let homepageHtmlContent: string | null = null;
 
   // -------------------------------------------------------------
-  // STEP 2: Website Homepage
+  // STEP 2: Website Homepage (skipped if URL was a link hub)
   // -------------------------------------------------------------
-  stepsAttempted.push("homepage");
-  const homepageFetch = await doFetch(input.websiteUrl, timeoutMs);
+  let homepageFetch: { ok: boolean; html?: string; finalUrl?: string; error?: string } = { ok: false };
+  if (!discoveredLinkHubUrl) {
+    stepsAttempted.push("homepage");
+    homepageFetch = await doFetch(input.websiteUrl, homepageTimeoutMs);
 
-  if (homepageFetch.ok && homepageFetch.html) {
-    const parsed = parseHtmlForHandles(homepageFetch.html, input.businessName, "homepage");
-    discoveredSocialLinks = { ...parsed.socialLinks };
-    discoveredLinkHubUrl = parsed.linkHubUrl;
+    if (homepageFetch.ok && homepageFetch.html) {
+      homepageHtmlContent = homepageFetch.html;
+      pageMeta = extractTitleAndH1(homepageFetch.html);
+      const parsed = parseHtmlForHandles(homepageFetch.html, input.businessName, "homepage");
+      discoveredSocialLinks = { ...discoveredSocialLinks, ...parsed.socialLinks };
+      discoveredLinkHubUrl = parsed.linkHubUrl;
 
-    if (parsed.candidates.length > 0) {
-      allCandidates.push(...parsed.candidates);
-      const top = parsed.candidates[0];
+      if (parsed.candidates.length > 0) {
+        allCandidates.push(...parsed.candidates);
+        const top = parsed.candidates[0];
 
-      // Stop rule: if high confidence or clear match, return immediately
-      if (top.confidence === "high" || (top.confidence === "medium" && top.matchScore >= 0.5)) {
-        return {
-          handle: top.handle,
-          handleSource: "homepage",
-          handleConfidence: top.confidence,
-          stepsAttempted,
-          candidates: allCandidates,
-          socialLinks: discoveredSocialLinks,
-          linkHubUrl: discoveredLinkHubUrl,
-        };
+        // Stop rule: if high confidence or clear match, return immediately
+        if (top.confidence === "high" || (top.confidence === "medium" && top.matchScore >= 0.5)) {
+          return {
+            handle: top.handle,
+            handleSource: "homepage",
+            handleConfidence: top.confidence,
+            stepsAttempted,
+            candidates: allCandidates,
+            socialLinks: { ...(input.mapsSocial ?? {}), ...discoveredSocialLinks },
+            linkHubUrl: discoveredLinkHubUrl,
+            homepageHtml: homepageHtmlContent,
+            homepageTitle: pageMeta?.title ?? null,
+            homepageH1: pageMeta?.h1 ?? null,
+            ogSiteName: pageMeta?.ogSiteName ?? null,
+          };
+        }
       }
     }
   }
 
   // -------------------------------------------------------------
   // STEP 3: Same-Domain Subpages (/contact, /about, etc.)
-  // Max 3 extra fetches, 6s timeout each, total budget 12s
+  // Max 3 extra fetches, 6s timeout each, total budget 15s
   // -------------------------------------------------------------
   let baseUrl: URL | null = null;
   try {
@@ -854,7 +1007,7 @@ export async function runHandleDiscoveryWaterfall(
     baseUrl = null;
   }
 
-  if (baseUrl) {
+  if (baseUrl && !discoveredLinkHubUrl) {
     stepsAttempted.push("contact_page");
 
     // Prioritize paths referenced on homepage HTML
@@ -873,7 +1026,7 @@ export async function runHandleDiscoveryWaterfall(
     ].slice(0, 3);
 
     const subpagesToFetch = prioritizedPaths.map((path) => {
-      const u = new URL(path, baseUrl.origin);
+      const u = new URL(path, baseUrl!.origin);
       return u.toString();
     });
 
@@ -883,7 +1036,7 @@ export async function runHandleDiscoveryWaterfall(
         break; // Out of budget
       }
 
-      const remainingBudget = Math.max(1000, Math.min(timeoutMs, PER_SITE_BUDGET_MS - elapsed));
+      const remainingBudget = Math.max(1000, Math.min(subpageTimeoutMs, PER_SITE_BUDGET_MS - elapsed));
       const subFetch = await doFetch(subpageUrl, remainingBudget);
 
       if (subFetch.ok && subFetch.html) {
@@ -904,8 +1057,12 @@ export async function runHandleDiscoveryWaterfall(
               handleConfidence: top.confidence,
               stepsAttempted,
               candidates: allCandidates,
-              socialLinks: { ...discoveredSocialLinks, ...parsed.socialLinks },
+              socialLinks: { ...(input.mapsSocial ?? {}), ...discoveredSocialLinks, ...parsed.socialLinks },
               linkHubUrl: discoveredLinkHubUrl,
+              homepageHtml: homepageHtmlContent,
+              homepageTitle: pageMeta?.title ?? null,
+              homepageH1: pageMeta?.h1 ?? null,
+              ogSiteName: pageMeta?.ogSiteName ?? null,
             };
           }
         }
@@ -920,7 +1077,7 @@ export async function runHandleDiscoveryWaterfall(
     const elapsed = Date.now() - startTime;
     if (elapsed < PER_SITE_BUDGET_MS - 2000) {
       stepsAttempted.push("linkhub");
-      const remainingBudget = Math.max(1000, Math.min(timeoutMs, PER_SITE_BUDGET_MS - elapsed));
+      const remainingBudget = Math.max(1000, Math.min(subpageTimeoutMs, PER_SITE_BUDGET_MS - elapsed));
       const hubFetch = await doFetch(discoveredLinkHubUrl, remainingBudget);
 
       if (hubFetch.ok && hubFetch.html) {
@@ -934,8 +1091,12 @@ export async function runHandleDiscoveryWaterfall(
             handleConfidence: top.confidence === "low" ? "medium" : top.confidence,
             stepsAttempted,
             candidates: allCandidates,
-            socialLinks: discoveredSocialLinks,
+            socialLinks: { ...(input.mapsSocial ?? {}), ...discoveredSocialLinks },
             linkHubUrl: discoveredLinkHubUrl,
+            homepageHtml: homepageHtmlContent,
+            homepageTitle: pageMeta?.title ?? null,
+            homepageH1: pageMeta?.h1 ?? null,
+            ogSiteName: pageMeta?.ogSiteName ?? null,
           };
         }
       }
@@ -944,7 +1105,6 @@ export async function runHandleDiscoveryWaterfall(
 
   // If we collected candidates across any step, return the best candidate
   if (allCandidates.length > 0) {
-    // Sort all candidates
     allCandidates.sort((a, b) => {
       const scoreA = a.matchScore * 10 + (a.inHeaderFooter ? 5 : 0) + a.frequency;
       const scoreB = b.matchScore * 10 + (b.inHeaderFooter ? 5 : 0) + b.frequency;
@@ -958,8 +1118,12 @@ export async function runHandleDiscoveryWaterfall(
       handleConfidence: best.confidence,
       stepsAttempted,
       candidates: allCandidates,
-      socialLinks: discoveredSocialLinks,
+      socialLinks: { ...(input.mapsSocial ?? {}), ...discoveredSocialLinks },
       linkHubUrl: discoveredLinkHubUrl,
+      homepageHtml: homepageHtmlContent,
+      homepageTitle: pageMeta?.title ?? null,
+      homepageH1: pageMeta?.h1 ?? null,
+      ogSiteName: pageMeta?.ogSiteName ?? null,
     };
   }
 
@@ -969,7 +1133,11 @@ export async function runHandleDiscoveryWaterfall(
     handleConfidence: null,
     stepsAttempted,
     candidates: [],
-    socialLinks: discoveredSocialLinks,
+    socialLinks: { ...(input.mapsSocial ?? {}), ...discoveredSocialLinks },
     linkHubUrl: discoveredLinkHubUrl,
+    homepageHtml: homepageHtmlContent,
+    homepageTitle: pageMeta?.title ?? null,
+    homepageH1: pageMeta?.h1 ?? null,
+    ogSiteName: pageMeta?.ogSiteName ?? null,
   };
 }

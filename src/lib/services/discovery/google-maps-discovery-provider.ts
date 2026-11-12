@@ -10,7 +10,7 @@ import type {
   DiscoveryResult,
   KeywordSearchStat,
 } from "./discovery-provider";
-import { resolveCountryCode, resolveTargetCities } from "./country-cities";
+import { derivePlaceLocation, resolveCountryCode, resolveTargetCities } from "./country-cities";
 import { extractDiscoveryKeywords } from "./discovery-query";
 import {
   computeIgYieldPercent,
@@ -37,10 +37,11 @@ import { normalizePhone } from "../contact/contact-parser";
 import {
   runHandleDiscoveryWaterfall,
   safeFetchHtml,
+  cleanAndValidateHandle,
   type HandleSource,
   type HandleConfidence,
 } from "./handle-discovery-waterfall";
-import { checkNameWebsiteMismatch } from "./name-website-matcher";
+import { checkNameWebsiteMismatch, isSocialOrAggregatorUrl } from "./name-website-matcher";
 import { clusterMultiLocationGroups } from "./group-detector";
 
 export const GMAPS_ACTOR_ID = "compass/crawler-google-places";
@@ -825,30 +826,22 @@ export class GoogleMapsDiscoveryProvider implements DiscoveryProvider {
       }
 
       // Location match validation on first results:
-      // Verify first results roughly match the requested location/country
+      // Maps results come from a location-bound search. Only stop if sample places
+      // show an EXPLICIT mismatch (wrong country, wrong province/state, outside metro).
+      // Missing city or missing location fields must never cause a skip.
       if (items.length > 0) {
         const samplePlaces = items.slice(0, 3);
-        const targetCityLower = city ? city.split(",")[0].trim().toLowerCase() : "";
-        const targetCountry = resolvedCountryCode?.toLowerCase();
+        const allExplicitMismatch =
+          samplePlaces.length > 0 &&
+          samplePlaces.every((item) => {
+            const loc = derivePlaceLocation(item, city || input.location || "", input.location);
+            return loc.isExplicitMismatch;
+          });
 
-        const hasMatch = samplePlaces.some((item) => {
-          const placeCity = typeof item.city === "string" ? item.city.toLowerCase() : "";
-          const placeAddress = typeof item.address === "string" ? item.address.toLowerCase() : "";
-          const placeCountry = typeof item.countryCode === "string" ? item.countryCode.toLowerCase() : "";
-
-          if (targetCountry && placeCountry && placeCountry === targetCountry) {
-            return true;
-          }
-          if (targetCityLower && (placeCity.includes(targetCityLower) || placeAddress.includes(targetCityLower))) {
-            return true;
-          }
-          return false;
-        });
-
-        if (!hasMatch && (targetCityLower || targetCountry)) {
+        if (allExplicitMismatch) {
           const mismatchWarning = "Maps results do not match requested location";
           console.warn(
-            `[GMAPS-DISCOVERY] ${mismatchWarning}: requested "${city || input.location}" but got places outside target. Stopping search.`,
+            `[GMAPS-DISCOVERY] ${mismatchWarning}: requested "${city || input.location}" but got places with explicit mismatch. Stopping search.`,
           );
           lastError = mismatchWarning;
           break;
@@ -908,6 +901,11 @@ export class GoogleMapsDiscoveryProvider implements DiscoveryProvider {
             !!item && typeof item === "object" && !Array.isArray(item),
         )
         .map((place) => {
+          const locResult = derivePlaceLocation(place, city || input.location || "", input.location);
+          if (locResult.isExplicitMismatch) {
+            return null;
+          }
+
           const businessName =
             typeof place.title === "string"
               ? place.title
@@ -920,17 +918,16 @@ export class GoogleMapsDiscoveryProvider implements DiscoveryProvider {
               : typeof place.street === "string"
                 ? place.street
                 : null;
-          const placeCity =
-            typeof place.city === "string" ? place.city : city || null;
-          const placeCountry =
-            typeof place.countryCode === "string" ? place.countryCode : null;
+          const placeCity = locResult.city;
+          const locationConfidence = locResult.locationConfidence;
+          const placeCountry = locResult.countryCode;
           const phone =
             typeof place.phone === "string"
               ? place.phone
               : typeof place.phoneUnformatted === "string"
                 ? place.phoneUnformatted
                 : null;
-          const rawWebsite =
+          let rawWebsite =
             typeof place.website === "string" && place.website.trim().length > 0
               ? place.website.trim()
               : null;
@@ -951,6 +948,25 @@ export class GoogleMapsDiscoveryProvider implements DiscoveryProvider {
               : categories[0] || null;
           const placeId =
             typeof place.placeId === "string" ? place.placeId : null;
+          const mapsUrl =
+            typeof place.url === "string"
+              ? place.url
+              : placeId
+                ? `https://www.google.com/maps/place/?q=place_id:${placeId}`
+                : null;
+
+          const fieldSources: Record<string, string> = {
+            name: "maps",
+            category: "maps",
+            address: place.address ? "maps_address" : place.street ? "maps_street" : "none",
+            city: place.city ? "maps_city" : locResult.derivedFrom,
+            phone: phone ? "maps" : "none",
+            website: rawWebsite ? "maps" : "none",
+            rating: rating !== null ? "maps" : "none",
+            reviewCount: reviewsCount !== null ? "maps" : "none",
+            placeId: placeId ? "maps" : "none",
+            mapsUrl: mapsUrl ? "maps" : "none",
+          };
 
           const email =
             typeof place.email === "string" && place.email.includes("@")
@@ -973,6 +989,39 @@ export class GoogleMapsDiscoveryProvider implements DiscoveryProvider {
                 : null;
 
           const handles = extractInstagramHandlesFromPlace(place);
+
+          const initialSocialLinks = {
+            facebook: null,
+            tiktok: null,
+            linkedin: null,
+            youtube: null,
+            whatsapp: null,
+          } as {
+            facebook: string | null;
+            tiktok: string | null;
+            linkedin: string | null;
+            youtube: string | null;
+            whatsapp: string | null;
+          };
+
+          // Step 3: Social URLs given as "website" (e.g. facebook.com, instagram.com)
+          // Do not treat as business website; store as social link, extract IG handle if applicable
+          if (rawWebsite) {
+            const socialCheck = isSocialOrAggregatorUrl(rawWebsite);
+            if (socialCheck.isSocial) {
+              if (socialCheck.platform === "facebook") {
+                initialSocialLinks.facebook = rawWebsite;
+                rawWebsite = null;
+              } else if (socialCheck.platform === "instagram" && socialCheck.cleanHandle) {
+                const h = cleanAndValidateHandle(socialCheck.cleanHandle);
+                if (h && !handles.includes(h)) {
+                  handles.push(h);
+                }
+                rawWebsite = null;
+              }
+            }
+          }
+
           const handleSource = (handles.length > 0 ? "maps" : null) as HandleSource | null;
           const handleConfidence = (handles.length > 0 ? "high" : null) as HandleConfidence | null;
 
@@ -981,6 +1030,7 @@ export class GoogleMapsDiscoveryProvider implements DiscoveryProvider {
             businessName,
             address,
             placeCity,
+            locationConfidence,
             placeCountry,
             phone,
             email,
@@ -990,23 +1040,13 @@ export class GoogleMapsDiscoveryProvider implements DiscoveryProvider {
             categories,
             gmapsCategory,
             placeId,
+            mapsUrl,
+            fieldSources,
             handles,
             handleSource,
             handleConfidence,
             isClaimed,
-            socialLinks: {
-              facebook: null,
-              tiktok: null,
-              linkedin: null,
-              youtube: null,
-              whatsapp: null,
-            } as {
-              facebook: string | null;
-              tiktok: string | null;
-              linkedin: string | null;
-              youtube: string | null;
-              whatsapp: string | null;
-            },
+            socialLinks: initialSocialLinks,
           };
         })
         .filter((p): p is NonNullable<typeof p> => p !== null);
@@ -1063,17 +1103,21 @@ export class GoogleMapsDiscoveryProvider implements DiscoveryProvider {
               };
             }
 
-            // Step 2: Name / Website mismatch check
+            // Step 2: Name / Website mismatch check (with extracted homepage title/H1/og:site_name)
             const matchRes = checkNameWebsiteMismatch({
               businessName: p.businessName,
               websiteUrl: p.rawWebsite,
+              homepageTitle: waterfallRes.homepageTitle,
+              homepageH1: waterfallRes.homepageH1,
+              ogSiteName: waterfallRes.ogSiteName,
+              homepageHtml: waterfallRes.homepageHtml,
             });
             if (matchRes.isMismatch) {
               (p as { flags?: string[] }).flags = [...((p as { flags?: string[] }).flags ?? []), "NAME_WEBSITE_MISMATCH"];
               (p as { nameWebsiteMismatch?: boolean }).nameWebsiteMismatch = true;
-              // Downgrade handle confidence to low when handle came from a mismatching website
-              if (p.handleSource && ["homepage", "contact_page", "linkhub", "website"].includes(p.handleSource)) {
-                p.handleConfidence = "low";
+              // Mismatch lowers confidence only (to medium), NEVER discards the handle
+              if (p.handleConfidence === "high") {
+                p.handleConfidence = "medium";
               }
             }
           } catch {
@@ -1185,6 +1229,7 @@ export class GoogleMapsDiscoveryProvider implements DiscoveryProvider {
             category: p.gmapsCategory,
             businessCategoryName: p.gmapsCategory,
             location: p.placeCity || p.address || null,
+            city: p.placeCity,
             externalUrl: p.rawWebsite,
             website: p.rawWebsite,
             phone: p.phone,
@@ -1202,6 +1247,10 @@ export class GoogleMapsDiscoveryProvider implements DiscoveryProvider {
             gmapsRating: p.rating,
             gmapsReviews: p.reviewsCount,
             gmapsPlaceId: p.placeId,
+            locationConfidence: p.locationConfidence,
+            fieldSources: p.fieldSources,
+            gmapsUrl: p.mapsUrl,
+            url: p.mapsUrl,
             isClaimed: p.isClaimed,
             socialLinks: p.socialLinks,
             sourceProvider: "google_maps",
@@ -1265,6 +1314,7 @@ export class GoogleMapsDiscoveryProvider implements DiscoveryProvider {
           category: p.gmapsCategory,
           businessCategoryName: p.gmapsCategory,
           location: p.placeCity || p.address || null,
+          city: p.placeCity,
           externalUrl: p.rawWebsite,
           website: p.rawWebsite,
           phone: p.phone,
@@ -1282,6 +1332,10 @@ export class GoogleMapsDiscoveryProvider implements DiscoveryProvider {
           gmapsRating: p.rating,
           gmapsReviews: p.reviewsCount,
           gmapsPlaceId: p.placeId,
+          locationConfidence: p.locationConfidence,
+          fieldSources: p.fieldSources,
+          gmapsUrl: p.mapsUrl,
+          url: p.mapsUrl,
           isClaimed: p.isClaimed,
           socialLinks: p.socialLinks,
           sourceProvider: "google_maps",

@@ -1653,6 +1653,48 @@ export function LeadDetailDrawer({
                         </div>
                       )}
 
+                      {(() => {
+                        const raw = lead.rawProfileData as Record<string, unknown> | undefined;
+                        const locConf = (raw?.locationConfidence as string) || (lead as { locationConfidence?: string }).locationConfidence;
+                        const fieldSources = (raw?.fieldSources as Record<string, string>) || (lead as { fieldSources?: Record<string, string> }).fieldSources;
+                        const mapsUrl = (raw?.mapsUrl as string) || (lead as { mapsUrl?: string }).mapsUrl;
+
+                        return (
+                          <>
+                            {locConf && (
+                              <div className="flex items-center justify-between border-b border-zinc-800/60 pb-2">
+                                <span className="text-zinc-500">Location Confidence</span>
+                                <span className={`rounded px-1.5 py-0.5 text-[10px] font-semibold uppercase ${
+                                  locConf === "high" ? "bg-emerald-500/10 text-emerald-400 border border-emerald-500/20" : "bg-amber-500/10 text-amber-400 border border-amber-500/20"
+                                }`}>
+                                  {locConf}
+                                </span>
+                              </div>
+                            )}
+                            {mapsUrl && (
+                              <div className="flex items-center justify-between border-b border-zinc-800/60 pb-2">
+                                <span className="text-zinc-500">Google Maps</span>
+                                <a href={mapsUrl} target="_blank" rel="noreferrer" className="text-cyan-400 hover:underline truncate max-w-[200px]">
+                                  View on Maps
+                                </a>
+                              </div>
+                            )}
+                            {fieldSources && Object.keys(fieldSources).length > 0 && (
+                              <div className="border-b border-zinc-800/60 pb-2">
+                                <span className="text-zinc-500 block mb-1">Field Sources</span>
+                                <div className="grid grid-cols-2 gap-1 text-[10px] text-zinc-400 font-mono">
+                                  {Object.entries(fieldSources).map(([f, s]) => (
+                                    <div key={f} className="truncate">
+                                      <span className="text-zinc-500">{f}:</span> {s}
+                                    </div>
+                                  ))}
+                                </div>
+                              </div>
+                            )}
+                          </>
+                        );
+                      })()}
+
                       {lead.instagramId && (
                         <div className="flex items-center justify-between border-b border-zinc-800/60 pb-2">
                           <span className="text-zinc-500">Instagram ID</span>

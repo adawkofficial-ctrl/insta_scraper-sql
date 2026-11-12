@@ -110,6 +110,9 @@ export async function persistStage(
       reviewCount: c.reviewCount ?? c.gmapsReviews ?? null,
       handleSource: c.handleSource ?? null,
       handleConfidence: c.handleConfidence ?? null,
+      locationConfidence: c.locationConfidence ?? "medium",
+      fieldSources: c.fieldSources ?? null,
+      mapsUrl: c.gmapsUrl ?? c.url ?? null,
       relatedProfiles: null,
       latestPosts: null,
       source: "apify",
@@ -121,7 +124,13 @@ export async function persistStage(
       scoreBreakdown: qualityScoreResult.breakdown,
       scoreFlags: qualityScoreResult.flags,
       availableChannels: scoreInput.availableChannels,
-      rawProfileData: c.socialLinks ? { socialLinks: c.socialLinks } : null,
+      rawProfileData: {
+        ...(c.socialLinks ? { socialLinks: c.socialLinks } : {}),
+        locationConfidence: c.locationConfidence ?? "medium",
+        fieldSources: c.fieldSources ?? null,
+        mapsUrl: c.gmapsUrl ?? c.url ?? null,
+        source: "google_maps",
+      },
     });
   }
 

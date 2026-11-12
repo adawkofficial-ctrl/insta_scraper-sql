@@ -117,12 +117,19 @@ export async function enrichLeadHandleWaterfall(
     const mismatch = checkNameWebsiteMismatch({
       businessName: lead.fullName,
       websiteUrl: lead.website,
+      homepageTitle: waterfallRes.homepageTitle,
+      homepageH1: waterfallRes.homepageH1,
+      ogSiteName: waterfallRes.ogSiteName,
+      homepageHtml: waterfallRes.homepageHtml,
     });
-    let confidence = waterfallRes.handleConfidence ?? "medium";
+    let confidence = waterfallRes.handleConfidence ?? "high";
     const flags = [...(lead.scoreFlags ?? [])];
     if (mismatch.isMismatch) {
       if (!flags.includes("NAME_WEBSITE_MISMATCH")) flags.push("NAME_WEBSITE_MISMATCH");
-      confidence = "low";
+      // Mismatch lowers confidence only (to medium), NEVER discards the handle
+      if (confidence === "high") {
+        confidence = "medium";
+      }
     }
 
     const channels = Array.from(new Set([...(lead.availableChannels ?? []), "INSTAGRAM"]));

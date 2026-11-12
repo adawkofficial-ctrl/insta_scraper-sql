@@ -59,6 +59,10 @@ export type DiscoveredProfile = {
   groupKey?: string | null;
   flags?: string[] | null;
   nameWebsiteMismatch?: boolean | null;
+  locationConfidence?: "high" | "medium" | "low" | string | null;
+  fieldSources?: Record<string, string> | null;
+  gmapsUrl?: string | null;
+  url?: string | null;
 };
 
 export type DiscoveredCandidate = DiscoveredProfile;
