@@ -2,11 +2,16 @@ import { NextResponse } from "next/server";
 import { requireAuth } from "@/lib/services/auth";
 import { handleRouteError, apiError } from "@/lib/errors";
 import { getPrismaClient } from "@/lib/db/prisma";
-import { enrichLeadHandleWaterfall } from "@/lib/services/scraper/profile-enrichment-service";
+import { enrichLeadsFromWebsites } from "@/lib/services/enrichment/website-lead-enricher";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
 
+/**
+ * "Scrape websites for all leads": free website enrichment for leads missing a
+ * handle, email, or social link. No Apify/Gemini/Unipile calls. At most once
+ * per 7 days per lead (pass ?force=1 to bypass).
+ */
 export async function POST(
   request: Request,
   props: { params: Promise<{ campaignId: string }> },
@@ -29,66 +34,26 @@ export async function POST(
       return apiError(404, "CAMPAIGN_NOT_FOUND", "Campaign not found or unauthorized.");
     }
 
-    const eligibleLeads = await prisma.lead.findMany({
-      where: {
-        campaignId,
-        website: { not: null },
-        OR: [
-          { username: null },
-          { username: "" },
-        ],
-      },
-      select: {
-        id: true,
-        fullName: true,
-        website: true,
-        username: true,
-        lastHandleEnrichmentAt: true,
-        rating: true,
-        reviewCount: true,
-        isClaimed: true,
-        isChain: true,
-        email: true,
-        phone: true,
-        availableChannels: true,
-        scoreFlags: true,
-      },
+    const url = new URL(request.url);
+    const force = url.searchParams.get("force") === "1";
+    const result = await enrichLeadsFromWebsites({
+      campaignId,
+      force,
+      concurrency: 15,
     });
-
-    let foundCount = 0;
-    let notFoundCount = 0;
-    let cooldownCount = 0;
-    const results: Array<{ id: string; name: string | null; outcome: string; handle: string | null }> = [];
-
-    for (const lead of eligibleLeads) {
-      if (!lead.website || !lead.website.trim()) continue;
-
-      const res = await enrichLeadHandleWaterfall(lead, prisma);
-      if (res.outcome === "found") {
-        foundCount++;
-      } else if (res.outcome === "cooldown") {
-        cooldownCount++;
-      } else {
-        notFoundCount++;
-      }
-      results.push({
-        id: lead.id,
-        name: lead.fullName,
-        outcome: res.outcome,
-        handle: res.handle,
-      });
-    }
 
     return NextResponse.json({
       success: true,
-      totalChecked: eligibleLeads.length,
-      found: foundCount,
-      notFound: notFoundCount,
-      cooldownSkipped: cooldownCount,
-      results,
+      totalChecked: result.totalEligible,
+      found: result.results.filter((r) => r.outcome === "found").length,
+      notFound: result.notFound,
+      cooldownSkipped: result.cooldownSkipped,
+      handlesFound: result.handlesFound,
+      emailsFound: result.emailsFound,
+      socialsFound: result.socialsFound,
+      results: result.results,
     });
   } catch (error) {
     return handleRouteError(request, error);
   }
 }
-

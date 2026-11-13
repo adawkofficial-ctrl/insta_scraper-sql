@@ -1,5 +1,5 @@
 /**
- * STEP 6 — Discovery Fixes Verification Test Suite
+ * STEP 6 â€” Discovery Fixes Verification Test Suite
  *
  * Verifies:
  * 1. Real-mode run with a mocked Apify client returning 15 realistic places
@@ -17,6 +17,8 @@
  */
 
 import "dotenv/config";
+// Test doubles (Apify mock) are only honored when NODE_ENV=test.
+(process.env as Record<string, string | undefined>).NODE_ENV = "test";
 import type { DiscoveryRequest } from "../src/lib/services/discovery/discovery-service";
 (process.env as Record<string, string>).NODE_ENV = "test";
 // eslint-disable-next-line @typescript-eslint/no-require-imports

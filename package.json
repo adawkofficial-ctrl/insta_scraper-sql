@@ -9,6 +9,8 @@
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
     "test": "tsx scripts/run-all-tests.ts",
+    "resume:job": "tsx -r ./scripts/preload_server_only.cjs scripts/resume_job.ts",
+    "import:apify-dataset": "tsx -r ./scripts/preload_server_only.cjs scripts/import_apify_dataset.ts",
     "preflight": "tsx scripts/preflight.ts",
     "cleanup:dryrun": "tsx scripts/cleanup-dry-run-data.ts",
     "replay:gmaps": "tsx -r ./scripts/preload_server_only.cjs scripts/replay_gmaps.ts",

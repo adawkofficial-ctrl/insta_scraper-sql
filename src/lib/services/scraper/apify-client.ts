@@ -36,7 +36,10 @@ let isMockClientSet = false;
 
 export function setApifyClientForTesting(mockClient: ApifyClient | null): void {
   if (process.env.NODE_ENV !== "test") {
-    return;
+    // Fail loud instead of silently falling through to the live Apify client.
+    throw new Error(
+      "setApifyClientForTesting is test-only and requires NODE_ENV=test. Refusing to install a mock outside tests.",
+    );
   }
   client = mockClient;
   isMockClientSet = mockClient !== null;

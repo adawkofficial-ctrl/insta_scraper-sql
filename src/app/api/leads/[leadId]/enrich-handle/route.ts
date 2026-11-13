@@ -31,7 +31,7 @@ export async function POST(
       return apiError(404, "LEAD_NOT_FOUND", "Lead not found or unauthorized.");
     }
 
-    const result = await enrichLeadHandleWaterfall(lead, prisma);
+    const result = await enrichLeadHandleWaterfall(lead, prisma, { force: true });
 
     return NextResponse.json({
       success: true,

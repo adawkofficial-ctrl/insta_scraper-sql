@@ -208,7 +208,21 @@ export async function listCampaignLeads(
   if (rawChannel !== undefined) {
     const trimmedChannel = rawChannel.trim().toLowerCase();
     if (trimmedChannel && trimmedChannel !== "all") {
-      if (trimmedChannel === "has_email" || trimmedChannel === "email") {
+      if (trimmedChannel === "has_instagram" || trimmedChannel === "with_instagram") {
+        conditions.push({
+          AND: [
+            { username: { not: null } },
+            { username: { not: "" } },
+          ],
+        });
+      } else if (trimmedChannel === "no_instagram" || trimmedChannel === "without_instagram") {
+        conditions.push({
+          OR: [
+            { username: null },
+            { username: "" },
+          ],
+        });
+      } else if (trimmedChannel === "has_email" || trimmedChannel === "email") {
         conditions.push({
           OR: [
             { availableChannels: { has: "EMAIL" } },
@@ -224,9 +238,46 @@ export async function listCampaignLeads(
             { phoneNormalized: { not: null } },
           ],
         });
+      } else if (trimmedChannel === "has_website" || trimmedChannel === "website") {
+        conditions.push({
+          OR: [
+            { availableChannels: { has: "WEBSITE" } },
+            { website: { not: null } },
+            { websiteDomain: { not: null } },
+          ],
+        });
+      } else if (
+        trimmedChannel === "has_ig_website_or_email" ||
+        trimmedChannel === "has_contact" ||
+        trimmedChannel === "contactable"
+      ) {
+        // Contactable = has an Instagram handle, a website, or an email.
+        conditions.push({
+          OR: [
+            {
+              AND: [
+                { username: { not: null } },
+                { username: { not: "" } },
+              ],
+            },
+            { website: { not: null } },
+            { websiteDomain: { not: null } },
+            { email: { not: null } },
+            { emailNormalized: { not: null } },
+          ],
+        });
+      } else if (trimmedChannel === "has_social" || trimmedChannel === "has_other_social" || trimmedChannel === "social") {
+        conditions.push({
+          OR: [
+            { availableChannels: { has: "SOCIAL" } },
+            { socialLink: { not: null } },
+          ],
+        });
       } else if (trimmedChannel === "instagram_only" || trimmedChannel === "instagram") {
         conditions.push({
           AND: [
+            { username: { not: null } },
+            { username: { not: "" } },
             { OR: [{ email: null }, { email: "" }] },
             { OR: [{ phone: null }, { phone: "" }] },
           ],
@@ -234,7 +285,7 @@ export async function listCampaignLeads(
       } else {
         throw new BadRequestError(
           "INVALID_CHANNEL_FILTER",
-          `Invalid channel filter: "${rawChannel}". Allowed values: has_email, has_phone, instagram_only, all.`,
+          `Invalid channel filter: "${rawChannel}". Allowed values: has_instagram, no_instagram, has_email, has_phone, has_website, has_social, has_ig_website_or_email, instagram_only, all.`,
         );
       }
     }

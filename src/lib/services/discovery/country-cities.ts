@@ -151,12 +151,38 @@ export function resolveCountryCode(location: string | null | undefined): string 
     }
   }
 
-  // 3. Check Canadian province suffixes
-  if (/\b(on|bc|qc|ab|mb|sk|ns|nb|nl|pe)\b/i.test(clean)) {
+  // 3. Check known Canadian and international major cities
+  const canadianCities = [
+    "toronto",
+    "scarborough",
+    "north york",
+    "etobicoke",
+    "mississauga",
+    "markham",
+    "vaughan",
+    "richmond hill",
+    "brampton",
+    "vancouver",
+    "montreal",
+    "calgary",
+    "ottawa",
+    "edmonton",
+    "winnipeg",
+    "hamilton",
+    "kitchener",
+    "waterloo",
+    "halifax",
+  ];
+  if (canadianCities.some((c) => normalizedKey === c || clean.startsWith(`${c},`) || clean.startsWith(`${c} `))) {
     return "CA";
   }
 
-  // 4. Check US state abbreviations
+  // 4. Check Canadian province suffixes and names
+  if (/\b(on|bc|qc|ab|mb|sk|ns|nb|nl|pe|ontario|quebec|alberta|manitoba|saskatchewan)\b/i.test(clean)) {
+    return "CA";
+  }
+
+  // 5. Check US state abbreviations
   if (/\b(ny|ca|tx|fl|il|pa|oh|ga|nc|mi)\b/i.test(clean)) {
     return "US";
   }
@@ -260,12 +286,112 @@ export function resolveTargetCities(
   };
 }
 
+export const LOCATION_PREFIXES = [
+  "downtown",
+  "north",
+  "south",
+  "east",
+  "west",
+  "central",
+  "greater",
+  "old",
+  "new",
+  "uptown",
+  "midtown",
+];
+
+export function stripLocationPrefixes(token: string): string {
+  let cleaned = token.toLowerCase().trim();
+  let changed = true;
+  while (changed) {
+    changed = false;
+    for (const prefix of LOCATION_PREFIXES) {
+      if (cleaned.startsWith(`${prefix} `)) {
+        cleaned = cleaned.slice(prefix.length + 1).trim();
+        changed = true;
+      }
+    }
+  }
+  return cleaned;
+}
+
+/**
+ * Built-in fully qualified area lists for the Greater Toronto Area (GTA)
+ * to ensure unambiguous geocoding on Google Maps.
+ */
+export const GTA_AREAS: Record<string, { area: string; city: string; state: string; country: string }> = {
+  toronto: { area: "Toronto", city: "Toronto", state: "ON", country: "Canada" },
+  "north york": { area: "North York", city: "Toronto", state: "ON", country: "Canada" },
+  scarborough: { area: "Scarborough", city: "Toronto", state: "ON", country: "Canada" },
+  etobicoke: { area: "Etobicoke", city: "Toronto", state: "ON", country: "Canada" },
+  mississauga: { area: "Mississauga", city: "Mississauga", state: "ON", country: "Canada" },
+  markham: { area: "Markham", city: "Markham", state: "ON", country: "Canada" },
+  vaughan: { area: "Vaughan", city: "Vaughan", state: "ON", country: "Canada" },
+  "richmond hill": { area: "Richmond Hill", city: "Richmond Hill", state: "ON", country: "Canada" },
+  ajax: { area: "Ajax", city: "Ajax", state: "ON", country: "Canada" },
+  pickering: { area: "Pickering", city: "Pickering", state: "ON", country: "Canada" },
+  brampton: { area: "Brampton", city: "Brampton", state: "ON", country: "Canada" },
+};
+
+/**
+ * Builds a fully qualified Maps location string from structured parts:
+ * "<area>, <city>, <province/state>, <country>" (e.g. "Scarborough, Toronto, ON, Canada").
+ * Never sends a bare ambiguous name like "Scarborough" or "Vancouver".
+ */
+export function buildQualifiedLocationString(
+  area: string,
+  targetContext?: string | null,
+  countryCode?: string | null,
+): string {
+  const normArea = area.toLowerCase().trim();
+  const stripped = stripLocationPrefixes(normArea);
+
+  // 1. Direct GTA area mapping
+  if (GTA_AREAS[stripped] || GTA_AREAS[normArea]) {
+    const info = GTA_AREAS[stripped] || GTA_AREAS[normArea];
+    return `${area}, ${info.city}, ${info.state}, ${info.country}`;
+  }
+
+  // 2. If area already contains commas (e.g. "Vancouver, BC, Canada"), ensure country if missing
+  if (area.includes(",")) {
+    const parts = area.split(",").map((p) => p.trim());
+    if (parts.length >= 3) return area;
+    const resolvedCountry = (countryCode || resolveCountryCode(targetContext || area) || "CA").toUpperCase();
+    const countryName = resolvedCountry === "CA" ? "Canada" : resolvedCountry === "US" ? "USA" : resolvedCountry;
+    if (!area.toLowerCase().includes(countryName.toLowerCase())) {
+      return `${area}, ${countryName}`;
+    }
+    return area;
+  }
+
+  // 3. Fallback: combine area with target context or default country
+  const resolvedCountry = (countryCode || resolveCountryCode(targetContext) || "CA").toUpperCase();
+  const countryName = resolvedCountry === "CA" ? "Canada" : resolvedCountry === "US" ? "USA" : resolvedCountry;
+
+  if (targetContext && targetContext !== area && !targetContext.toLowerCase().includes(normArea)) {
+    return `${area}, ${targetContext}`;
+  }
+
+  return `${area}, ${countryName}`;
+}
+
 /**
  * City center coordinates lookup for location radius validation in Instagram Places discovery.
  */
 export const CITY_COORDINATES: Record<string, { lat: number; lng: number }> = {
   toronto: { lat: 43.6532, lng: -79.3832 },
+  scarborough: { lat: 43.7764, lng: -79.2318 },
+  "north york": { lat: 43.7615, lng: -79.4111 },
+  etobicoke: { lat: 43.6205, lng: -79.5132 },
+  mississauga: { lat: 43.5890, lng: -79.6441 },
+  markham: { lat: 43.8561, lng: -79.3370 },
+  vaughan: { lat: 43.8563, lng: -79.5085 },
+  "richmond hill": { lat: 43.8828, lng: -79.4403 },
+  ajax: { lat: 43.8509, lng: -79.0204 },
+  pickering: { lat: 43.8384, lng: -79.0868 },
+  brampton: { lat: 43.7315, lng: -79.7624 },
   vancouver: { lat: 49.2827, lng: -123.1207 },
+  "downtown vancouver": { lat: 49.2827, lng: -123.1207 },
   montreal: { lat: 45.5017, lng: -73.5673 },
   calgary: { lat: 51.0447, lng: -114.0719 },
   ottawa: { lat: 45.4215, lng: -75.6972 },
@@ -331,10 +457,12 @@ export function getIgPlacesRadiusKm(): number {
 
 /**
  * Normalizes a target city input string into a lookup key (e.g. "Toronto, ON" -> "toronto").
+ * Strips directional/center prefixes (e.g. "Downtown Vancouver" -> "vancouver").
  */
 export function normalizeCityKey(targetCity: string): string {
   const firstSegment = targetCity.split(",")[0].trim().toLowerCase();
-  return firstSegment.replace(/[^a-z0-9 ]/g, "").trim();
+  const stripped = stripLocationPrefixes(firstSegment);
+  return stripped.replace(/[^a-z0-9 ]/g, "").trim();
 }
 
 export type PlausibilityCheckOptions = {
@@ -391,7 +519,9 @@ export function isPlausiblyInCity(options: PlausibilityCheckOptions): boolean {
     return true;
   }
 
-  return false;
+  // An unknown city has no center coordinates, so coordinates cannot prove the
+  // place is outside it. Treat the location as unknown rather than rejecting.
+  return !cityCenter;
 }
 
 /**
@@ -601,7 +731,9 @@ export function derivePlaceLocation(
 
   const isStrictCity = options?.strictCityOnly ?? (normTargetLoc === "toronto" || normTargetLoc.includes("strict"));
 
-  const targetCountry = resolveCountryCode(targetLocation || searchArea) || "CA";
+  // Unknown cities/countries must stay unknown: never fall back to Canada (or
+  // any other country) because that turns an unknown location into a rejection.
+  const targetCountry = resolveCountryCode(targetLocation || searchArea);
   const placeCountry = place.countryCode?.trim().toUpperCase() || null;
 
   // 1. Explicit Country Mismatch
@@ -619,10 +751,39 @@ export function derivePlaceLocation(
 
   // 2. Explicit State / Province Mismatch
   const placeStateNorm = normalizeState(place.state);
-  const targetStateNorm =
-    targetCountry === "CA" && (normTargetLoc.includes("toronto") || normTargetLoc.includes("on") || normTargetLoc.includes("ontario"))
-      ? "ON"
-      : null;
+  let targetStateNorm: string | null = null;
+  if (targetCountry === "CA") {
+    const combinedTarget = `${normTargetLoc} ${searchArea.toLowerCase()}`;
+    if (
+      combinedTarget.includes("toronto") ||
+      combinedTarget.includes("on") ||
+      combinedTarget.includes("ontario") ||
+      combinedTarget.includes("scarborough") ||
+      combinedTarget.includes("markham") ||
+      combinedTarget.includes("ottawa")
+    ) {
+      targetStateNorm = "ON";
+    } else if (
+      combinedTarget.includes("vancouver") ||
+      combinedTarget.includes("bc") ||
+      combinedTarget.includes("british columbia")
+    ) {
+      targetStateNorm = "BC";
+    } else if (
+      combinedTarget.includes("montreal") ||
+      combinedTarget.includes("qc") ||
+      combinedTarget.includes("quebec")
+    ) {
+      targetStateNorm = "QC";
+    } else if (
+      combinedTarget.includes("calgary") ||
+      combinedTarget.includes("ab") ||
+      combinedTarget.includes("alberta") ||
+      combinedTarget.includes("edmonton")
+    ) {
+      targetStateNorm = "AB";
+    }
+  }
 
   if (placeStateNorm && targetStateNorm && placeStateNorm !== targetStateNorm) {
     return {
@@ -641,7 +802,13 @@ export function derivePlaceLocation(
   const lng = place.location?.lng ?? place.lng;
   const radius = options?.radiusKm ?? getMapsRadiusKm();
   const searchCityKey = normalizeCityKey(searchArea);
-  const searchCoords = CITY_COORDINATES[searchCityKey] || CITY_COORDINATES.toronto;
+  const targetCityKey = normalizeCityKey(targetLocation || "");
+  // An unknown city has no entry in CITY_COORDINATES; it must NEVER default to Toronto.
+  // When coordinates are unknown, coordinates check is skipped and result's own address/FSA decide.
+  const searchCoords =
+    CITY_COORDINATES[searchCityKey] ||
+    CITY_COORDINATES[targetCityKey] ||
+    undefined;
 
   if (typeof lat === "number" && typeof lng === "number" && searchCoords) {
     const dist = haversineDistanceKm(searchCoords.lat, searchCoords.lng, lat, lng);

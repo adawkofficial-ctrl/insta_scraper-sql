@@ -10,7 +10,13 @@ import type {
   DiscoveryResult,
   KeywordSearchStat,
 } from "./discovery-provider";
-import { derivePlaceLocation, resolveCountryCode, resolveTargetCities } from "./country-cities";
+import { derivePlaceLocation, resolveCountryCode, resolveTargetCities, buildQualifiedLocationString } from "./country-cities";
+import {
+  persistDiscoveredPlace,
+  saveLeadAsEnrichPending,
+  saveContactOnlyLead,
+  recordCandidateRejection,
+} from "./candidate-persistence";
 import { extractDiscoveryKeywords } from "./discovery-query";
 import {
   computeIgYieldPercent,
@@ -35,20 +41,20 @@ import {
 import { normalizeWebsite } from "../dedup/identity";
 import { normalizePhone } from "../contact/contact-parser";
 import {
-  runHandleDiscoveryWaterfall,
   safeFetchHtml,
   cleanAndValidateHandle,
   type HandleSource,
   type HandleConfidence,
 } from "./handle-discovery-waterfall";
+import { scrapeLeadWebsite } from "../enrichment/website-lead-enricher";
 import { checkNameWebsiteMismatch, isSocialOrAggregatorUrl } from "./name-website-matcher";
 import { clusterMultiLocationGroups } from "./group-detector";
 
 export const GMAPS_ACTOR_ID = "compass/crawler-google-places";
 
 const DEFAULT_MAX_PLACES_PER_SEARCH = 15;
-const DEFAULT_MAX_TOTAL_PLACES = 30;
-const MAX_KEYWORDS_PER_RUN = 2;
+const DEFAULT_MAX_TOTAL_PLACES = 1000;
+const MAX_KEYWORDS_PER_RUN = 5;
 function log(message: string): void {
   if (process.env.NODE_ENV === "production") {
     return;
@@ -510,6 +516,7 @@ export class GoogleMapsDiscoveryProvider implements DiscoveryProvider {
     if (cityResolution.warning) {
       console.warn(cityResolution.warning);
     }
+
     const maxCities = Number(process.env.GMAPS_MAX_CITIES || 5);
     const resolvedCities = cityResolution.cities
       // Drop province/state abbreviations such as "ON" from "Toronto, ON";
@@ -520,8 +527,26 @@ export class GoogleMapsDiscoveryProvider implements DiscoveryProvider {
         if (/^[A-Z]{2}$/i.test(trimmed)) return false;
         return true;
       });
+    // Country-only locations must not fan out to every recommended city (cost)
+    // and must not stop before any call (0 leads). Search the first planned
+    // city by default; operators can opt into more via
+    // GMAPS_COUNTRY_FALLBACK_CITIES.
+    const countryFallbackCityLimit = Math.max(
+      1,
+      Math.min(
+        Number(process.env.GMAPS_COUNTRY_FALLBACK_CITIES || 1),
+        maxCities,
+      ),
+    );
+    const cityLimit = cityResolution.isCountryFallback
+      ? countryFallbackCityLimit
+      : maxCities;
     const targetCities =
-      resolvedCities.length > 0 ? resolvedCities.slice(0, maxCities) : [""];
+      resolvedCities.length > 0 ? resolvedCities.slice(0, cityLimit) : [""];
+
+    const countryFallbackNotice = cityResolution.isCountryFallback
+      ? `Location "${input.location}" is a whole country. Searching ${targetCities.length === 1 ? `planned city ${targetCities[0]}` : `${targetCities.length} planned cities`}. Choose specific target cities in the campaign settings for broader coverage (suggested: ${(cityResolution.recommendedCities ?? targetCities).join(", ")}).`
+      : null;
 
     const placesPerSearch = process.env.GMAPS_MAX_PLACES_PER_SEARCH
       ? Math.max(
@@ -537,7 +562,7 @@ export class GoogleMapsDiscoveryProvider implements DiscoveryProvider {
           Number.parseInt(process.env.GMAPS_MAX_TOTAL_PLACES, 10) ||
             DEFAULT_MAX_TOTAL_PLACES,
         )
-      : DEFAULT_MAX_TOTAL_PLACES;
+      : Math.max(100, (input.limit || 50) * 3);
 
     log(
       `[GMAPS-DISCOVERY] Starting discovery: actor=${actorId} cities=${targetCities.length} keywords=${effectiveKeywords.length} maxPlacesPerSearch=${placesPerSearch} maxTotalPlaces=${maxTotalPlaces} countryCode=${resolvedCountryCode ?? "none"}`,
@@ -625,8 +650,8 @@ export class GoogleMapsDiscoveryProvider implements DiscoveryProvider {
 
     // 3b. Coverage ledger + outcome cache + area rotation
     const maxSearchesPerJob = process.env.GMAPS_MAX_SEARCHES_PER_JOB
-      ? Math.max(1, Number.parseInt(process.env.GMAPS_MAX_SEARCHES_PER_JOB, 10) || 2)
-      : 2;
+      ? Math.max(1, Number.parseInt(process.env.GMAPS_MAX_SEARCHES_PER_JOB, 10) || 100)
+      : 100;
     const jobBudgetUsd = areApifyCostLimitsEnabled()
       ? process.env.DISCOVERY_MAX_JOB_USD
         ? Number.parseFloat(process.env.DISCOVERY_MAX_JOB_USD) || 0.3
@@ -715,11 +740,13 @@ export class GoogleMapsDiscoveryProvider implements DiscoveryProvider {
       const socialEnrichmentEnabled = process.env.GMAPS_SOCIAL_ENRICHMENT === "true";
       const scrapeContactsEnabled = process.env.GMAPS_SCRAPE_CONTACTS === "true";
 
+      const qualifiedLocation = buildQualifiedLocationString(city, input.location, resolvedCountryCode);
+
       // Send ONLY fields we consume. Reviews, images, questions, detail pages,
       // directories, competitor analysis and web results are omitted entirely.
       const actorInput: Record<string, unknown> = {
         searchStringsArray: runKeywords,
-        locationQuery: city,
+        locationQuery: qualifiedLocation,
         maxCrawledPlacesPerSearch: cityPlacesLimit,
         language: "en",
         skipClosedPlaces: true,
@@ -749,14 +776,14 @@ export class GoogleMapsDiscoveryProvider implements DiscoveryProvider {
       }
 
       const queryDescription = city
-        ? `"${runKeywords.join(", ")}" in "${city}"`
+        ? `"${runKeywords.join(", ")}" in "${qualifiedLocation}"`
         : `"${runKeywords.join(", ")}"`;
       executedQueries.push(queryDescription);
 
       let items: Record<string, unknown>[] = [];
       try {
         log(
-          `[GMAPS-DISCOVERY] Calling actor via safe cost guard: city="${city}" keywords=${JSON.stringify(runKeywords)} limit=${cityPlacesLimit} maxCharge=$${String(actorInput.maxTotalChargeUsd)}`,
+          `[GMAPS-DISCOVERY] Calling actor via safe cost guard: city="${qualifiedLocation}" keywords=${JSON.stringify(runKeywords)} limit=${cityPlacesLimit} maxCharge=$${String(actorInput.maxTotalChargeUsd)}`,
         );
 
         const safeResult = await runActorSafely<Record<string, unknown>>(
@@ -791,6 +818,44 @@ export class GoogleMapsDiscoveryProvider implements DiscoveryProvider {
         accumulatedUsd += safeResult.usageTotalUsd;
         accumulatedComputeUnits += safeResult.computeUnits;
         items = safeResult.items;
+
+        // PERSIST FIRST: Immediately write every place to DB as a Candidate with status DISCOVERED
+        if (input.campaignId && items.length > 0) {
+          const runCostUsd = charged.chargedUsd > 0 ? charged.chargedUsd : safeResult.usageTotalUsd;
+          for (const item of items) {
+            const pid =
+              (typeof item.placeId === "string" ? item.placeId : null) ||
+              (typeof item.id === "string" ? item.id : null) ||
+              (typeof item.cid === "string" ? item.cid : null);
+            if (!pid) continue;
+
+            const loc = derivePlaceLocation(item, city || input.location || "", input.location);
+            await persistDiscoveredPlace(
+              input.campaignId,
+              input.scrapeJobId ?? null,
+              {
+                placeId: pid,
+                name: (typeof item.title === "string" ? item.title : typeof item.name === "string" ? item.name : "Unknown"),
+                category: typeof item.categoryName === "string" ? item.categoryName : null,
+                address: typeof item.address === "string" ? item.address : typeof item.street === "string" ? item.street : null,
+                city: loc.city,
+                state: typeof item.state === "string" ? item.state : null,
+                countryCode: loc.countryCode,
+                phone: typeof item.phone === "string" ? item.phone : typeof item.phoneUnformatted === "string" ? item.phoneUnformatted : null,
+                website: typeof item.website === "string" ? item.website : null,
+                rating: typeof item.totalScore === "number" ? item.totalScore : typeof item.rating === "number" ? item.rating : null,
+                reviewsCount: typeof item.reviewsCount === "number" ? item.reviewsCount : typeof item.userRatingsTotal === "number" ? item.userRatingsTotal : null,
+                mapsUrl: typeof item.url === "string" ? item.url : null,
+                rawPlaceData: item,
+              },
+              {
+                runId: lastRunId,
+                datasetId: lastDatasetId,
+                costUsd: runCostUsd,
+              },
+            );
+          }
+        }
       } catch (err: unknown) {
         const errMessage = err instanceof Error ? err.message : String(err);
         console.error(
@@ -826,7 +891,7 @@ export class GoogleMapsDiscoveryProvider implements DiscoveryProvider {
       }
 
       // Location match validation on first results:
-      // Maps results come from a location-bound search. Only stop if sample places
+      // Maps results come from a location-bound search. Only skip area if all sample places
       // show an EXPLICIT mismatch (wrong country, wrong province/state, outside metro).
       // Missing city or missing location fields must never cause a skip.
       if (items.length > 0) {
@@ -841,10 +906,11 @@ export class GoogleMapsDiscoveryProvider implements DiscoveryProvider {
         if (allExplicitMismatch) {
           const mismatchWarning = "Maps results do not match requested location";
           console.warn(
-            `[GMAPS-DISCOVERY] ${mismatchWarning}: requested "${city || input.location}" but got places with explicit mismatch. Stopping search.`,
+            `[GMAPS-DISCOVERY] ${mismatchWarning}: requested "${city || input.location}" but got places with explicit mismatch. Skipping area (not stopping whole job).`,
           );
           lastError = mismatchWarning;
-          break;
+          // Never stop the whole job on area mismatch: skip only this area and continue.
+          continue;
         }
       }
 
@@ -1046,7 +1112,12 @@ export class GoogleMapsDiscoveryProvider implements DiscoveryProvider {
             handleSource,
             handleConfidence,
             isClaimed,
+            state: typeof place.state === "string" ? place.state : null,
+            rawPlaceData: place as unknown as Record<string, unknown>,
             socialLinks: initialSocialLinks,
+            websiteEmails: [] as Array<{ value: string; normalized: string; generic?: boolean; sourceUrl?: string }>,
+            websitePhones: [] as Array<{ value: string; normalized: string; sourceUrl?: string }>,
+            websiteDiagnostics: [] as unknown[],
           };
         })
         .filter((p): p is NonNullable<typeof p> => p !== null);
@@ -1076,52 +1147,75 @@ export class GoogleMapsDiscoveryProvider implements DiscoveryProvider {
         return true;
       });
 
-      // Concurrently run handle discovery waterfall (concurrency 5) for places
-      // with a website to discover Instagram handles and other social links
+      // Free website enrichment (concurrency 15): homepage + up to 4 same-domain
+      // pages. Extracts IG, other socials, emails, and phones from anchors (incl.
+      // image-only), meta tags, JSON-LD, footer/header, and text. Never fails the
+      // job on one site. No Apify/Gemini/Unipile calls.
       const placesWithWebsite = parsedItems.filter((p) => p.rawWebsite);
       if (placesWithWebsite.length > 0) {
-        await runWithConcurrency(placesWithWebsite, 5, async (p) => {
+        await runWithConcurrency(placesWithWebsite, 15, async (p) => {
           try {
-            const waterfallRes = await runHandleDiscoveryWaterfall({
-              businessName: p.businessName,
-              websiteUrl: p.rawWebsite,
-              mapsHandles: p.handles,
-              mapsSocial: p.socialLinks,
-            });
-            if (waterfallRes.handle) {
-              p.handles = [waterfallRes.handle];
-              p.handleSource = waterfallRes.handleSource;
-              p.handleConfidence = waterfallRes.handleConfidence;
-            }
-            if (waterfallRes.socialLinks) {
-              p.socialLinks = {
-                facebook: waterfallRes.socialLinks.facebook ?? p.socialLinks.facebook,
-                tiktok: waterfallRes.socialLinks.tiktok ?? p.socialLinks.tiktok,
-                linkedin: waterfallRes.socialLinks.linkedin ?? p.socialLinks.linkedin,
-                youtube: waterfallRes.socialLinks.youtube ?? p.socialLinks.youtube,
-                whatsapp: waterfallRes.socialLinks.whatsapp ?? p.socialLinks.whatsapp,
-              };
-            }
+            const scraped = await scrapeLeadWebsite(
+              {
+                website: p.rawWebsite!,
+                businessName: p.businessName,
+                countryCode: p.placeCountry ?? undefined,
+              },
+              { timeoutMs: 12_000, maxSubpages: 4 },
+            );
 
-            // Step 2: Name / Website mismatch check (with extracted homepage title/H1/og:site_name)
+            if (p.handles.length === 0 && scraped.handle) {
+              p.handles = [scraped.handle];
+              p.handleSource = "homepage" as HandleSource;
+              p.handleConfidence = scraped.handleConfidence;
+            }
+            const mergedSocialLinks: Record<string, string | null | undefined> = {
+              ...scraped.socialLinks,
+            };
+            for (const [key, value] of Object.entries(p.socialLinks)) {
+              // Maps-provided social links win, but null/empty Maps values must
+              // not overwrite links discovered on the website.
+              if (typeof value === "string" && value) {
+                mergedSocialLinks[key] = value;
+              }
+            }
+            p.socialLinks = mergedSocialLinks as typeof p.socialLinks;
+            if (!p.email && scraped.emails[0]) {
+              p.email = scraped.emails[0].value;
+            }
+            if (!p.phone && scraped.phones[0]) {
+              p.phone = scraped.phones[0].value;
+            }
+            p.websiteEmails = scraped.emails.map((email) => ({
+              value: email.value,
+              normalized: email.normalized,
+              generic: email.generic,
+              sourceUrl: email.sourceUrl,
+            }));
+            p.websitePhones = scraped.phones.map((phone) => ({
+              value: phone.value,
+              normalized: phone.normalized,
+              sourceUrl: phone.sourceUrl,
+            }));
+            p.websiteDiagnostics = scraped.pages;
+
             const matchRes = checkNameWebsiteMismatch({
               businessName: p.businessName,
               websiteUrl: p.rawWebsite,
-              homepageTitle: waterfallRes.homepageTitle,
-              homepageH1: waterfallRes.homepageH1,
-              ogSiteName: waterfallRes.ogSiteName,
-              homepageHtml: waterfallRes.homepageHtml,
+              homepageTitle: scraped.homepageTitle,
+              homepageH1: scraped.homepageH1,
+              ogSiteName: scraped.ogSiteName,
+              homepageHtml: scraped.homepageHtml ?? undefined,
             });
             if (matchRes.isMismatch) {
               (p as { flags?: string[] }).flags = [...((p as { flags?: string[] }).flags ?? []), "NAME_WEBSITE_MISMATCH"];
               (p as { nameWebsiteMismatch?: boolean }).nameWebsiteMismatch = true;
-              // Mismatch lowers confidence only (to medium), NEVER discards the handle
               if (p.handleConfidence === "high") {
                 p.handleConfidence = "medium";
               }
             }
           } catch {
-            // Ignore website fetch errors
+            // Ignore website fetch errors; the lead is still saved from Maps data.
           }
           return null;
         });
@@ -1176,6 +1270,9 @@ export class GoogleMapsDiscoveryProvider implements DiscoveryProvider {
         if (p.phone) channels.push("PHONE");
         if (p.phone && (p.socialLinks.whatsapp || p.phone.startsWith("+"))) channels.push("WHATSAPP");
         if (p.rawWebsite) channels.push("WEBSITE");
+        if (Object.values(p.socialLinks).some((value) => typeof value === "string" && value)) {
+          channels.push("SOCIAL");
+        }
 
         if (p.handles.length === 0) {
           totalNoInstagram++;
@@ -1261,6 +1358,38 @@ export class GoogleMapsDiscoveryProvider implements DiscoveryProvider {
             flags: (p as { flags?: string[] }).flags ?? [],
             nameWebsiteMismatch: (p as { nameWebsiteMismatch?: boolean }).nameWebsiteMismatch ?? false,
           });
+
+          if (input.campaignId && p.placeId) {
+            await saveContactOnlyLead({
+              campaignId: input.campaignId,
+              scrapeJobId: input.scrapeJobId,
+              userId: input.userId,
+              placeId: p.placeId,
+              name: p.businessName || "Unknown",
+              website: p.rawWebsite,
+              phone: p.phone,
+              email: p.email,
+              city: p.placeCity,
+              rating: p.rating,
+              reviewsCount: p.reviewsCount,
+              socialLinks: p.socialLinks as Record<string, unknown> | null,
+              isDryRun: Boolean(input.isDryRun ?? isDryRunMode()),
+              fields: {
+                category: p.gmapsCategory,
+                address: p.address,
+                state: p.state,
+                countryCode: p.placeCountry,
+                mapsUrl: p.mapsUrl,
+                rawPlaceData: p.rawPlaceData,
+                fieldSources: p.fieldSources,
+                email: p.email,
+                socialLinks: p.socialLinks as Record<string, unknown> | null,
+                websiteEmails: p.websiteEmails,
+                websitePhones: p.websitePhones,
+                websiteDiagnostics: p.websiteDiagnostics,
+              },
+            });
+          }
           continue;
         }
 
@@ -1272,25 +1401,34 @@ export class GoogleMapsDiscoveryProvider implements DiscoveryProvider {
         // Deduplication
         if (seenHandles.has(username) || existingDbUsernames.has(username)) {
           totalDuplicatesSkipped++;
-          if (p.placeId) outcomesToRecord.push({ placeId: p.placeId, outcome: "rejected", reason: "duplicate" });
+          if (p.placeId) {
+            outcomesToRecord.push({ placeId: p.placeId, outcome: "rejected", reason: "duplicate" });
+            if (input.campaignId) await recordCandidateRejection(input.campaignId, p.placeId, "duplicate");
+          }
           continue;
         }
         if (p.placeId && (seenPlaceIds.has(p.placeId) || existingDbPlaceIds.has(p.placeId))) {
           totalDuplicatesSkipped++;
           outcomesToRecord.push({ placeId: p.placeId, outcome: "rejected", reason: "duplicate" });
+          if (input.campaignId) await recordCandidateRejection(input.campaignId, p.placeId, "duplicate");
           continue;
         }
         if (websiteDomain && (seenWebsiteDomains.has(websiteDomain) || existingDbWebsiteDomains.has(websiteDomain))) {
           totalDuplicatesSkipped++;
-          if (p.placeId) outcomesToRecord.push({ placeId: p.placeId, outcome: "rejected", reason: "duplicate" });
+          if (p.placeId) {
+            outcomesToRecord.push({ placeId: p.placeId, outcome: "rejected", reason: "duplicate" });
+            if (input.campaignId) await recordCandidateRejection(input.campaignId, p.placeId, "duplicate");
+          }
           continue;
         }
         if (websiteKey && existingDbWebsiteKeys.has(websiteKey)) {
           totalDuplicatesSkipped++;
+          if (p.placeId && input.campaignId) await recordCandidateRejection(input.campaignId, p.placeId, "duplicate");
           continue;
         }
         if (normPhone && (seenPhones.has(normPhone) || existingDbPhones.has(normPhone))) {
           totalDuplicatesSkipped++;
+          if (p.placeId && input.campaignId) await recordCandidateRejection(input.campaignId, p.placeId, "duplicate");
           continue;
         }
 
@@ -1346,6 +1484,39 @@ export class GoogleMapsDiscoveryProvider implements DiscoveryProvider {
           flags: (p as { flags?: string[] }).flags ?? [],
           nameWebsiteMismatch: (p as { nameWebsiteMismatch?: boolean }).nameWebsiteMismatch ?? false,
         });
+
+        if (input.campaignId && p.placeId) {
+          await saveLeadAsEnrichPending({
+            campaignId: input.campaignId,
+            scrapeJobId: input.scrapeJobId,
+            userId: input.userId,
+            placeId: p.placeId,
+            name: p.businessName || "Unknown",
+            handle: username,
+            website: p.rawWebsite,
+            phone: p.phone,
+            city: p.placeCity,
+            rating: p.rating,
+            reviewsCount: p.reviewsCount,
+            handleSource: p.handleSource ?? "maps",
+            handleConfidence: p.handleConfidence ?? "high",
+            isDryRun: Boolean(input.isDryRun ?? isDryRunMode()),
+            fields: {
+              category: p.gmapsCategory,
+              address: p.address,
+              state: p.state,
+              countryCode: p.placeCountry,
+              mapsUrl: p.mapsUrl,
+              rawPlaceData: p.rawPlaceData,
+              fieldSources: p.fieldSources,
+              email: p.email,
+              socialLinks: p.socialLinks as Record<string, unknown> | null,
+              websiteEmails: p.websiteEmails,
+              websitePhones: p.websitePhones,
+              websiteDiagnostics: p.websiteDiagnostics,
+            },
+          });
+        }
       }
 
       // Persist coverage ledger + place outcomes (best-effort; never blocks discovery).
@@ -1454,6 +1625,7 @@ export class GoogleMapsDiscoveryProvider implements DiscoveryProvider {
       areaYield,
       keywordYield,
       stopReason,
+      notice: countryFallbackNotice ?? undefined,
       error: lastError ?? undefined,
       errorsCount,
     };

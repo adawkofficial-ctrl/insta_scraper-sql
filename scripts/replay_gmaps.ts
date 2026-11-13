@@ -1,6 +1,9 @@
 import fs from "node:fs";
 import path from "node:path";
 
+// Test doubles (Apify mock) are only honored when NODE_ENV=test.
+(process.env as Record<string, string | undefined>).NODE_ENV = "test";
+
 // Ensure test database isolation before loading any server code
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { getTestDatabaseUrl } = require("./test_db_guard.cjs");

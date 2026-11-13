@@ -698,6 +698,8 @@ async function executeDiscoveryRun(params: ExecuteDiscoveryRunParams): Promise<D
     onProgress?.(event);
   };
 
+  let totalPersisted = 0;
+
   try {
 
     const effectiveUserId = userId ?? campaign.userId;
@@ -784,7 +786,7 @@ async function executeDiscoveryRun(params: ExecuteDiscoveryRunParams): Promise<D
       `[DISCOVERY] starting campaignId=${campaign.id} query="${request.query}" location=${request.location ?? "-"} category=${request.category ?? "-"} requestedLimit=${request.maxLeads} existingLeads=${existingLeadCount} remainingCapacity=${remainingCapacity}`,
     );
 
-    let totalPersisted = 0;
+    totalPersisted = 0;
     const persistedProfiles: LeadProfile[] = [];
     const discoveredUsernamesAll: string[] = [];
     const allSeenCandidatesThisRun = new Set<string>();
@@ -815,6 +817,7 @@ async function executeDiscoveryRun(params: ExecuteDiscoveryRunParams): Promise<D
     let totalEstimatedCostUsd = 0;
     const currentKeywordIndex = priorNextKeywordIndex % effectiveQueries.length;
     let stopReason = "completed";
+    let providerNotice: string | null = null;
 
     let totalGmapsPlacesFound = 0;
     let totalGmapsWithWebsite = 0;
@@ -992,7 +995,7 @@ async function executeDiscoveryRun(params: ExecuteDiscoveryRunParams): Promise<D
     };
 
     let currentDiscoveryRuns = 0;
-    const MAX_DISCOVERY_RUNS = 2;
+    const MAX_DISCOVERY_RUNS = 1000;
 
     for (let round = 0; round < maxRounds; round++) {
       completedRounds = round + 1;
@@ -1229,6 +1232,9 @@ async function executeDiscoveryRun(params: ExecuteDiscoveryRunParams): Promise<D
       }
       if (discovery.stopReason && discovery.stopReason !== "completed") {
         stopReason = discovery.stopReason;
+      }
+      if (discovery.notice) {
+        providerNotice = discovery.notice;
       }
 
       logDiscovery(
@@ -1696,7 +1702,12 @@ async function executeDiscoveryRun(params: ExecuteDiscoveryRunParams): Promise<D
           discovery.stopReason === "completed" ||
           discovery.candidates.length === 0
         ) {
-          stopReason = "all_keywords_exhausted";
+          // Preserve provider-specific blocking reasons (budget, country/city
+          // requirements, low yield, etc.) instead of misreporting them as
+          // "all keywords exhausted".
+          if (!stopReason || stopReason === "completed") {
+            stopReason = "all_keywords_exhausted";
+          }
           break;
         }
       } else {
@@ -1708,7 +1719,9 @@ async function executeDiscoveryRun(params: ExecuteDiscoveryRunParams): Promise<D
           round + 1 >= effectiveQueries.length &&
           (roundUsernames.length === 0 || newCandidates.length === 0)
         ) {
-          stopReason = "all_keywords_exhausted";
+          if (!stopReason || stopReason === "completed") {
+            stopReason = "all_keywords_exhausted";
+          }
           break;
         }
       }
@@ -2407,6 +2420,7 @@ async function executeDiscoveryRun(params: ExecuteDiscoveryRunParams): Promise<D
       remainingCapacity: finalRemaining,
       skipCounts: finalSkipCounts,
       stopReason,
+      providerNotice,
       gmapsPlacesFound: totalGmapsPlacesFound,
       gmapsWithWebsite: totalGmapsWithWebsite,
       gmapsWithInstagram: totalGmapsWithInstagram,
@@ -2647,7 +2661,8 @@ async function executeDiscoveryRun(params: ExecuteDiscoveryRunParams): Promise<D
           stopReason === "BUDGET_CEILING_REACHED" ||
           stopReason === "cancelled" ||
           stopReason === "max_runs_per_job_reached" ||
-          stopReason === "cost_per_lead_exceeded"
+          stopReason === "cost_per_lead_exceeded" ||
+          stopReason === "country_level_requires_cities"
             ? stopReason
             : "completed",
         costUsd: Number((totalApifyCostUsd + (mapsGeminiCallsCount + finalGeminiCallsCount) * 0.00015).toFixed(4)),
@@ -2801,7 +2816,7 @@ async function executeDiscoveryRun(params: ExecuteDiscoveryRunParams): Promise<D
       .update({
         where: { id: job.id },
         data: {
-          status: ScrapeJobStatus.FAILED,
+          status: totalPersisted > 0 ? ScrapeJobStatus.COMPLETED_WITH_WARNINGS : ScrapeJobStatus.FAILED,
           errorMessage: safeMessage,
           completedAt: new Date(),
         },
@@ -2811,7 +2826,7 @@ async function executeDiscoveryRun(params: ExecuteDiscoveryRunParams): Promise<D
     await prisma.campaign
       .update({
         where: { id: campaign.id },
-        data: { status: CampaignStatus.FAILED },
+        data: { status: totalPersisted > 0 ? CampaignStatus.PARTIAL : CampaignStatus.FAILED },
       })
       .catch(() => undefined);
 
@@ -2829,6 +2844,7 @@ export function buildDiscoveryNotice(input: {
   remainingCapacity: number;
   skipCounts?: DiscoverySkipCounts;
   stopReason?: string;
+  providerNotice?: string | null;
   gmapsPlacesFound?: number;
   gmapsWithWebsite?: number;
   gmapsWithInstagram?: number;
@@ -2867,6 +2883,7 @@ export function buildDiscoveryNotice(input: {
     enrichSkipped,
     remainingCapacity,
     stopReason,
+    providerNotice,
     gmapsPlacesFound = 0,
     gmapsWithWebsite = 0,
     gmapsWithInstagram = 0,
@@ -2996,6 +3013,10 @@ export function buildDiscoveryNotice(input: {
     const totalSeenOrDup = (skippedAlreadySeenCount ?? 0) + (gmapsDuplicatesSkipped ?? 0) + (existingSkipped ?? 0);
     const withContacts = gmapsWithInstagram > 0 ? gmapsWithInstagram : (gmapsWithWebsite > 0 ? gmapsWithWebsite : gmapsPlacesFound);
 
+    if (stopReason === "country_level_requires_cities" && providerNotice) {
+      return `NO_RESULTS: ${providerNotice} No paid Google Maps calls were made. ${statsSegment}.${costSuffix}${funnelSummary}`;
+    }
+
     if (isBudgetStop) {
       prefix = "BUDGET_BLOCKED";
       mainReason = "run was stopped because budget limit or per-job ceiling was reached";
@@ -3014,6 +3035,8 @@ export function buildDiscoveryNotice(input: {
     } else if (gmapsPlacesFound > 0 && breakdown && breakdown !== "0") {
       prefix = "ALL_FILTERED";
       mainReason = `places were found, but all candidates were filtered out by quality criteria (${breakdown})`;
+    } else if (providerNotice && gmapsPlacesFound === 0) {
+      mainReason = providerNotice;
     } else if (gmapsPlacesFound > 0) {
       prefix = "ALL_FILTERED";
       mainReason = "places were found, but none passed contact and quality criteria";

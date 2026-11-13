@@ -151,9 +151,13 @@ async function main() {
   assert(startRes.status === 201 || startRes.status === 200, "Start execution returns HTTP 200/201", `status: ${startRes.status}`);
   const startData = await startRes.json();
   assert(startData.execution !== undefined, "Start execution returns execution payload");
+  // The worker runs asynchronously: depending on timing it can still be
+  // RUNNING/PAUSED when this response is read, or already COMPLETED/PARTIAL.
+  // All of those prove the campaign left DRAFT and was accepted into execution.
   assert(
-    startData.execution.campaignStatus === "RUNNING" || startData.execution.campaignStatus === "PAUSED",
-    "Campaign transitioned to RUNNING status (or safely auto-paused by background worker)",
+    ["RUNNING", "PAUSED", "COMPLETED", "PARTIAL"].includes(startData.execution.campaignStatus),
+    "Campaign transitioned to RUNNING status (or safely auto-paused/completed by background worker)",
+    `actual: ${startData.execution.campaignStatus}`,
   );
   const activeExecId = startData.execution.executionId;
   assert(Boolean(activeExecId), "Execution ID was created and returned");
@@ -246,8 +250,11 @@ async function main() {
 
   const resumedCampInDb = await prisma.campaign.findUnique({ where: { id: campaignIdA } });
   assert(
-    resumedCampInDb?.status === CampaignStatus.RUNNING || resumedCampInDb?.status === CampaignStatus.PAUSED,
-    "Campaign status in DB is restored to RUNNING (or safely auto-paused by background worker)",
+    resumedCampInDb?.status === CampaignStatus.RUNNING ||
+      resumedCampInDb?.status === CampaignStatus.PAUSED ||
+      resumedCampInDb?.status === CampaignStatus.COMPLETED,
+    "Campaign status in DB is restored to RUNNING (or safely paused/completed by background worker)",
+    `actual: ${resumedCampInDb?.status}`,
   );
 
   // --------------------------------------------------------------------------
@@ -371,8 +378,9 @@ async function main() {
   assert(execStart.status === 201 || execStart.status === 200, "Execution started for messaging campaign");
   const execStartData = await execStart.json();
   assert(
-    execStartData.execution.campaignStatus === "RUNNING" || execStartData.execution.campaignStatus === "PAUSED",
-    "Messaging campaign execution status is RUNNING (or safely auto-paused by background worker)",
+    ["RUNNING", "PAUSED", "COMPLETED", "PARTIAL"].includes(execStartData.execution.campaignStatus),
+    "Messaging campaign execution status is RUNNING (or safely auto-paused/completed by background worker)",
+    `actual: ${execStartData.execution.campaignStatus}`,
   );
 
   // --------------------------------------------------------------------------

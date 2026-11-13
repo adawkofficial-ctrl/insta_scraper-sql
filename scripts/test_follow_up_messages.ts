@@ -1,4 +1,13 @@
 import "dotenv/config";
+
+// Test isolation: Ensure tests use test database and test environment
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { getTestDatabaseUrl, assertSafeTestDatabase } = require("./test_db_guard.cjs");
+process.env.DATABASE_URL = getTestDatabaseUrl();
+(process.env as Record<string, string | undefined>).NODE_ENV = "test";
+process.env.OUTBOUND_SENDING_ENABLED = "true";
+assertSafeTestDatabase(process.env.DATABASE_URL);
+
 process.env.MESSAGING_PROVIDER = "playwright";
 process.env.SENDER_COOLDOWN_SECONDS = "0";
 process.env.SENDER_COOLDOWN_MINUTES = "0";

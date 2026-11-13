@@ -17,6 +17,17 @@ function isLeadDryRun(lead: { isDryRun?: boolean | null; source?: string | null;
   if (typeof lead.phone === "string" && (lead.phone.includes("555-01") || lead.phone.includes("55501"))) return true;
   return false;
 }
+
+function hasLeadSocials(lead: { socialLink?: string | null; rawProfileData?: unknown }): boolean {
+  if (lead.socialLink) return true;
+  if (!lead.rawProfileData || typeof lead.rawProfileData !== "object") return false;
+  const raw = lead.rawProfileData as {
+    socialLinks?: Record<string, unknown>;
+    contacts?: { socialLinks?: Record<string, unknown> };
+  };
+  const socials = { ...(raw.socialLinks ?? {}), ...(raw.contacts?.socialLinks ?? {}) };
+  return Object.values(socials).some((value) => typeof value === "string" && value.length > 0);
+}
 import { ApiClientError } from "@/lib/api/client";
 import { Navbar } from "@/components/navbar";
 import { ScrapeLeadsModal } from "@/components/scrape-leads-modal";
@@ -272,6 +283,12 @@ export default function CampaignDetailPage() {
   const [findingContactsLeadId, setFindingContactsLeadId] = useState<string | null>(null);
   const [contactsNotice, setContactsNotice] = useState<{
     type: "success" | "error" | "info";
+    message: string;
+  } | null>(null);
+
+  const [resumingJobId, setResumingJobId] = useState<string | null>(null);
+  const [resumeNotice, setResumeNotice] = useState<{
+    type: "success" | "error";
     message: string;
   } | null>(null);
 
@@ -552,6 +569,34 @@ export default function CampaignDetailPage() {
     }
   };
 
+  const handleResumeJob = async (jobId: string) => {
+    setResumingJobId(jobId);
+    setResumeNotice(null);
+    try {
+      const res = await fetch(`/api/scrape-jobs/${jobId}/resume`, {
+        method: "POST",
+      });
+      const data = await res.json();
+      if (!res.ok) {
+        throw new Error(data.error || "Failed to continue job");
+      }
+      setResumeNotice({
+        type: "success",
+        message: `Job continued: ${data.totalPendingCandidates} pending candidates processed, ${data.handlesDiscovered} handles discovered, ${data.leadsCreatedOrUpdated} leads created/updated.`,
+      });
+      fetchLeads();
+      fetchCampaignInfo();
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      setResumeNotice({
+        type: "error",
+        message: `Resume failed: ${msg}`,
+      });
+    } finally {
+      setResumingJobId(null);
+    }
+  };
+
   const handleFindContactsSingle = async (leadId: string) => {
     setFindingContactsLeadId(leadId);
     setContactsNotice(null);
@@ -740,7 +785,7 @@ export default function CampaignDetailPage() {
       }
       const data = await res.json();
       alert(
-        `Handle search complete!\nChecked: ${data.totalChecked}\nFound: ${data.found}\nNot found: ${data.notFound}\nCooldown skipped (last run <7d): ${data.cooldownSkipped}`,
+        `Website scrape complete!\nChecked: ${data.totalChecked}\nLeads with new data: ${data.found}\nHandles found: ${data.handlesFound}\nEmails found: ${data.emailsFound}\nSocial links found: ${data.socialsFound}\nNot found: ${data.notFound}\nCooldown skipped (last run <7d): ${data.cooldownSkipped}`,
       );
       await fetchLeads();
     } catch (err) {
@@ -787,6 +832,13 @@ export default function CampaignDetailPage() {
           <span className="inline-flex items-center gap-1.5 rounded-full bg-yellow-500/10 px-2.5 py-0.5 text-xs font-medium text-yellow-400 border border-yellow-500/20">
             <span className="h-1.5 w-1.5 rounded-full bg-yellow-400" />
             PAUSED
+          </span>
+        );
+      case "COMPLETED_WITH_WARNINGS":
+        return (
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-amber-500/10 px-2.5 py-0.5 text-xs font-medium text-amber-400 border border-amber-500/20">
+            <span className="h-1.5 w-1.5 rounded-full bg-amber-400" />
+            WARNINGS
           </span>
         );
       case "FAILED":
@@ -1361,6 +1413,51 @@ export default function CampaignDetailPage() {
           <div className="mt-6 space-y-4">
             {/* Filter Toolbar */}
             <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4 space-y-3">
+              {/* Quick Tabs: All | With Instagram | No Instagram */}
+              <div className="flex items-center gap-2 border-b border-zinc-800/80 pb-3">
+                <button
+                  type="button"
+                  onClick={() => {
+                    setChannelFilter("all");
+                    handleFilterChange();
+                  }}
+                  className={`rounded-lg px-3 py-1 text-xs font-semibold transition ${
+                    channelFilter === "all"
+                      ? "bg-rose-600 text-white shadow-sm"
+                      : "bg-zinc-800 text-zinc-300 hover:bg-zinc-700"
+                  }`}
+                >
+                  All Leads
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setChannelFilter("has_instagram");
+                    handleFilterChange();
+                  }}
+                  className={`rounded-lg px-3 py-1 text-xs font-semibold transition ${
+                    channelFilter === "has_instagram" || channelFilter === "instagram_only"
+                      ? "bg-rose-600 text-white shadow-sm"
+                      : "bg-zinc-800 text-zinc-300 hover:bg-zinc-700"
+                  }`}
+                >
+                  With Instagram
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setChannelFilter("no_instagram");
+                    handleFilterChange();
+                  }}
+                  className={`rounded-lg px-3 py-1 text-xs font-semibold transition ${
+                    channelFilter === "no_instagram"
+                      ? "bg-rose-600 text-white shadow-sm"
+                      : "bg-zinc-800 text-zinc-300 hover:bg-zinc-700"
+                  }`}
+                >
+                  No Instagram
+                </button>
+              </div>
               <div className="grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-7">
                 {/* Search */}
                 <div className="lg:col-span-2">
@@ -1488,9 +1585,13 @@ export default function CampaignDetailPage() {
                     className="mt-1 w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-1.5 text-xs text-zinc-200 focus:border-rose-500 focus:outline-none"
                   >
                     <option value="all">All Channels</option>
+                    <option value="has_ig_website_or_email">Has IG, Website, or Email</option>
+                    <option value="has_instagram">Has Instagram</option>
                     <option value="has_email">Has Email</option>
                     <option value="has_phone">Has Phone</option>
-                    <option value="instagram_only">Instagram Only</option>
+                    <option value="has_website">Has Website</option>
+                    <option value="has_social">Has Other Social</option>
+                    <option value="no_instagram">No Instagram</option>
                   </select>
                 </div>
               </div>
@@ -1645,13 +1746,13 @@ export default function CampaignDetailPage() {
                   id="btn-rehandle-leads-toolbar"
                   onClick={handleRehandleLeads}
                   disabled={isRehandling || !campaign}
-                  title="Re-run handle search for all no-handle leads"
+                  title="Scrape each lead's website (free) for Instagram, other socials, emails, and phones"
                   className="rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-1.5 font-medium text-zinc-300 transition hover:bg-zinc-800 hover:text-white flex items-center gap-1.5 disabled:opacity-40 disabled:cursor-not-allowed"
                 >
                   <svg className="h-3.5 w-3.5 text-zinc-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                     <path strokeLinecap="round" strokeLinejoin="round" d="M16.023 9.348h4.992v-.001M2.985 19.644v-4.992m0 0h4.992m-4.993 0l3.181 3.183a8.25 8.25 0 0013.803-3.7M4.031 9.865a8.25 8.25 0 0113.803-3.7l3.181 3.182m0-4.991v4.99" />
                   </svg>
-                  <span>{isRehandling ? "Searching Handles..." : "Re-run handle search for all no-handle leads"}</span>
+                  <span>{isRehandling ? "Scraping websites..." : "Scrape websites for all leads"}</span>
                 </button>
               </div>
 
@@ -2133,17 +2234,26 @@ export default function CampaignDetailPage() {
                                     </span>
                                   )}
                                 </div>
-                                {lead.fullName && lead.username && (
+                                {lead.fullName && (
                                   <div className="text-[11px] text-zinc-400 truncate">{lead.fullName}</div>
                                 )}
-                                {!lead.username && (
-                                  <div className="flex items-center gap-1.5 mt-1 flex-wrap">
-                                    <span className="text-[10px] text-zinc-500">Channels:</span>
-                                    {lead.email && <span className="text-[9px] rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/20 px-1 font-medium truncate max-w-[140px]" title={lead.email}>{lead.email}</span>}
-                                    {lead.phone && <span className="text-[9px] rounded bg-blue-500/10 text-blue-300 border border-blue-500/20 px-1 font-medium">{lead.phone}</span>}
-                                    {lead.website && <span className="text-[9px] rounded bg-purple-500/10 text-purple-300 border border-purple-500/20 px-1 font-medium truncate max-w-[120px]" title={lead.website}>{lead.website.replace(/^https?:\/\//, "")}</span>}
-                                  </div>
-                                )}
+                                <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                                  {lead.username && (
+                                    <span className="text-[9px] rounded bg-pink-500/10 text-pink-300 border border-pink-500/20 px-1 font-semibold">IG</span>
+                                  )}
+                                  {lead.email && (
+                                    <span className="text-[9px] rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/20 px-1 font-semibold truncate max-w-[120px]" title={lead.email}>Email</span>
+                                  )}
+                                  {lead.phone && (
+                                    <span className="text-[9px] rounded bg-blue-500/10 text-blue-300 border border-blue-500/20 px-1 font-semibold truncate max-w-[100px]" title={lead.phone}>Phone</span>
+                                  )}
+                                  {lead.website && (
+                                    <span className="text-[9px] rounded bg-purple-500/10 text-purple-300 border border-purple-500/20 px-1 font-semibold truncate max-w-[100px]" title={lead.website}>Web</span>
+                                  )}
+                                  {hasLeadSocials(lead) && (
+                                    <span className="text-[9px] rounded bg-amber-500/10 text-amber-300 border border-amber-500/20 px-1 font-semibold" title={lead.socialLink || "Social profile"}>Social</span>
+                                  )}
+                                </div>
                               </div>
                             </div>
                           </td>
@@ -2165,6 +2275,24 @@ export default function CampaignDetailPage() {
                                       title="Discover Instagram handle from website (homepage, /contact, link hubs)"
                                     >
                                       {enrichingLeadId === lead.id ? "..." : "⚡ Find IG"}
+                                    </button>
+                                  </div>
+                                );
+                              }
+                              if (lead.status === "ENRICH_PENDING") {
+                                return (
+                                  <div className="flex items-center gap-1.5">
+                                    <span className="rounded bg-sky-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-sky-400 border border-sky-500/20 whitespace-nowrap">
+                                      Enrich pending
+                                    </span>
+                                    <button
+                                      type="button"
+                                      onClick={() => handleEnrichSingle(lead.id)}
+                                      disabled={enrichingLeadId === lead.id}
+                                      className="rounded bg-rose-600/20 px-1.5 py-0.5 text-[10px] font-semibold text-rose-300 border border-rose-500/30 hover:bg-rose-600/30 transition disabled:opacity-50"
+                                      title="Enrich Profile (Est. ~$0.0026)"
+                                    >
+                                      {enrichingLeadId === lead.id ? "..." : "Enrich"}
                                     </button>
                                   </div>
                                 );
@@ -3031,7 +3159,18 @@ export default function CampaignDetailPage() {
 
         {/* Tab 2: Scrape History */}
         {activeTab === "history" && (
-          <div className="mt-6">
+          <div className="mt-6 space-y-4">
+            {resumeNotice && (
+              <div
+                className={`rounded-lg border p-3 text-xs ${
+                  resumeNotice.type === "success"
+                    ? "border-emerald-500/30 bg-emerald-500/10 text-emerald-300"
+                    : "border-rose-500/30 bg-rose-500/10 text-rose-300"
+                }`}
+              >
+                {resumeNotice.message}
+              </div>
+            )}
             <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 overflow-hidden shadow-xs">
               <div className="overflow-x-auto">
                 <table className="w-full text-left text-xs">
@@ -3138,6 +3277,17 @@ export default function CampaignDetailPage() {
                                 >
                                   {expandedJobId === job.id ? "Hide Summary ▲" : "Job Summary ▼"}
                                 </button>
+                                {(job.status === "COMPLETED_WITH_WARNINGS" || job.status === "FAILED") && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleResumeJob(job.id)}
+                                    disabled={resumingJobId === job.id}
+                                    className="rounded bg-amber-600/20 border border-amber-500/40 px-2 py-0.5 text-[10px] font-semibold text-amber-300 hover:bg-amber-600/30 transition disabled:opacity-50"
+                                    title="Process pending candidates without purchasing any new Google Maps searches"
+                                  >
+                                    {resumingJobId === job.id ? "Continuing..." : "Continue job ↻"}
+                                  </button>
+                                )}
                                 {job.costUsd !== null && job.costUsd !== undefined && (
                                   <span className="text-[10px] text-zinc-400 font-mono">
                                     Spend: <strong className="text-zinc-200">${Number(job.costUsd).toFixed(3)}</strong>

@@ -59,8 +59,13 @@ export class ApifyProvider implements ScraperProvider, ProfileProvider {
         ? usernames.length
         : Math.min(input.limit, usernames.length);
 
+    // For an explicit list of usernames, the list defines the count.
+    // maxItems is a safety ceiling, not a target, and must be >= max(5, 2 * batchSize)
+    // to avoid Apify's minimum run charge error on small batches.
+    const safetyMaxItems = Math.max(5, 2 * requestedLimit);
+
     log(
-      `[SCRAPE] actorMode=${actorMode} actor=${actorId} profiles=${usernames.join(", ")} maxItems=${requestedLimit}`,
+      `[SCRAPE] actorMode=${actorMode} actor=${actorId} profiles=${usernames.join(", ")} maxItems=${safetyMaxItems} (batchSize=${requestedLimit})`,
     );
 
     let actorInput: Record<string, unknown>;
@@ -82,7 +87,7 @@ export class ApifyProvider implements ScraperProvider, ProfileProvider {
       actorId,
       actorInput,
       {
-        maxItems: requestedLimit,
+        maxItems: safetyMaxItems,
         campaignId: input.campaignId,
         userId: input.userId,
         operationName:

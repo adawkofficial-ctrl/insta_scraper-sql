@@ -1,15 +1,27 @@
+/**
+ * Free website enrichment for existing leads:
+ *   npm run rehandle -- --campaign <campaignId> [--force]
+ *
+ * Fetches each lead's own website (homepage + up to 4 same-domain pages) and
+ * extracts Instagram, other socials, emails, and phones. No Apify/Gemini/
+ * Unipile calls. Never overwrites an existing Instagram handle. At most once
+ * per 7 days per lead unless --force is passed.
+ */
 import "./preload_server_only.cjs";
 import "dotenv/config";
 import { getPrismaClient } from "../src/lib/db/prisma";
-import { enrichLeadHandleWaterfall, HANDLE_ENRICHMENT_COOLDOWN_DAYS } from "../src/lib/services/scraper/profile-enrichment-service";
+import { enrichLeadsFromWebsites } from "../src/lib/services/enrichment/website-lead-enricher";
+import { HANDLE_ENRICHMENT_COOLDOWN_DAYS } from "../src/lib/services/scraper/profile-enrichment-service";
 
 interface CommandLineArgs {
   campaignId: string | null;
+  force: boolean;
 }
 
 function parseArgs(): CommandLineArgs {
   const args = process.argv.slice(2);
   let campaignId: string | null = null;
+  let force = false;
 
   for (let i = 0; i < args.length; i++) {
     const arg = args[i];
@@ -18,22 +30,23 @@ function parseArgs(): CommandLineArgs {
       i++;
     } else if (arg.startsWith("--campaign=")) {
       campaignId = arg.split("=")[1] || null;
+    } else if (arg === "--force") {
+      force = true;
     }
   }
 
-  return { campaignId };
+  return { campaignId, force };
 }
 
 async function main() {
-  const { campaignId } = parseArgs();
+  const { campaignId, force } = parseArgs();
 
   if (!campaignId) {
-    console.error("Usage: npm run rehandle -- --campaign <campaignId>");
+    console.error("Usage: npm run rehandle -- --campaign <campaignId> [--force]");
     process.exit(1);
   }
 
   const prisma = getPrismaClient();
-
   const campaign = await prisma.campaign.findUnique({
     where: { id: campaignId },
     select: { id: true, name: true },
@@ -45,76 +58,36 @@ async function main() {
   }
 
   console.log(`================================================================================`);
-  console.log(` RE-HANDLE ENRICHMENT: Campaign "${campaign.name}" (${campaign.id})`);
-  console.log(` Policy: Free website waterfall only (no Apify), max 1x per ${HANDLE_ENRICHMENT_COOLDOWN_DAYS} days per lead.`);
+  console.log(` WEBSITE ENRICHMENT: Campaign "${campaign.name}" (${campaign.id})`);
+  console.log(
+    ` Policy: Free website scraper only (no Apify), max 1x per ${HANDLE_ENRICHMENT_COOLDOWN_DAYS} days per lead${force ? " (forced)" : ""}.`,
+  );
   console.log(`================================================================================\n`);
 
-  const allLeads = await prisma.lead.findMany({
-    where: {
-      campaignId,
-      website: { not: null },
-      OR: [
-        { username: null },
-        { username: "" },
-      ],
-    },
-    select: {
-      id: true,
-      fullName: true,
-      website: true,
-      username: true,
-      lastHandleEnrichmentAt: true,
-      rating: true,
-      reviewCount: true,
-      isClaimed: true,
-      isChain: true,
-      email: true,
-      phone: true,
-      availableChannels: true,
-      scoreFlags: true,
-    },
+  const result = await enrichLeadsFromWebsites({
+    campaignId,
+    force,
+    concurrency: 15,
   });
 
-  const eligibleLeads = allLeads.filter((l) => l.website && l.website.trim().length > 0);
-
-  if (eligibleLeads.length === 0) {
-    console.log("No leads without an Instagram handle and with a valid website were found in this campaign.");
-    process.exit(0);
-  }
-
-  console.log(`Found ${eligibleLeads.length} lead(s) with a website and no Instagram handle.\n`);
-
-  let foundCount = 0;
-  let notFoundCount = 0;
-  let cooldownCount = 0;
-
-  for (let i = 0; i < eligibleLeads.length; i++) {
-    const lead = eligibleLeads[i];
-    const leadLabel = lead.fullName || lead.website || lead.id;
-
-    const res = await enrichLeadHandleWaterfall(lead, prisma);
-
-    if (res.outcome === "found") {
-      foundCount++;
-      console.log(
-        `[${i + 1}/${eligibleLeads.length}] FOUND: "${leadLabel}" -> @${res.handle} (source: ${res.handleSource}, confidence: ${res.handleConfidence})`,
-      );
-    } else if (res.outcome === "cooldown") {
-      cooldownCount++;
-      console.log(`[${i + 1}/${eligibleLeads.length}] COOLDOWN SKIPPED: "${leadLabel}" -> ${res.message}`);
-    } else {
-      notFoundCount++;
-      console.log(`[${i + 1}/${eligibleLeads.length}] NOT FOUND: "${leadLabel}" -> ${res.message}`);
-    }
+  for (const [index, row] of result.results.entries()) {
+    const label = row.name || row.website || row.id;
+    const found = [row.handle ? `IG @${row.handle}` : null, row.email, ...row.socials]
+      .filter(Boolean)
+      .join(" | ");
+    console.log(
+      `[${index + 1}/${result.results.length}] ${row.outcome.toUpperCase()}: "${label}" -> ${found || row.message}`,
+    );
   }
 
   console.log(`\n================================================================================`);
-  console.log(` REHANDLE SUMMARY: Total: ${eligibleLeads.length} | Found: ${foundCount} | Not Found: ${notFoundCount} | Cooldown Skipped: ${cooldownCount}`);
+  console.log(
+    ` WEBSITE ENRICHMENT SUMMARY: Eligible: ${result.totalEligible} | Handles: ${result.handlesFound} | Emails: ${result.emailsFound} | Socials: ${result.socialsFound} | NotFound: ${result.notFound} | Cooldown: ${result.cooldownSkipped}`,
+  );
   console.log(`================================================================================`);
 }
 
 main().catch((err) => {
-  console.error("Fatal error during rehandle:", err);
+  console.error("Fatal error during website enrichment:", err);
   process.exit(1);
 });
-

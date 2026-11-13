@@ -7,19 +7,28 @@
  * SKIPPED (external) — never silently counted as passing.
  *
  * Usage:
- *   npm test                 (requires a running server at TEST_BASE_URL)
+ *   npm test                 (always starts its own isolated server on a free port)
  *   RUN_EXTERNAL=1 npm test  (also run Apify/browser suites)
  */
+import "dotenv/config";
 import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import net from "node:net";
 // eslint-disable-next-line @typescript-eslint/no-require-imports
-const { getTestDatabaseUrl, assertSafeTestDatabase } = require("./test_db_guard.cjs");
+const { getTestDatabaseUrl, assertSafeTestDatabase, extractDatabaseName } = require("./test_db_guard.cjs");
 
-// Enforce test database isolation
+// Enforce test database isolation. Tests must always target the dedicated test DB.
+const REQUIRED_TEST_DB_NAME = "insta_scraper_test";
 const testDatabaseUrl = getTestDatabaseUrl();
 assertSafeTestDatabase(testDatabaseUrl, { prodDbUrl: process.env.DATABASE_URL, nodeEnv: process.env.NODE_ENV });
+const testDbName = extractDatabaseName(testDatabaseUrl);
+if (testDbName !== REQUIRED_TEST_DB_NAME) {
+  console.error(
+    `FATAL: Tests must run against the dedicated test database "${REQUIRED_TEST_DB_NAME}", but DATABASE_URL_TEST resolves to "${testDbName || "<unknown>"}".`,
+  );
+  process.exit(1);
+}
 process.env.ORIGINAL_DATABASE_URL = process.env.DATABASE_URL;
 process.env.DATABASE_URL = testDatabaseUrl;
 
@@ -63,13 +72,20 @@ function stopTestServer(proc: ChildProcess): void {
   }
 }
 
-async function serverUp(url: string): Promise<boolean> {
+async function getServerHealth(url: string): Promise<{ up: boolean; dbName: string | null }> {
   try {
     const res = await fetch(`${url}/api/health`);
-    return res.status === 200;
+    if (res.status !== 200) return { up: false, dbName: null };
+    const body = (await res.json()) as { services?: { databaseName?: unknown } };
+    const dbName = typeof body.services?.databaseName === "string" ? body.services.databaseName : null;
+    return { up: true, dbName };
   } catch {
-    return false;
+    return { up: false, dbName: null };
   }
+}
+
+async function serverUp(url: string): Promise<boolean> {
+  return (await getServerHealth(url)).up;
 }
 
 function parseCounts(output: string): { passed: number | null; failed: number | null } {
@@ -135,7 +151,10 @@ const SUITES: Suite[] = [
   { file: "test_email_channel.ts", category: "unit", kind: "deterministic", needsServer: false },
   { file: "test_post_maps_pipeline.ts", category: "unit", kind: "deterministic", needsServer: false },
   { file: "test_gmaps_handle_waterfall.ts", category: "unit", kind: "deterministic", needsServer: false },
+  { file: "test_dm_no_handle_block.ts", category: "unit", kind: "deterministic", needsServer: false },
   { file: "test_handle_waterfall_fixes.ts", category: "unit", kind: "deterministic", needsServer: false },
+  { file: "test_enrichment_persistence_resume.ts", category: "unit", kind: "deterministic", needsServer: false },
+  { file: "test_website_enrichment.ts", category: "unit", kind: "deterministic", needsServer: false },
   { file: "test_instagram_places_discovery.ts", category: "unit", kind: "deterministic", needsServer: false },
   { file: "test_instagram_all_in_one.ts", category: "unit", kind: "deterministic", needsServer: false },
   { file: "test_discovery_runaway_guard.ts", category: "unit", kind: "deterministic", needsServer: false },
@@ -198,103 +217,96 @@ const SUITES: Suite[] = [
 ];
 
 async function main() {
-  let baseUrl = process.env.TEST_BASE_URL;
+  const port = process.env.TEST_PORT ? parseInt(process.env.TEST_PORT, 10) : await getFreePort();
+  const baseUrl = `http://localhost:${port}`;
   let testServerProc: ChildProcess | null = null;
-  let serverLaunchedByUs = false;
 
-  if (baseUrl) {
-    const isUp = await serverUp(baseUrl);
-    if (!isUp) {
-      console.log(`Configured TEST_BASE_URL (${baseUrl}) is not reachable. Starting dedicated test server...`);
-      baseUrl = undefined;
+  // `next dev` appends its dist types to tsconfig.json / rewrites next-env.d.ts.
+  // Snapshot them so the test run never leaves churn in the working tree.
+  const generatedConfigFiles = ["tsconfig.json", "next-env.d.ts"].map((file) => {
+    const filePath = path.join(process.cwd(), file);
+    return { filePath, content: fs.existsSync(filePath) ? fs.readFileSync(filePath, "utf8") : null };
+  });
+
+  // Always launch a dedicated server. Never reuse a developer's running server
+  // (it may point at the production database).
+  console.log(`Starting isolated test server on ${baseUrl} (database=${testDbName})...`);
+
+  const serverEnv = {
+    ...process.env,
+    PORT: String(port),
+    DATABASE_URL: testDatabaseUrl,
+    NODE_ENV: "test" as const,
+    APIFY_DRY_RUN: "true",
+    APIFY_ALLOW_LIVE_SCRIPTS: "false",
+    APIFY_COST_LIMITS_ENABLED: "true",
+    MOCK_GEMINI: "1",
+    MOCK_UNIPILE: "1",
+    APIFY_API_TOKEN: process.env.APIFY_API_TOKEN || "mock-apify-test-token",
+    GEMINI_API_KEY: process.env.GEMINI_API_KEY || "mock-gemini-test-key",
+    UNIPILE_API_KEY: process.env.UNIPILE_API_KEY || "mock-unipile-test-key",
+    DISABLE_AUTH_RATE_LIMIT: "1",
+    SKIP_SEND_DELAYS: "1",
+    OUTBOUND_SENDING_ENABLED: "true",
+    NEXT_DIST_DIR: ".next/test-runner",
+    NODE_OPTIONS: "--max-old-space-size=4096",
+  };
+
+  const serverLogs: string[] = [];
+  testServerProc = spawn("npx", ["next", "dev", "--webpack", "-p", String(port)], {
+    shell: true,
+    env: serverEnv,
+    stdio: ["ignore", "pipe", "pipe"],
+  });
+  testServerProc.stdout?.on("data", (d) => serverLogs.push(d.toString()));
+  testServerProc.stderr?.on("data", (d) => serverLogs.push(d.toString()));
+
+  const cleanup = () => {
+    if (testServerProc) {
+      stopTestServer(testServerProc);
+      testServerProc = null;
     }
+  };
+  process.on("exit", cleanup);
+  process.on("SIGINT", () => { cleanup(); process.exit(1); });
+  process.on("SIGTERM", () => { cleanup(); process.exit(1); });
+
+  const startWait = Date.now();
+  let serverHealth: { up: boolean; dbName: string | null } = { up: false, dbName: null };
+  while (Date.now() - startWait < 120000) {
+    serverHealth = await getServerHealth(baseUrl);
+    if (serverHealth.up) break;
+    await new Promise((r) => setTimeout(r, 500));
   }
 
-  if (!baseUrl && process.env.FORCE_ISOLATED_TEST_SERVER !== "1") {
-    if (await serverUp("http://localhost:3005")) {
-      baseUrl = "http://localhost:3005";
-      console.log(`Detected running server at ${baseUrl}, using it for test run.`);
+  if (!serverHealth.up) {
+    console.error(`ERROR: Test server failed to respond on ${baseUrl}/api/health within 120s`);
+    if (serverLogs.length > 0) {
+      console.error("Test server output:\n" + serverLogs.join(""));
     }
+    cleanup();
+    process.exit(1);
   }
 
-  if (!baseUrl) {
-    const port = process.env.TEST_PORT
-      ? parseInt(process.env.TEST_PORT, 10)
-      : process.env.PORT
-      ? parseInt(process.env.PORT, 10)
-      : await getFreePort();
-
-    baseUrl = `http://localhost:${port}`;
-    console.log(`Starting isolated test server on ${baseUrl}...`);
-
-    const serverEnv = {
-      ...process.env,
-      PORT: String(port),
-      DATABASE_URL: testDatabaseUrl,
-      NODE_ENV: "test" as const,
-      APIFY_DRY_RUN: "true",
-      APIFY_ALLOW_LIVE_SCRIPTS: "false",
-      APIFY_COST_LIMITS_ENABLED: "true",
-      MOCK_GEMINI: "1",
-      MOCK_UNIPILE: "1",
-      APIFY_API_TOKEN: process.env.APIFY_API_TOKEN || "mock-apify-test-token",
-      GEMINI_API_KEY: process.env.GEMINI_API_KEY || "mock-gemini-test-key",
-      UNIPILE_API_KEY: process.env.UNIPILE_API_KEY || "mock-unipile-test-key",
-      DISABLE_AUTH_RATE_LIMIT: "1",
-      SKIP_SEND_DELAYS: "1",
-      OUTBOUND_SENDING_ENABLED: "true",
-      NODE_OPTIONS: "--max-old-space-size=4096",
-    };
-
-    const serverLogs: string[] = [];
-    testServerProc = spawn("npx", ["next", "dev", "--webpack", "-p", String(port)], {
-      shell: true,
-      env: serverEnv,
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    testServerProc.stdout?.on("data", (d) => serverLogs.push(d.toString()));
-    testServerProc.stderr?.on("data", (d) => serverLogs.push(d.toString()));
-    serverLaunchedByUs = true;
-
-    const cleanup = () => {
-      if (testServerProc) {
-        stopTestServer(testServerProc);
-        testServerProc = null;
-      }
-    };
-    process.on("exit", cleanup);
-    process.on("SIGINT", () => { cleanup(); process.exit(1); });
-    process.on("SIGTERM", () => { cleanup(); process.exit(1); });
-
-    const startWait = Date.now();
-    let ready = false;
-    while (Date.now() - startWait < 60000) {
-      if (await serverUp(baseUrl)) {
-        ready = true;
-        break;
-      }
-      await new Promise((r) => setTimeout(r, 500));
-    }
-
-    if (!ready) {
-      console.error(`ERROR: Test server failed to respond on ${baseUrl}/api/health within 60s`);
-      if (serverLogs.length > 0) {
-        console.error("Test server output:\n" + serverLogs.join(""));
-      }
-      cleanup();
-      process.exit(1);
-    }
-    console.log(`Test server is UP at ${baseUrl}`);
+  // Refuse to test against a server that is not connected to the test DB.
+  if (serverHealth.dbName !== REQUIRED_TEST_DB_NAME) {
+    console.error(
+      `FATAL: Test server reports database "${serverHealth.dbName ?? "<unknown>"}", expected "${REQUIRED_TEST_DB_NAME}". Refusing to run tests.`,
+    );
+    cleanup();
+    process.exit(1);
   }
+  console.log(`Test server is UP at ${baseUrl} (reported database=${serverHealth.dbName})`);
 
   try {
     const up = await serverUp(baseUrl);
     console.log("================================================================");
     console.log(" TASK 13 TEST RUNNER");
     console.log(` Server: ${baseUrl} (${up ? "UP" : "DOWN"})  RUN_EXTERNAL=${RUN_EXTERNAL}`);
+    console.log(` Database: ${serverHealth.dbName} (verified via /api/health)`);
     console.log("================================================================");
 
-    const rows: Array<Suite & { result: Result; passed: number | null; failed: number | null; note: string }> = [];
+    const rows: Array<Suite & { result: Result; passed: number | null; failed: number | null; note: string; dbName: string }> = [];
     const filter = process.env.SUITE_FILTER || process.argv[2];
     const suitesToRun = filter ? SUITES.filter((s) => s.file.includes(filter)) : SUITES;
 
@@ -322,7 +334,7 @@ async function main() {
         result = "SKIPPED";
       }
 
-      rows.push({ ...suite, result, passed, failed, note });
+      rows.push({ ...suite, result, passed, failed, note, dbName: testDbName });
       const counts = passed !== null ? ` (${passed} passed/${failed ?? 0} failed)` : "";
       console.log(`[${result.padEnd(7)}] ${suite.category.padEnd(8)} ${suite.file}${counts} ${note}`);
     }
@@ -330,6 +342,7 @@ async function main() {
     const summary = {
       generatedAt: new Date().toISOString(),
       baseUrl,
+      database: serverHealth.dbName,
       runExternal: RUN_EXTERNAL,
       totals: {
         pass: rows.filter((r) => r.result === "PASS").length,
@@ -351,15 +364,33 @@ async function main() {
     console.log(
       ` ASSERTIONS: ${summary.totals.assertionsPassed} passed / ${summary.totals.assertionsFailed} failed`,
     );
+    console.log(` DATABASE: ${summary.database} (all suites)`);
+    const lastFour = rows.slice(-4);
+    if (lastFour.length > 0) {
+      console.log(" LAST 4 SUITES DATABASE:");
+      for (const row of lastFour) {
+        console.log(`   ${row.file} -> ${row.dbName}`);
+      }
+    }
     console.log("----------------------------------------------------------------");
 
     if (summary.totals.fail > 0 || summary.totals.blocked > 0) {
       process.exit(1);
     }
   } finally {
-    if (serverLaunchedByUs && testServerProc) {
+    if (testServerProc) {
       stopTestServer(testServerProc);
       testServerProc = null;
+    }
+    for (const snapshot of generatedConfigFiles) {
+      if (snapshot.content === null) continue;
+      try {
+        if (fs.readFileSync(snapshot.filePath, "utf8") !== snapshot.content) {
+          fs.writeFileSync(snapshot.filePath, snapshot.content);
+        }
+      } catch {
+        // ignore restore failures
+      }
     }
   }
 }

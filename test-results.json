@@ -1,14 +1,15 @@
 {
-  "generatedAt": "2026-11-12T08:13:11.158Z",
-  "baseUrl": "http://localhost:63268",
+  "generatedAt": "2026-11-13T12:18:00.588Z",
+  "baseUrl": "http://localhost:55440",
+  "database": "insta_scraper_test",
   "runExternal": false,
   "totals": {
-    "pass": 64,
-    "fail": 1,
+    "pass": 70,
+    "fail": 0,
     "blocked": 0,
     "skipped": 6,
-    "assertionsPassed": 2459,
-    "assertionsFailed": 2
+    "assertionsPassed": 2661,
+    "assertionsFailed": 0
   },
   "suites": [
     {
@@ -19,7 +20,8 @@
       "result": "PASS",
       "passed": 9,
       "failed": 0,
-      "note": "exit=0 19s"
+      "note": "exit=0 14s",
+      "dbName": "insta_scraper_test"
     },
     {
       "file": "test_step2_dnc.ts",
@@ -29,7 +31,8 @@
       "result": "PASS",
       "passed": 10,
       "failed": 0,
-      "note": "exit=0 18s"
+      "note": "exit=0 14s",
+      "dbName": "insta_scraper_test"
     },
     {
       "file": "test_step3_sparior.ts",
@@ -39,7 +42,8 @@
       "result": "PASS",
       "passed": 12,
       "failed": 0,
-      "note": "exit=0 35s"
+      "note": "exit=0 33s",
+      "dbName": "insta_scraper_test"
     },
     {
       "file": "test_task24_sparior_keyword_discovery.ts",
@@ -49,7 +53,8 @@
       "result": "PASS",
       "passed": 5,
       "failed": 0,
-      "note": "exit=0 19s"
+      "note": "exit=0 16s",
+      "dbName": "insta_scraper_test"
     },
     {
       "file": "test_task16_discovery_relevance.ts",
@@ -59,7 +64,8 @@
       "result": "PASS",
       "passed": 33,
       "failed": 0,
-      "note": "exit=0 3s"
+      "note": "exit=0 1s",
+      "dbName": "insta_scraper_test"
     },
     {
       "file": "test_task_intent_and_continuation.ts",
@@ -69,7 +75,8 @@
       "result": "PASS",
       "passed": 11,
       "failed": 0,
-      "note": "exit=0 17s"
+      "note": "exit=0 14s",
+      "dbName": "insta_scraper_test"
     },
     {
       "file": "test_lead_discovery_gates.ts",
@@ -79,7 +86,8 @@
       "result": "PASS",
       "passed": 41,
       "failed": 0,
-      "note": "exit=0 13s"
+      "note": "exit=0 12s",
+      "dbName": "insta_scraper_test"
     },
     {
       "file": "test_google_maps_discovery.ts",
@@ -87,9 +95,21 @@
       "kind": "deterministic",
       "needsServer": false,
       "result": "PASS",
-      "passed": 52,
+      "passed": 58,
       "failed": 0,
-      "note": "exit=0 5s"
+      "note": "exit=0 21s",
+      "dbName": "insta_scraper_test"
+    },
+    {
+      "file": "test_gmaps_toronto_pipeline.ts",
+      "category": "unit",
+      "kind": "deterministic",
+      "needsServer": false,
+      "result": "PASS",
+      "passed": 39,
+      "failed": 0,
+      "note": "exit=0 24s",
+      "dbName": "insta_scraper_test"
     },
     {
       "file": "test_google_maps_cost_reduction.ts",
@@ -99,7 +119,8 @@
       "result": "PASS",
       "passed": 48,
       "failed": 0,
-      "note": "exit=0 14s"
+      "note": "exit=0 12s",
+      "dbName": "insta_scraper_test"
     },
     {
       "file": "test_email_channel.ts",
@@ -109,7 +130,8 @@
       "result": "PASS",
       "passed": 49,
       "failed": 0,
-      "note": "exit=0 17s"
+      "note": "exit=0 13s",
+      "dbName": "insta_scraper_test"
     },
     {
       "file": "test_post_maps_pipeline.ts",
@@ -119,7 +141,8 @@
       "result": "PASS",
       "passed": 18,
       "failed": 0,
-      "note": "exit=0 15s"
+      "note": "exit=0 13s",
+      "dbName": "insta_scraper_test"
     },
     {
       "file": "test_gmaps_handle_waterfall.ts",
@@ -129,7 +152,52 @@
       "result": "PASS",
       "passed": 75,
       "failed": 0,
-      "note": "exit=0 16s"
+      "note": "exit=0 13s",
+      "dbName": "insta_scraper_test"
+    },
+    {
+      "file": "test_dm_no_handle_block.ts",
+      "category": "unit",
+      "kind": "deterministic",
+      "needsServer": false,
+      "result": "PASS",
+      "passed": 11,
+      "failed": 0,
+      "note": "exit=0 4s",
+      "dbName": "insta_scraper_test"
+    },
+    {
+      "file": "test_handle_waterfall_fixes.ts",
+      "category": "unit",
+      "kind": "deterministic",
+      "needsServer": false,
+      "result": "PASS",
+      "passed": 45,
+      "failed": 0,
+      "note": "exit=0 1s",
+      "dbName": "insta_scraper_test"
+    },
+    {
+      "file": "test_enrichment_persistence_resume.ts",
+      "category": "unit",
+      "kind": "deterministic",
+      "needsServer": false,
+      "result": "PASS",
+      "passed": 30,
+      "failed": 0,
+      "note": "exit=0 3s",
+      "dbName": "insta_scraper_test"
+    },
+    {
+      "file": "test_website_enrichment.ts",
+      "category": "unit",
+      "kind": "deterministic",
+      "needsServer": false,
+      "result": "PASS",
+      "passed": 63,
+      "failed": 0,
+      "note": "exit=0 12s",
+      "dbName": "insta_scraper_test"
     },
     {
       "file": "test_instagram_places_discovery.ts",
@@ -139,7 +207,8 @@
       "result": "PASS",
       "passed": 120,
       "failed": 0,
-      "note": "exit=0 6s"
+      "note": "exit=0 3s",
+      "dbName": "insta_scraper_test"
     },
     {
       "file": "test_instagram_all_in_one.ts",
@@ -149,7 +218,8 @@
       "result": "PASS",
       "passed": 69,
       "failed": 0,
-      "note": "exit=0 5s"
+      "note": "exit=0 3s",
+      "dbName": "insta_scraper_test"
     },
     {
       "file": "test_discovery_runaway_guard.ts",
@@ -159,7 +229,8 @@
       "result": "PASS",
       "passed": 30,
       "failed": 0,
-      "note": "exit=0 7s"
+      "note": "exit=0 9s",
+      "dbName": "insta_scraper_test"
     },
     {
       "file": "test_apify_cost_guard.ts",
@@ -169,7 +240,8 @@
       "result": "PASS",
       "passed": 31,
       "failed": 0,
-      "note": "exit=0 4s"
+      "note": "exit=0 2s",
+      "dbName": "insta_scraper_test"
     },
     {
       "file": "test_lead_pipeline_optimization.ts",
@@ -179,7 +251,8 @@
       "result": "PASS",
       "passed": 47,
       "failed": 0,
-      "note": "exit=0 4s"
+      "note": "exit=0 2s",
+      "dbName": "insta_scraper_test"
     },
     {
       "file": "test_lead_quality_score.ts",
@@ -189,7 +262,8 @@
       "result": "PASS",
       "passed": null,
       "failed": null,
-      "note": "exit=0 3s"
+      "note": "exit=0 1s",
+      "dbName": "insta_scraper_test"
     },
     {
       "file": "test_national_accounts_and_social_links.ts",
@@ -199,7 +273,8 @@
       "result": "PASS",
       "passed": null,
       "failed": null,
-      "note": "exit=0 3s"
+      "note": "exit=0 2s",
+      "dbName": "insta_scraper_test"
     },
     {
       "file": "test_pre_enrichment_filter.ts",
@@ -209,7 +284,8 @@
       "result": "PASS",
       "passed": 24,
       "failed": 0,
-      "note": "exit=0 3s"
+      "note": "exit=0 1s",
+      "dbName": "insta_scraper_test"
     },
     {
       "file": "test_lazy_profile_enrichment.ts",
@@ -219,7 +295,8 @@
       "result": "PASS",
       "passed": 58,
       "failed": 0,
-      "note": "exit=0 15s"
+      "note": "exit=0 15s",
+      "dbName": "insta_scraper_test"
     },
     {
       "file": "test_enrichment_criteria_pipeline.ts",
@@ -229,7 +306,8 @@
       "result": "PASS",
       "passed": 92,
       "failed": 0,
-      "note": "exit=0 15s"
+      "note": "exit=0 13s",
+      "dbName": "insta_scraper_test"
     },
     {
       "file": "test_contact_extraction_pipeline.ts",
@@ -239,7 +317,8 @@
       "result": "PASS",
       "passed": null,
       "failed": null,
-      "note": "exit=0 3s"
+      "note": "exit=0 4s",
+      "dbName": "insta_scraper_test"
     },
     {
       "file": "test_ntfy_notifications.ts",
@@ -249,7 +328,8 @@
       "result": "PASS",
       "passed": 59,
       "failed": 0,
-      "note": "exit=0 17s"
+      "note": "exit=0 15s",
+      "dbName": "insta_scraper_test"
     },
     {
       "file": "test_step4_dedup.ts",
@@ -259,7 +339,8 @@
       "result": "PASS",
       "passed": 44,
       "failed": 0,
-      "note": "exit=0 6s"
+      "note": "exit=0 4s",
+      "dbName": "insta_scraper_test"
     },
     {
       "file": "test_step5_gemini.ts",
@@ -269,7 +350,8 @@
       "result": "PASS",
       "passed": 31,
       "failed": 0,
-      "note": "exit=0 6s"
+      "note": "exit=0 4s",
+      "dbName": "insta_scraper_test"
     },
     {
       "file": "test_step6_quality_approval.ts",
@@ -279,7 +361,8 @@
       "result": "PASS",
       "passed": 76,
       "failed": 0,
-      "note": "exit=0 67s"
+      "note": "exit=0 64s",
+      "dbName": "insta_scraper_test"
     },
     {
       "file": "test_step_company_profile_per_campaign.ts",
@@ -289,7 +372,8 @@
       "result": "PASS",
       "passed": 32,
       "failed": 0,
-      "note": "exit=0 6s"
+      "note": "exit=0 3s",
+      "dbName": "insta_scraper_test"
     },
     {
       "file": "test_campaign_approval_ui.ts",
@@ -299,7 +383,8 @@
       "result": "PASS",
       "passed": 39,
       "failed": 0,
-      "note": "exit=0 16s"
+      "note": "exit=0 14s",
+      "dbName": "insta_scraper_test"
     },
     {
       "file": "test_task18_instagram_sender.ts",
@@ -309,7 +394,8 @@
       "result": "PASS",
       "passed": 90,
       "failed": 0,
-      "note": "exit=0 10s"
+      "note": "exit=0 7s",
+      "dbName": "insta_scraper_test"
     },
     {
       "file": "test_task20_sender_profile_launch.ts",
@@ -319,7 +405,8 @@
       "result": "PASS",
       "passed": 7,
       "failed": 0,
-      "note": "exit=0 21s"
+      "note": "exit=0 13s",
+      "dbName": "insta_scraper_test"
     },
     {
       "file": "test_task21_polling.ts",
@@ -329,7 +416,8 @@
       "result": "PASS",
       "passed": 32,
       "failed": 0,
-      "note": "exit=0 3s"
+      "note": "exit=0 2s",
+      "dbName": "insta_scraper_test"
     },
     {
       "file": "test_task23_dm_composer.ts",
@@ -339,7 +427,8 @@
       "result": "PASS",
       "passed": 29,
       "failed": 0,
-      "note": "exit=0 69s"
+      "note": "exit=0 67s",
+      "dbName": "insta_scraper_test"
     },
     {
       "file": "test_unipile_integration.ts",
@@ -349,7 +438,8 @@
       "result": "PASS",
       "passed": 8,
       "failed": 0,
-      "note": "exit=0 5s"
+      "note": "exit=0 3s",
+      "dbName": "insta_scraper_test"
     },
     {
       "file": "test_multi_account_round_robin.ts",
@@ -359,7 +449,8 @@
       "result": "PASS",
       "passed": 16,
       "failed": 0,
-      "note": "exit=0 15s"
+      "note": "exit=0 13s",
+      "dbName": "insta_scraper_test"
     },
     {
       "file": "test_csv_upload_leads.ts",
@@ -369,7 +460,8 @@
       "result": "PASS",
       "passed": 39,
       "failed": 0,
-      "note": "exit=0 15s"
+      "note": "exit=0 12s",
+      "dbName": "insta_scraper_test"
     },
     {
       "file": "test_lead_deletion.ts",
@@ -379,7 +471,8 @@
       "result": "PASS",
       "passed": 9,
       "failed": 0,
-      "note": "exit=0 15s"
+      "note": "exit=0 13s",
+      "dbName": "insta_scraper_test"
     },
     {
       "file": "test_auth_production_readiness.ts",
@@ -389,7 +482,8 @@
       "result": "PASS",
       "passed": null,
       "failed": null,
-      "note": "exit=0 18s"
+      "note": "exit=0 15s",
+      "dbName": "insta_scraper_test"
     },
     {
       "file": "test_admin_user_management.ts",
@@ -399,7 +493,8 @@
       "result": "PASS",
       "passed": 7,
       "failed": 0,
-      "note": "exit=0 17s"
+      "note": "exit=0 14s",
+      "dbName": "insta_scraper_test"
     },
     {
       "file": "test_admin_env_auth.ts",
@@ -409,7 +504,8 @@
       "result": "PASS",
       "passed": 7,
       "failed": 0,
-      "note": "exit=0 16s"
+      "note": "exit=0 14s",
+      "dbName": "insta_scraper_test"
     },
     {
       "file": "test_step8_unipile_webhooks.ts",
@@ -419,7 +515,8 @@
       "result": "PASS",
       "passed": 56,
       "failed": 0,
-      "note": "exit=0 29s"
+      "note": "exit=0 24s",
+      "dbName": "insta_scraper_test"
     },
     {
       "file": "test_step9_reply_intent_and_drafts.ts",
@@ -429,7 +526,8 @@
       "result": "PASS",
       "passed": 82,
       "failed": 0,
-      "note": "exit=0 76s"
+      "note": "exit=0 73s",
+      "dbName": "insta_scraper_test"
     },
     {
       "file": "test_step9_reply_send.ts",
@@ -439,7 +537,8 @@
       "result": "PASS",
       "passed": 33,
       "failed": 0,
-      "note": "exit=0 18s"
+      "note": "exit=0 14s",
+      "dbName": "insta_scraper_test"
     },
     {
       "file": "test_task22_campaign_no_poll.ts",
@@ -449,7 +548,8 @@
       "result": "SKIPPED",
       "passed": null,
       "failed": null,
-      "note": "requires authenticated browser session"
+      "note": "requires authenticated browser session",
+      "dbName": "insta_scraper_test"
     },
     {
       "file": "test_task17_bulk_template_loading.ts",
@@ -459,7 +559,8 @@
       "result": "PASS",
       "passed": 29,
       "failed": 0,
-      "note": "exit=0 44s"
+      "note": "exit=0 40s",
+      "dbName": "insta_scraper_test"
     },
     {
       "file": "test_task18b_sender_api_idor.ts",
@@ -469,7 +570,8 @@
       "result": "PASS",
       "passed": 23,
       "failed": 0,
-      "note": "exit=0 30s"
+      "note": "exit=0 26s",
+      "dbName": "insta_scraper_test"
     },
     {
       "file": "test_task19_sender_ui_lifecycle.ts",
@@ -479,7 +581,8 @@
       "result": "SKIPPED",
       "passed": null,
       "failed": null,
-      "note": "requires authenticated browser session"
+      "note": "requires authenticated browser session",
+      "dbName": "insta_scraper_test"
     },
     {
       "file": "test_task11_errors.ts",
@@ -489,7 +592,8 @@
       "result": "PASS",
       "passed": 101,
       "failed": 0,
-      "note": "exit=0 25s"
+      "note": "exit=0 22s",
+      "dbName": "insta_scraper_test"
     },
     {
       "file": "test_task12_security_qa.ts",
@@ -499,7 +603,8 @@
       "result": "PASS",
       "passed": 67,
       "failed": 0,
-      "note": "exit=0 102s"
+      "note": "exit=0 84s",
+      "dbName": "insta_scraper_test"
     },
     {
       "file": "test_task13_e2e_regression.ts",
@@ -509,7 +614,8 @@
       "result": "PASS",
       "passed": 35,
       "failed": 0,
-      "note": "exit=0 16s"
+      "note": "exit=0 8s",
+      "dbName": "insta_scraper_test"
     },
     {
       "file": "test_task4_templates.ts",
@@ -519,7 +625,8 @@
       "result": "PASS",
       "passed": 50,
       "failed": 0,
-      "note": "exit=0 9s"
+      "note": "exit=0 9s",
+      "dbName": "insta_scraper_test"
     },
     {
       "file": "test_task10_analytics_hardening.ts",
@@ -529,7 +636,8 @@
       "result": "PASS",
       "passed": 82,
       "failed": 0,
-      "note": "exit=0 11s"
+      "note": "exit=0 9s",
+      "dbName": "insta_scraper_test"
     },
     {
       "file": "test_step11_auth.ts",
@@ -539,7 +647,8 @@
       "result": "PASS",
       "passed": null,
       "failed": null,
-      "note": "exit=0 32s"
+      "note": "exit=0 29s",
+      "dbName": "insta_scraper_test"
     },
     {
       "file": "test_task2_rich_profile_leads.ts",
@@ -549,7 +658,8 @@
       "result": "SKIPPED",
       "passed": null,
       "failed": null,
-      "note": "requires real Apify provider"
+      "note": "requires real Apify provider",
+      "dbName": "insta_scraper_test"
     },
     {
       "file": "test_task3_lead_limits_hardening.ts",
@@ -559,7 +669,8 @@
       "result": "SKIPPED",
       "passed": null,
       "failed": null,
-      "note": "requires real Apify provider"
+      "note": "requires real Apify provider",
+      "dbName": "insta_scraper_test"
     },
     {
       "file": "test_step14_discovery.ts",
@@ -569,7 +680,8 @@
       "result": "SKIPPED",
       "passed": null,
       "failed": null,
-      "note": "requires real Apify provider"
+      "note": "requires real Apify provider",
+      "dbName": "insta_scraper_test"
     },
     {
       "file": "test_step15_e2e_discovery_flow.ts",
@@ -579,7 +691,8 @@
       "result": "SKIPPED",
       "passed": null,
       "failed": null,
-      "note": "requires real Apify provider"
+      "note": "requires real Apify provider",
+      "dbName": "insta_scraper_test"
     },
     {
       "file": "test_task5_single_lead_messaging.ts",
@@ -589,7 +702,8 @@
       "result": "PASS",
       "passed": 22,
       "failed": 0,
-      "note": "exit=0 19s"
+      "note": "exit=0 17s",
+      "dbName": "insta_scraper_test"
     },
     {
       "file": "test_task6_bulk_messaging.ts",
@@ -599,7 +713,8 @@
       "result": "PASS",
       "passed": 39,
       "failed": 0,
-      "note": "exit=0 17s"
+      "note": "exit=0 14s",
+      "dbName": "insta_scraper_test"
     },
     {
       "file": "test_task7_messaging_safety.ts",
@@ -609,17 +724,19 @@
       "result": "PASS",
       "passed": 52,
       "failed": 0,
-      "note": "exit=0 10s"
+      "note": "exit=0 11s",
+      "dbName": "insta_scraper_test"
     },
     {
       "file": "test_outbound_send_safety.ts",
       "category": "security",
       "kind": "deterministic",
       "needsServer": false,
-      "result": "FAIL",
-      "passed": 48,
-      "failed": 2,
-      "note": "exit=1 13s :: ❌ FAIL: canSendNow rejects Tokyo lead at night with OUTSIDE_WORKING_HOURS | ❌ FAIL: OUTSIDE_WORKING_HOURS returns retryAt timestamp for next window opening | [WARN] [2026-11-12T08:10:39.567Z] [SEND_GATE] Sender auto-paused due to danger signals {\"senderAccountId\":\"cmwd9q3og0009xothiiswhzzp\",\"usernam"
+      "result": "PASS",
+      "passed": 56,
+      "failed": 0,
+      "note": "exit=0 5s",
+      "dbName": "insta_scraper_test"
     },
     {
       "file": "test_outcome_tracking_and_analytics.ts",
@@ -629,7 +746,8 @@
       "result": "PASS",
       "passed": 58,
       "failed": 0,
-      "note": "exit=0 16s"
+      "note": "exit=0 14s",
+      "dbName": "insta_scraper_test"
     },
     {
       "file": "test_discovery_pipeline_stages.ts",
@@ -639,7 +757,8 @@
       "result": "PASS",
       "passed": 31,
       "failed": 0,
-      "note": "exit=0 16s"
+      "note": "exit=0 14s",
+      "dbName": "insta_scraper_test"
     },
     {
       "file": "test_e2e_full_pipeline.ts",
@@ -649,7 +768,8 @@
       "result": "PASS",
       "passed": 60,
       "failed": 0,
-      "note": "exit=0 17s"
+      "note": "exit=0 13s",
+      "dbName": "insta_scraper_test"
     },
     {
       "file": "test_follow_up_messages.ts",
@@ -659,7 +779,8 @@
       "result": "PASS",
       "passed": 66,
       "failed": 0,
-      "note": "exit=0 18s"
+      "note": "exit=0 14s",
+      "dbName": "insta_scraper_test"
     },
     {
       "file": "test_pre_pilot_safety.ts",
@@ -669,7 +790,8 @@
       "result": "PASS",
       "passed": 16,
       "failed": 0,
-      "note": "exit=0 7s"
+      "note": "exit=0 4s",
+      "dbName": "insta_scraper_test"
     },
     {
       "file": "test_outbound_kill_switch.ts",
@@ -679,7 +801,8 @@
       "result": "PASS",
       "passed": 12,
       "failed": 0,
-      "note": "exit=0 5s"
+      "note": "exit=0 4s",
+      "dbName": "insta_scraper_test"
     },
     {
       "file": "test_dry_run_isolation_and_messages.ts",
@@ -689,7 +812,8 @@
       "result": "PASS",
       "passed": null,
       "failed": null,
-      "note": "exit=0 6s"
+      "note": "exit=0 4s",
+      "dbName": "insta_scraper_test"
     },
     {
       "file": "test_discovery_fixes.ts",
@@ -699,7 +823,8 @@
       "result": "PASS",
       "passed": 19,
       "failed": 0,
-      "note": "exit=0 17s"
+      "note": "exit=0 19s",
+      "dbName": "insta_scraper_test"
     },
     {
       "file": "test_task8_execution_engine.ts",
@@ -709,7 +834,8 @@
       "result": "PASS",
       "passed": 66,
       "failed": 0,
-      "note": "exit=0 39s"
+      "note": "exit=0 35s",
+      "dbName": "insta_scraper_test"
     },
     {
       "file": "test_task9_ui_execution_hardening.ts",
@@ -719,7 +845,8 @@
       "result": "PASS",
       "passed": 53,
       "failed": 0,
-      "note": "exit=0 11s"
+      "note": "exit=0 7s",
+      "dbName": "insta_scraper_test"
     }
   ]
 }

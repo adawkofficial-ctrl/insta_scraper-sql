@@ -9,6 +9,8 @@
 
 import "./preload_server_only.cjs";
 import "dotenv/config";
+// Test doubles (Apify mock) are only honored when NODE_ENV=test.
+(process.env as Record<string, string | undefined>).NODE_ENV = "test";
 
 import {
   extractSocialLinksFromHtml,
@@ -308,11 +310,12 @@ async function runTests() {
       const cand = result.candidates[0];
       check(cand.username === "torontosmilestudio", "Candidate handle extracted from website");
       check(
-        cand.socialLinks?.facebook === "https://facebook.com/torontosmilestudio",
+        cand.socialLinks?.facebook === "https://www.facebook.com/torontosmilestudio",
         "Discovered other social link (Facebook)",
+        JSON.stringify(cand.socialLinks),
       );
       check(
-        cand.socialLinks?.tiktok === "https://tiktok.com/@smilestudio",
+        cand.socialLinks?.tiktok === "https://www.tiktok.com/@smilestudio",
         "Discovered other social link (TikTok)",
       );
 

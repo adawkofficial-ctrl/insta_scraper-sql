@@ -1727,12 +1727,22 @@ export function LeadDetailDrawer({
                                     {em.source}
                                   </span>
                                 </div>
-                                <a
-                                  href={`mailto:${em.value}`}
-                                  className="max-w-[240px] truncate text-emerald-400 hover:underline"
-                                >
-                                  {em.value}
-                                </a>
+                                <div className="flex items-center gap-1.5">
+                                  <a
+                                    href={`mailto:${em.value}`}
+                                    className="max-w-[240px] truncate text-emerald-400 hover:underline"
+                                  >
+                                    {em.value}
+                                  </a>
+                                  <button
+                                    type="button"
+                                    onClick={() => navigator.clipboard?.writeText(em.value)}
+                                    className="rounded border border-zinc-700/60 px-1 py-0.5 text-[9px] text-zinc-400 hover:text-zinc-200"
+                                    title="Copy email"
+                                  >
+                                    Copy
+                                  </button>
+                                </div>
                               </div>
                             ))}
 
@@ -1832,8 +1842,16 @@ export function LeadDetailDrawer({
 
                       {/* Other Social Links discovered from Website HTML */}
                       {(() => {
-                        const socials = (lead.rawProfileData as { socialLinks?: Record<string, string | null> } | undefined)?.socialLinks;
-                        if (!socials) return null;
+                        const rawContacts = lead.rawProfileData as
+                          | {
+                              socialLinks?: Record<string, string | null>;
+                              contacts?: { socialLinks?: Record<string, string | null> };
+                            }
+                          | undefined;
+                        const socials = {
+                          ...(rawContacts?.socialLinks ?? {}),
+                          ...(rawContacts?.contacts?.socialLinks ?? {}),
+                        };
                         const entries = Object.entries(socials).filter((entry) => Boolean(entry[1]));
                         if (entries.length === 0) return null;
                         return (

@@ -79,6 +79,7 @@ export type DiscoveryInput = {
   cursor?: string | null;
   page?: number | null;
   campaignId?: string | null;
+  scrapeJobId?: string | null;
   userId?: string | null;
   isDryRun?: boolean;
 };
@@ -105,6 +106,7 @@ export type DiscoveryResult = {
   nextKeywordIndex?: number;
   requestsUsed?: number;
   stopReason?: string;
+  notice?: string | null;
   gmapsPlacesFound?: number;
   gmapsWithWebsite?: number;
   gmapsWithInstagram?: number;

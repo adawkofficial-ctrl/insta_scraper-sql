@@ -242,6 +242,11 @@ export async function scheduleFollowUpsForLead(input: {
 
   if (!lead) return [];
 
+  // Leads without Instagram handle cannot receive Instagram DM follow-ups
+  if (!lead.username || !lead.username.trim()) {
+    return [];
+  }
+
   // If lead already replied or DNC, do not schedule
   if (
     lead.status === LeadStatus.REPLIED ||

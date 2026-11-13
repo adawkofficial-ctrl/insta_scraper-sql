@@ -19,6 +19,13 @@ export { LeadStatus };
  * - Backward jumps otherwise strictly rejected.
  */
 export const ALLOWED_LEAD_TRANSITIONS: Record<LeadStatus, readonly LeadStatus[]> = {
+  [LeadStatus.ENRICH_PENDING]: [
+    LeadStatus.NEW,
+    LeadStatus.QUALIFYING,
+    LeadStatus.QUALIFIED,
+    LeadStatus.NOT_INTERESTED,
+    LeadStatus.DO_NOT_CONTACT,
+  ],
   [LeadStatus.NEW]: [
     LeadStatus.QUALIFYING,
     LeadStatus.QUEUED,             // Legacy direct queue
@@ -91,6 +98,7 @@ export const ALLOWED_LEAD_TRANSITIONS: Record<LeadStatus, readonly LeadStatus[]>
   ],
   [LeadStatus.DO_NOT_CONTACT]: [
     LeadStatus.NEW,
+    LeadStatus.ENRICH_PENDING,
     LeadStatus.QUALIFYING,
     LeadStatus.QUALIFIED,
     LeadStatus.READY_FOR_OUTREACH,

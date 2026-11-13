@@ -6,10 +6,12 @@ export const dynamic = "force-dynamic";
 
 export async function GET(): Promise<Response> {
   let dbStatus = "connected";
+  let databaseName: string | null = null;
   try {
     const prisma = getPrismaClient();
-    // Lightweight database ping
-    await prisma.$queryRaw`SELECT 1`;
+    // Lightweight database ping plus the connected database name (non-secret).
+    const rows = await prisma.$queryRaw<Array<{ name: string }>>`SELECT current_database() AS name`;
+    databaseName = rows[0]?.name ?? null;
   } catch {
     dbStatus = "disconnected";
   }
@@ -22,6 +24,7 @@ export async function GET(): Promise<Response> {
       timestamp: new Date().toISOString(),
       services: {
         database: dbStatus,
+        databaseName,
       },
     },
     {

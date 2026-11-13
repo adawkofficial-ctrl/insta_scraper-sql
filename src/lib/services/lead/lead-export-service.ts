@@ -52,8 +52,11 @@ export async function exportCampaignLeads(
     );
   }
 
-  // Fetch leads for this campaign
-  const where: Record<string, unknown> = { campaignId };
+  // Fetch leads for this campaign (excluding DO_NOT_CONTACT suppressed leads)
+  const where: Record<string, unknown> = {
+    campaignId,
+    status: { not: "DO_NOT_CONTACT" },
+  };
   if (leadIds && leadIds.length > 0) {
     where.id = { in: leadIds };
   }
@@ -85,6 +88,14 @@ export async function exportCampaignLeads(
       businessCategoryName: true,
       category: true,
       location: true,
+      city: true,
+      rating: true,
+      reviewCount: true,
+      gmapsPlaceId: true,
+      socialLink: true,
+      socialPlatform: true,
+      availableChannels: true,
+      rawProfileData: true,
       status: true,
       leadScore: true,
       leadQuality: true,
@@ -97,27 +108,27 @@ export async function exportCampaignLeads(
 
   const headers = [
     "ID",
-    "Username",
-    "Full Name",
+    "Business Name",
+    "Instagram",
     "Email",
-    "Email Confidence",
-    "Email Role",
     "Phone",
     "Website",
-    "Profile URL",
-    "Followers",
-    "Following",
-    "Posts Count",
-    "Verified",
-    "Business Account",
+    "Facebook",
+    "TikTok",
+    "YouTube",
+    "LinkedIn",
+    "X",
+    "WhatsApp",
+    "Other Social",
     "Category",
-    "Location",
+    "Address",
+    "City",
+    "Rating",
+    "Reviews",
+    "Maps URL",
     "Status",
-    "Lead Score",
-    "Lead Quality",
-    "Contact Source",
-    "Biography",
-    "Source",
+    "Source Notes",
+    "Followers",
     "Created At",
   ];
 
@@ -125,42 +136,60 @@ export async function exportCampaignLeads(
 
   for (const lead of leads) {
     const username = lead.username || lead.instagramUsername || "";
-    const emailConfidenceStr =
-      lead.emailConfidence !== null && lead.emailConfidence !== undefined
-        ? `${Math.round(lead.emailConfidence * 100)}%`
-        : "";
     const followers = lead.followersCount ?? lead.followers ?? "";
-    const following = lead.followsCount ?? lead.following ?? "";
-    const verified = lead.verified ?? lead.isVerified ?? false;
-    const isBusiness = lead.isBusinessAccount ?? lead.isBusiness ?? false;
     const category = lead.businessCategoryName || lead.category || "";
     const website = lead.website || lead.externalUrl || "";
-    const profileUrl =
-      lead.profileUrl || (username ? `https://instagram.com/${username}` : "");
+
+    const raw = (lead.rawProfileData as Record<string, unknown> | null) || {};
+    const socialLinks = (raw.socialLinks as Record<string, string> | undefined) || {};
+
+    let facebook = socialLinks.facebook || "";
+    let tiktok = socialLinks.tiktok || "";
+    let youtube = socialLinks.youtube || "";
+    let linkedin = socialLinks.linkedin || "";
+    let x = socialLinks.twitter || socialLinks.x || "";
+    let whatsapp = socialLinks.whatsapp || "";
+    let otherSocial = "";
+
+    if (lead.socialLink && lead.socialPlatform) {
+      const plat = lead.socialPlatform.toLowerCase();
+      if (plat === "facebook" && !facebook) facebook = lead.socialLink;
+      else if (plat === "tiktok" && !tiktok) tiktok = lead.socialLink;
+      else if (plat === "youtube" && !youtube) youtube = lead.socialLink;
+      else if (plat === "linkedin" && !linkedin) linkedin = lead.socialLink;
+      else if ((plat === "twitter" || plat === "x") && !x) x = lead.socialLink;
+      else if (plat === "whatsapp" && !whatsapp) whatsapp = lead.socialLink;
+      else if (!otherSocial) otherSocial = lead.socialLink;
+    }
+
+    const address = (raw.address as string) || (raw.street as string) || lead.location || "";
+    const city = lead.city || (raw.city as string) || lead.location || "";
+    const mapsUrl = (raw.mapsUrl as string) || (raw.url as string) || (lead.gmapsPlaceId ? `https://www.google.com/maps/place/?q=place_id:${lead.gmapsPlaceId}` : "");
+    const sourceNotes = [lead.contactSource, lead.source, lead.availableChannels?.join(";")].filter(Boolean).join(" | ");
 
     const row = [
       escapeCsvValue(lead.id),
-      escapeCsvValue(username),
       escapeCsvValue(lead.fullName || ""),
+      escapeCsvValue(username ? `@${username}` : ""),
       escapeCsvValue(lead.email || ""),
-      escapeCsvValue(emailConfidenceStr),
-      escapeCsvValue(lead.emailRole || ""),
       escapeCsvValue(lead.phone || ""),
       escapeCsvValue(website),
-      escapeCsvValue(profileUrl),
-      escapeCsvValue(followers),
-      escapeCsvValue(following),
-      escapeCsvValue(lead.postsCount ?? ""),
-      escapeCsvValue(verified),
-      escapeCsvValue(isBusiness),
+      escapeCsvValue(facebook),
+      escapeCsvValue(tiktok),
+      escapeCsvValue(youtube),
+      escapeCsvValue(linkedin),
+      escapeCsvValue(x),
+      escapeCsvValue(whatsapp),
+      escapeCsvValue(otherSocial),
       escapeCsvValue(category),
-      escapeCsvValue(lead.location || ""),
+      escapeCsvValue(address),
+      escapeCsvValue(city),
+      escapeCsvValue(lead.rating ?? ""),
+      escapeCsvValue(lead.reviewCount ?? ""),
+      escapeCsvValue(mapsUrl),
       escapeCsvValue(lead.status || ""),
-      escapeCsvValue(lead.leadScore ?? ""),
-      escapeCsvValue(lead.leadQuality || ""),
-      escapeCsvValue(lead.contactSource || ""),
-      escapeCsvValue(lead.biography || ""),
-      escapeCsvValue(lead.source || ""),
+      escapeCsvValue(sourceNotes),
+      escapeCsvValue(followers),
       escapeCsvValue(lead.createdAt ? lead.createdAt.toISOString() : ""),
     ];
 

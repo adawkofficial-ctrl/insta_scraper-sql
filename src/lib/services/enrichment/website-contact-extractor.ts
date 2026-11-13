@@ -10,6 +10,7 @@ import {
   isSocialOrSharedPlatform,
   detectSocialPlatform,
 } from "@/lib/constants/social-platforms";
+import { scrapeLeadWebsite } from "./website-lead-enricher";
 import { resolveCountryCode } from "../discovery/country-cities";
 import { getPrismaClient } from "@/lib/db/prisma";
 import { Prisma } from "@/generated/prisma/client";
@@ -594,6 +595,26 @@ export async function enrichProfilesWithContacts(
         timeoutMs,
       });
 
+      // Free website scraper: also discovers Instagram and other socials from
+      // anchors (incl. image-only), meta tags, JSON-LD, header/footer blocks,
+      // and up to 4 same-domain pages.
+      const websiteForScrape =
+        profile.website ||
+        profile.externalUrl ||
+        (typeof rawObj.website === "string" ? rawObj.website : null);
+      let websiteScrape: Awaited<ReturnType<typeof scrapeLeadWebsite>> | null = null;
+      if (websiteForScrape) {
+        try {
+          websiteScrape = await scrapeLeadWebsite({
+            website: websiteForScrape,
+            businessName: profile.fullName,
+            countryCode,
+          });
+        } catch {
+          // Non-fatal per-lead website failure
+        }
+      }
+
       // Update lead profile contact fields
       if (contacts.phones.length > 0) {
         profile.phone = contacts.phones[0].value;
@@ -611,6 +632,32 @@ export async function enrichProfilesWithContacts(
         }
       }
 
+      if (websiteScrape) {
+        if (!profile.username && websiteScrape.handle) {
+          profile.username = websiteScrape.handle;
+          profile.instagramUsername = websiteScrape.handle;
+          profile.profileUrl = `https://www.instagram.com/${websiteScrape.handle}/`;
+          profile.handleSource = "homepage";
+          profile.handleConfidence = websiteScrape.handleConfidence;
+        }
+        if (websiteScrape.socialLinks) {
+          profile.socialLinks = {
+            ...(profile.socialLinks ?? {}),
+            ...Object.fromEntries(
+              Object.entries(websiteScrape.socialLinks).filter(([, value]) => Boolean(value)),
+            ),
+          };
+        }
+        if (!profile.email && websiteScrape.emails[0]) {
+          profile.email = websiteScrape.emails[0].value;
+          profile.emailNormalized = websiteScrape.emails[0].value.toLowerCase();
+        }
+        if (!profile.phone && websiteScrape.phones[0]) {
+          profile.phone = websiteScrape.phones[0].value;
+          profile.phoneNormalized = websiteScrape.phones[0].normalized;
+        }
+      }
+
       // Track primary contact source
       profile.contactSource =
         contacts.phones[0]?.source ??
@@ -621,10 +668,20 @@ export async function enrichProfilesWithContacts(
 
       // Update availableChannels
       profile.availableChannels = computeAvailableChannels({
-        hasInstagram: true,
+        hasInstagram: Boolean(profile.username),
         email: profile.email,
         phone: profile.phone,
+        whatsapp: contacts.whatsapps[0]?.url ?? websiteScrape?.whatsapp ?? null,
+        website: profile.website,
       });
+      if (
+        Object.values(profile.socialLinks ?? {}).some(
+          (value) => typeof value === "string" && value,
+        ) &&
+        !profile.availableChannels.includes("SOCIAL")
+      ) {
+        profile.availableChannels.push("SOCIAL");
+      }
 
       // Persist in rawProfileData.contacts
       profile.rawProfileData = {

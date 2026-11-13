@@ -43,6 +43,9 @@ if (process.env.NODE_ENV === "production") {
 }
 
 const nextConfig: NextConfig = {
+  // Allow the test runner to use an isolated build/dev directory so it never
+  // collides with (or reuses) a developer's running `next dev` server.
+  distDir: process.env.NEXT_DIST_DIR || ".next",
   env: {
     NEXT_PUBLIC_MAX_LEAD_LIMIT: process.env.MAX_LEAD_LIMIT ?? "100",
     NEXT_PUBLIC_MAX_PROFILE_BATCH: process.env.MAX_PROFILE_BATCH_SIZE ?? "1000",

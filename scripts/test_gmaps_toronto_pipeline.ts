@@ -264,6 +264,121 @@ async function runTests() {
   const nullCityCount = allSaved.filter((c) => !c.city && !c.gmapsCity).length;
   check(nullCityCount === 0, `No place rejected or saved with missing city (null city count = ${nullCityCount})`);
 
+  console.log("\n=== 8. Location Fallback & City Coordinates Verification ===");
+  const { CITY_COORDINATES, normalizeCityKey, isPlausiblyInCity } = await import(
+    "../src/lib/services/discovery/country-cities"
+  );
+
+  // Test 1: "Mississauga" -> resolves to Mississauga coordinates, not Toronto
+  const mississaugaKey = normalizeCityKey("Mississauga");
+  const mississaugaCoords = CITY_COORDINATES[mississaugaKey];
+  check(
+    mississaugaCoords?.lat === 43.589 && mississaugaCoords?.lng === -79.6441,
+    `Mississauga resolves to its own coordinates (${mississaugaCoords?.lat}, ${mississaugaCoords?.lng}), not Toronto`,
+  );
+  check(
+    mississaugaCoords?.lat !== CITY_COORDINATES.toronto.lat,
+    "Mississauga coordinates differ from Toronto coordinates",
+  );
+
+  // Test 2: "Brampton" -> resolves to Brampton coordinates, not Toronto
+  const bramptonKey = normalizeCityKey("Brampton");
+  const bramptonCoords = CITY_COORDINATES[bramptonKey];
+  check(
+    bramptonCoords?.lat === 43.7315 && bramptonCoords?.lng === -79.7624,
+    `Brampton resolves to its own coordinates (${bramptonCoords?.lat}, ${bramptonCoords?.lng}), not Toronto`,
+  );
+  check(
+    bramptonCoords?.lat !== CITY_COORDINATES.toronto.lat,
+    "Brampton coordinates differ from Toronto coordinates",
+  );
+
+  // Test 3: "Downtown Vancouver" -> strips "Downtown", resolves to Vancouver coordinates
+  const dtvKey = normalizeCityKey("Downtown Vancouver");
+  const dtvCoords = CITY_COORDINATES[dtvKey];
+  check(
+    dtvCoords?.lat === 49.2827 && dtvCoords?.lng === -123.1207,
+    `Downtown Vancouver resolves to Vancouver coordinates (${dtvCoords?.lat}, ${dtvCoords?.lng})`,
+  );
+  check(
+    dtvCoords?.lat !== CITY_COORDINATES.toronto.lat,
+    "Downtown Vancouver coordinates differ from Toronto coordinates",
+  );
+
+  // Test 4: Unknown town (e.g. "Cobourg" or "Inuvik") -> NEVER defaults to Toronto
+  const unknownKey = normalizeCityKey("Cobourg");
+  const unknownCoords = CITY_COORDINATES[unknownKey];
+  check(unknownCoords === undefined, 'Unknown town "Cobourg" is not in CITY_COORDINATES');
+
+  // When unknown town place is passed to derivePlaceLocation, it must NOT default to Toronto coordinates
+  const unknownTownPlace = {
+    title: "Cobourg Family Dental",
+    street: "123 King St W",
+    city: "Cobourg",
+    state: "ON",
+    countryCode: "CA",
+    lat: 43.9598, // real Cobourg latitude
+    lng: -78.1666, // real Cobourg longitude (~100km from Toronto)
+  };
+  const derivedUnknown = derivePlaceLocation(unknownTownPlace, "Cobourg", "Cobourg");
+  check(!derivedUnknown.isExplicitMismatch, "Unknown town place is NOT rejected by coordinates distance");
+  check(derivedUnknown.city === "Cobourg", `Unknown town place city derived as Cobourg, got "${derivedUnknown.city}"`);
+
+  // Test isPlausiblyInCity with unknown town
+  const plausibleUnknown = isPlausiblyInCity({
+    targetCity: "Cobourg",
+    lat: 43.9598,
+    lng: -78.1666,
+    address: "123 King St W, Cobourg",
+  });
+  check(plausibleUnknown === true, "Unknown town location is treated as plausible / unknown, never rejected by center coordinates");
+
+  // Test 5: "Scarborough, Toronto, ON, Canada" vs UK coordinate (e.g. lat 54.31, lng -0.35)
+  const ukCoordinateItem = {
+    title: "Scarborough Seafront Dental",
+    street: "Foreshore Rd",
+    city: "Scarborough",
+    state: "North Yorkshire",
+    countryCode: "GB",
+    lat: 54.2811,
+    lng: -0.3986,
+  };
+  const derivedUkPlace = derivePlaceLocation(
+    ukCoordinateItem,
+    "Scarborough",
+    "Scarborough, Toronto, ON, Canada",
+  );
+  check(derivedUkPlace.isExplicitMismatch === true, "Scarborough UK place is explicitly rejected against Scarborough, Toronto, ON, Canada");
+  check(
+    Boolean(
+      derivedUkPlace.mismatchReason?.includes("Country mismatch") ||
+        derivedUkPlace.mismatchReason?.includes("Coordinates distance") ||
+        derivedUkPlace.mismatchReason?.includes("State/Province mismatch"),
+    ),
+    `UK place rejection reason contains mismatch details: "${derivedUkPlace.mismatchReason}"`,
+  );
+
+  // UK place with CA country code spoofed still rejected by coordinate distance (~5500 km)
+  const spoofedUkPlace = {
+    title: "Scarborough Seafront Dental",
+    street: "Foreshore Rd",
+    city: "Scarborough",
+    state: "ON",
+    countryCode: "CA",
+    lat: 54.2811,
+    lng: -0.3986,
+  };
+  const derivedSpoofed = derivePlaceLocation(
+    spoofedUkPlace,
+    "Scarborough",
+    "Scarborough, Toronto, ON, Canada",
+  );
+  check(derivedSpoofed.isExplicitMismatch === true, "Spoofed UK coordinate is rejected by coordinate distance");
+  check(
+    derivedSpoofed.mismatchReason?.includes("Coordinates distance") === true,
+    `UK coordinate rejected by coordinates distance: "${derivedSpoofed.mismatchReason}"`,
+  );
+
   console.log(`\nPASSED: ${passed} | FAILED: ${failed}`);
   if (failed > 0) {
     process.exit(1);

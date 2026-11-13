@@ -60,6 +60,7 @@ enum ScrapeJobStatus {
   PENDING
   RUNNING
   COMPLETED
+  COMPLETED_WITH_WARNINGS
   FAILED
 }
 
@@ -96,6 +97,7 @@ enum MessageStatus {
 
 enum LeadStatus {
   NEW
+  ENRICH_PENDING
   QUALIFYING
   QUALIFIED
   READY_FOR_OUTREACH
@@ -326,6 +328,7 @@ model Campaign {
   autoOptimize           Boolean     @default(false)
   explorationBudgetShare Float       @default(0.15)
   leadEvents             LeadEvent[]
+  candidates             Candidate[]
 
   @@index([userId])
   @@index([status])
@@ -553,6 +556,7 @@ model ScrapeJob {
   campaign   Campaign?           @relation(fields: [campaignId], references: [id], onDelete: Cascade)
   executions CampaignExecution[]
   leads      Lead[]
+  candidates Candidate[]
 
   @@index([campaignId])
   @@index([status])
@@ -590,6 +594,45 @@ model DiscoveryPlaceOutcome {
 
   @@unique([userId, placeId])
   @@index([userId, updatedAt])
+}
+
+model Candidate {
+  id               String    @id @default(cuid())
+  campaignId       String
+  scrapeJobId      String?
+  runId            String?
+  datasetId        String?
+  costUsd          Decimal?  @db.Decimal(10, 4)
+  placeId          String
+  name             String
+  category         String?
+  address          String?
+  city             String?
+  state            String?
+  countryCode      String?
+  phone            String?
+  website          String?
+  rating           Float?
+  reviewsCount     Int?
+  mapsUrl          String?
+  status           String    @default("DISCOVERED")
+  rejectionReason  String?
+  lastError        String?
+  handle           String?
+  handleSource     String?
+  handleConfidence String?
+  socialLinks      Json?
+  rawPlaceData     Json?
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
+
+  campaign         Campaign  @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  scrapeJob        ScrapeJob? @relation(fields: [scrapeJobId], references: [id], onDelete: SetNull)
+
+  @@unique([campaignId, placeId])
+  @@index([campaignId, status])
+  @@index([scrapeJobId])
+  @@index([placeId])
 }
 
 model EmailSenderAccount {

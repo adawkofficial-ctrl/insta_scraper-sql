@@ -1,4 +1,6 @@
 import "dotenv/config";
+// Test doubles (Apify mock) are only honored when NODE_ENV=test.
+(process.env as Record<string, string | undefined>).NODE_ENV = "test";
 import assert from "node:assert";
 import type { MessagingProvider } from "../src/lib/services/messaging/messaging-provider";
 
@@ -82,8 +84,12 @@ async function run() {
 
     // 1D: setApifyClientForTesting is locked down outside test mode
     (process.env as Record<string, string>).NODE_ENV = "production";
-    setApifyClientForTesting({} as any);
-    assert.strictEqual(hasMockApifyClient(), false, "setApifyClientForTesting must be ignored outside test");
+    assert.throws(
+      () => setApifyClientForTesting({} as any),
+      /test-only/,
+      "setApifyClientForTesting must throw outside test instead of silently installing a mock",
+    );
+    assert.strictEqual(hasMockApifyClient(), false, "setApifyClientForTesting must not install a mock outside test");
     console.log("  PASS: setApifyClientForTesting is rejected outside NODE_ENV=test");
 
     // 1E: setSendGateClock is locked down outside test mode

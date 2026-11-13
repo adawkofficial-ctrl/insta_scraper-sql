@@ -78,7 +78,7 @@ export type ScrapeJobUsage = {
 
 export type ScrapeJobItem = {
   id: string;
-  status: "PENDING" | "RUNNING" | "COMPLETED" | "FAILED";
+  status: "PENDING" | "RUNNING" | "COMPLETED" | "COMPLETED_WITH_WARNINGS" | "FAILED" | "CANCELLED" | "PAUSED" | "READY" | "DRAFT";
   provider: string;
   inputCount: number;
   processedCount: number;

@@ -338,21 +338,28 @@ export function estimateActorCost(
   }
 
   if (actorId.includes("instagram-profile-scraper")) {
-    const usernames = Array.isArray(input.usernames) ? input.usernames.length : (requestedMaxItems ?? 10);
-    const originalCount = usernames;
-    let count = usernames;
+    const rawBatchSize = Array.isArray(input.usernames)
+      ? input.usernames.length
+      : Array.isArray(input.directUrls)
+        ? input.directUrls.length
+        : (requestedMaxItems ?? 10);
+    // For explicit list of usernames, maxItems is a safety ceiling, not a target.
+    // Must be >= max(5, 2 * batchSize) to prevent actor minimum run charge rejection.
+    const ceilingItems = Math.max(5, 2 * rawBatchSize);
+    const originalCount = ceilingItems;
+    let count = ceilingItems;
     let wasReduced = false;
 
     const calculateCost = (items: number) =>
       INSTAGRAM_PROFILE_RUN_BASE_USD + items * INSTAGRAM_PROFILE_COST_PER_ITEM_USD;
 
-    let estimate = calculateCost(count);
+    let estimate = calculateCost(rawBatchSize);
 
     if (estimate > perRunCap) {
       const maxAllowed = Math.max(1, Math.floor((perRunCap - INSTAGRAM_PROFILE_RUN_BASE_USD) / INSTAGRAM_PROFILE_COST_PER_ITEM_USD));
-      if (maxAllowed < count) {
-        count = maxAllowed;
-        estimate = calculateCost(count);
+      if (maxAllowed < rawBatchSize) {
+        count = Math.max(5, 2 * maxAllowed);
+        estimate = calculateCost(maxAllowed);
         wasReduced = true;
       }
     }
@@ -560,7 +567,28 @@ export async function runActorSafely<T = unknown>(
   }
 
   if (mockActorRunner) {
-    return (await mockActorRunner(actorId, input, options)) as SafeActorRunResult<T>;
+    try {
+      return (await mockActorRunner(actorId, input, options)) as SafeActorRunResult<T>;
+    } catch (err: unknown) {
+      const errMessage = err instanceof Error ? err.message : String(err);
+      const isMinCostError = /maximum cost per run is less than the allowed minimum/i.test(errMessage);
+      if (isMinCostError) {
+        const batchSize = Array.isArray(input.usernames)
+          ? input.usernames.length
+          : Array.isArray(input.directUrls)
+            ? input.directUrls.length
+            : 1;
+        const technicalMinCharge = Math.max(0.10, 0.05 * batchSize);
+        console.log(
+          `[APIFY-COST-GUARD] Minimum cost per run requirement met by actor (mock). Retrying ONCE with explicit technical minimum maxTotalChargeUsd=$${technicalMinCharge.toFixed(2)}`,
+        );
+        return (await mockActorRunner(actorId, input, {
+          ...options,
+          maxTotalChargeUsd: technicalMinCharge,
+        })) as SafeActorRunResult<T>;
+      }
+      throw err;
+    }
   }
 
   // 1. Check Kill Switch
@@ -655,16 +683,25 @@ export async function runActorSafely<T = unknown>(
     ? Math.max(APIFY_API_MINIMUM_CHARGE_PER_RUN_USD, perRunCap)
     : null;
 
-  const callOptions = {
-    ...(apifyMaxTotalCharge !== null
-      ? { maxTotalChargeUsd: apifyMaxTotalCharge }
-      : {}),
+  const rawCallOptions: Record<string, unknown> = {
     timeout: timeoutSecs,
     waitSecs: timeoutSecs,
     memory: memoryMbytes,
     maxItems: estimate.maxItems,
     restartOnError: false, // Prevent infinite billable restarts
   };
+
+  if (apifyMaxTotalCharge !== null && Number.isFinite(apifyMaxTotalCharge)) {
+    rawCallOptions.maxTotalChargeUsd = apifyMaxTotalCharge;
+  }
+
+  // Never serialize null, undefined, Infinity, or NaN to Apify API
+  const callOptions: Record<string, unknown> = {};
+  for (const [key, val] of Object.entries(rawCallOptions)) {
+    if (val === null || val === undefined) continue;
+    if (typeof val === "number" && !Number.isFinite(val)) continue;
+    callOptions[key] = val;
+  }
 
   if (options?.abortSignal?.aborted) {
     throw new ProviderError(
@@ -688,7 +725,7 @@ export async function runActorSafely<T = unknown>(
 
   try {
     console.log(
-      `[APIFY-COST-GUARD] Executing LIVE actor call: actor=${actorId} maxChargeUsd=${apifyMaxTotalCharge} timeout=${timeoutSecs}s`,
+      `[APIFY-COST-GUARD] Executing LIVE actor call: actor=${actorId} maxChargeUsd=${callOptions.maxTotalChargeUsd ?? "none"} timeout=${timeoutSecs}s`,
     );
 
     run = await client.actor(actorId).call(input, callOptions);
@@ -696,33 +733,65 @@ export async function runActorSafely<T = unknown>(
     const errMessage = error instanceof Error ? error.message : String(error);
     const statusCode = (error as { statusCode?: number })?.statusCode;
 
-    // Check fatal quota/auth/billing errors: NEVER RETRY
-    if (
-      statusCode === 401 ||
-      statusCode === 403 ||
-      errMessage.toLowerCase().includes("monthly usage") ||
-      errMessage.toLowerCase().includes("hard limit") ||
-      errMessage.toLowerCase().includes("usage limit") ||
-      errMessage.toLowerCase().includes("platform-feature-disabled") ||
-      errMessage.toLowerCase().includes("out of credit") ||
-      errMessage.toLowerCase().includes("insufficient credit")
-    ) {
-      console.error(`[APIFY-COST-GUARD] Fatal billing/quota error: ${errMessage}`);
+    // Check minimum cost per run error (e.g. single-profile run where effective cap < actor min $0.0026)
+    const isMinCostError =
+      errMessage.toLowerCase().includes("maximum cost per run is less than the allowed minimum") ||
+      errMessage.toLowerCase().includes("cost per run is less than the allowed minimum");
+
+    if (isMinCostError) {
+      const batchSize = Array.isArray(input.usernames)
+        ? input.usernames.length
+        : Array.isArray(input.directUrls)
+          ? input.directUrls.length
+          : 1;
+      const technicalMinCharge = Math.max(0.10, 0.05 * batchSize);
+      console.log(
+        `[APIFY-COST-GUARD] Minimum cost per run requirement met by actor. Retrying ONCE with explicit technical minimum maxTotalChargeUsd=$${technicalMinCharge.toFixed(2)} (technical minimum, not budget cap)`,
+      );
+      try {
+        const retryCallOptions: Record<string, unknown> = {
+          ...callOptions,
+          maxTotalChargeUsd: technicalMinCharge,
+        };
+        run = await client.actor(actorId).call(input, retryCallOptions);
+      } catch (retryError: unknown) {
+        const retryMsg = retryError instanceof Error ? retryError.message : String(retryError);
+        throw new ProviderError(
+          "apify",
+          "runActorSafely",
+          `Apify actor execution failed on min-cost retry: ${retryMsg}`,
+          { code: classifyApifyProviderError(retryError) ?? "actor_failed" },
+        );
+      }
+    } else {
+      // Check fatal quota/auth/billing errors: NEVER RETRY
+      if (
+        statusCode === 401 ||
+        statusCode === 403 ||
+        errMessage.toLowerCase().includes("monthly usage") ||
+        errMessage.toLowerCase().includes("hard limit") ||
+        errMessage.toLowerCase().includes("usage limit") ||
+        errMessage.toLowerCase().includes("platform-feature-disabled") ||
+        errMessage.toLowerCase().includes("out of credit") ||
+        errMessage.toLowerCase().includes("insufficient credit")
+      ) {
+        console.error(`[APIFY-COST-GUARD] Fatal billing/quota error: ${errMessage}`);
+        throw new ProviderError(
+          "apify",
+          "runActorSafely",
+          `Apify quota/billing limit reached: ${errMessage}`,
+          { code: "quota_exceeded" },
+        );
+      }
+
+      // Stop rules: NEVER retry on timeout
       throw new ProviderError(
         "apify",
         "runActorSafely",
-        `Apify quota/billing limit reached: ${errMessage}`,
-        { code: "quota_exceeded" },
+        `Apify actor execution failed: ${errMessage}`,
+        { code: classifyApifyProviderError(error) ?? "actor_failed" },
       );
     }
-
-    // Stop rules: NEVER retry on timeout
-    throw new ProviderError(
-      "apify",
-      "runActorSafely",
-      `Apify actor execution failed: ${errMessage}`,
-      { code: classifyApifyProviderError(error) ?? "actor_failed" },
-    );
   }
 
   // 7. Polling and Abort Handling

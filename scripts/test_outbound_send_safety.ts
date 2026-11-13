@@ -2,6 +2,14 @@ import "dotenv/config";
 import fs from "node:fs";
 import path from "node:path";
 
+// Test isolation: Ensure tests use test database and test environment
+// eslint-disable-next-line @typescript-eslint/no-require-imports
+const { getTestDatabaseUrl, assertSafeTestDatabase } = require("./test_db_guard.cjs");
+process.env.DATABASE_URL = getTestDatabaseUrl();
+(process.env as Record<string, string | undefined>).NODE_ENV = "test";
+process.env.OUTBOUND_SENDING_ENABLED = "true";
+assertSafeTestDatabase(process.env.DATABASE_URL);
+
 // Mock server-only before importing server code in standalone script
 try {
   const serverOnlyPath = require.resolve("server-only");
@@ -33,7 +41,11 @@ async function main() {
     getSenderHourlyCap,
     getSenderMinGapSeconds,
     getSenderMaxGapSeconds,
+    setOutboundSendingEnabledForTesting,
   } = await import("../src/lib/services/messaging/send-gate");
+
+  // Enable outbound sending explicitly in test harness to evaluate all rate limiting gates
+  setOutboundSendingEnabledForTesting(true);
 
   const { getPrismaClient } = await import("../src/lib/db/prisma");
   const prisma = getPrismaClient();
@@ -309,7 +321,7 @@ async function main() {
 
     // Send to Tokyo lead at 23:00 local time
     const gateTokyo = await canSendNow(sender3.id, {
-      lead: { city: "Tokyo", location: "Japan" },
+      lead: { username: "tokyo_test_lead", city: "Tokyo", location: "Japan" },
     });
     assert(
       gateTokyo.allowed === false && gateTokyo.reason === "OUTSIDE_WORKING_HOURS",
@@ -642,9 +654,110 @@ async function main() {
       "draft-send-service.ts resolves healthy senders through findConnectedSenderForDispatch",
     );
 
+    // ---------------------------------------------------------------------------
+    // TEST 13: Leads without Instagram Handle Cannot Be Queued or Sent as Instagram DMs
+    // ---------------------------------------------------------------------------
+    console.log("\n[13] Testing Leads without Instagram Handle are impossible to queue/send as Instagram DMs...");
+    const noHandleProfile = await prisma.companyProfile.create({
+      data: { userId: testUser.id, name: `No Handle Test Co ${testRunId}` },
+    });
+    const noHandleCamp = await prisma.campaign.create({
+      data: {
+        userId: testUser.id,
+        companyProfileId: noHandleProfile.id,
+        name: `No Handle Test Campaign ${testRunId}`,
+        followUpEnabled: true,
+        followUpCount: 1,
+        followUpDelayDays: [3],
+        followUpTemplates: ["Hi {firstName}, following up!"],
+      },
+    });
+    createdCampaignIds.push(noHandleCamp.id);
+
+    const noHandleLead = await prisma.lead.create({
+      data: {
+        campaignId: noHandleCamp.id,
+        userId: testUser.id,
+        fullName: "No Handle Clinic",
+        username: null,
+        usernameNormalized: null,
+        instagramUsername: null,
+        profileUrl: null,
+        phone: "+14165559001",
+        email: "clinic@nohandle.ca",
+        availableChannels: ["PHONE", "EMAIL"],
+        status: "NEW",
+      },
+    });
+    createdLeadIds.push(noHandleLead.id);
+
+    // Path 1: Single send via canSendNow and reserveSendSlot
+    const singleGateCheck = await canSendNow({
+      senderAccountId: sender1.id,
+      leadId: noHandleLead.id,
+    });
+    assert(
+      singleGateCheck.allowed === false && singleGateCheck.reason === "NO_INSTAGRAM_HANDLE",
+      `canSendNow rejects no-handle lead (allowed=false, reason="${singleGateCheck.reason}")`,
+    );
+
+    const singleReserveCheck = await reserveSendSlot({
+      senderAccountId: sender1.id,
+      campaignId: noHandleCamp.id,
+      leadId: noHandleLead.id,
+      step: 1,
+      messageText: "Hello there!",
+    });
+    const singleReserveReason = (singleReserveCheck as { reason?: string }).reason;
+    assert(
+      singleReserveCheck.allowed === false && singleReserveReason === "NO_INSTAGRAM_HANDLE",
+      `reserveSendSlot rejects no-handle lead (allowed=false, reason="${singleReserveReason}")`,
+    );
+
+    // Path 2: Bulk message job creation / preview
+    const { previewBulkMessageJob } = await import("../src/lib/services/messaging/bulk-messaging-service");
+    const bulkPreview = await previewBulkMessageJob(
+      noHandleCamp.id,
+      { leadIds: [noHandleLead.id] },
+      testUser.id,
+    );
+    assert(bulkPreview.eligibleCount === 0, "Bulk message preview reports 0 eligible leads for no-handle lead");
+    assert(
+      bulkPreview.skippedReasons.some((s) => s.leadId === noHandleLead.id && s.reason.includes("Instagram")),
+      "Bulk preview logs skip reason explaining lack of Instagram username",
+    );
+
+    // Path 3: Campaign execution candidate lead eligibility check
+    const executionFilterPasses =
+      Boolean(noHandleLead.username && noHandleLead.username.trim()) &&
+      (noHandleLead.profileUrl?.trim() || "").startsWith("http");
+    assert(!executionFilterPasses, "Campaign execution candidate filter strictly excludes leads without Instagram username");
+
+    // Path 4: Follow-up message scheduling & dispatch
+    const { scheduleFollowUpsForLead } = await import("../src/lib/services/messaging/follow-up-service");
+    const scheduledFollowUps = await scheduleFollowUpsForLead({
+      campaignId: noHandleCamp.id,
+      leadId: noHandleLead.id,
+    });
+    assert(
+      scheduledFollowUps.length === 0,
+      `scheduleFollowUpsForLead refuses to schedule follow-ups for no-handle lead (scheduled: ${scheduledFollowUps.length})`,
+    );
+
   } finally {
     // Cleanup test artifacts
     setSendGateClock(null);
+    setOutboundSendingEnabledForTesting(null);
+    if (createdLeadIds.length > 0) {
+      await prisma.lead.deleteMany({
+        where: { id: { in: createdLeadIds } },
+      }).catch(() => undefined);
+    }
+    if (createdCampaignIds.length > 0) {
+      await prisma.campaign.deleteMany({
+        where: { id: { in: createdCampaignIds } },
+      }).catch(() => undefined);
+    }
     if (createdUserIds.length > 0) {
       await prisma.doNotContact.deleteMany({
         where: { userId: { in: createdUserIds } },

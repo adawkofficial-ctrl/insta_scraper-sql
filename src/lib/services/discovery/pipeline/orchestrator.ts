@@ -35,7 +35,12 @@ import { profileEnrichmentStage } from "./stages/profile-enrichment";
 import { criteriaAndScoreStage } from "./stages/criteria-and-score";
 import { finalGateStage } from "./stages/final-gate";
 import { persistStage } from "./stages/persist";
-import type { DiscoveryDependencies, PipelineStageContext, StageFunnelReport } from "./types";
+import {
+  persistDiscoveredPlace,
+  updateCandidateHandleResult,
+  saveLeadAsEnrichPending,
+} from "../candidate-persistence";
+import type { DiscoveryDependencies, PipelineStageContext, StageFunnelReport, StageResult } from "./types";
 
 export async function orchestrateDiscovery(
   request: DiscoveryRequest,
@@ -194,6 +199,8 @@ export async function orchestrateDiscovery(
   let totalSpendUsd = 0;
   let totalPersisted = 0;
   const persistedProfiles: LeadProfile[] = [];
+  let igReadyCount = 0;
+  let contactOnlyCount = 0;
   const skipCounts = createEmptySkipCounts();
   let stopReason = "completed";
   const startJobTime = Date.now();
@@ -233,6 +240,35 @@ export async function orchestrateDiscovery(
     funnelReport.placesFound = fetchResult.survivors.length;
     logStageObservability(job.id, "fetchPlaces", { in: 1, out: fetchResult.survivors.length }, fetchResult.spendUsd, fetchResult.durationMs, []);
 
+    // PERSIST FIRST: Immediately write every place to DB as Candidate (status DISCOVERED)
+    for (const c of fetchResult.survivors) {
+      const pid = c.gmapsPlaceId || c.url || c.fullName;
+      if (pid) {
+        await persistDiscoveredPlace(
+          campaign.id,
+          job.id,
+          {
+            placeId: pid,
+            name: c.fullName || "Unknown",
+            category: c.gmapsCategory || c.category,
+            address: c.gmapsAddress,
+            city: c.gmapsCity || c.city,
+            countryCode: c.gmapsCountry,
+            phone: c.phone,
+            website: c.website || c.externalUrl,
+            rating: c.gmapsRating ?? c.rating,
+            reviewsCount: c.gmapsReviews ?? c.reviewCount,
+            mapsUrl: c.gmapsUrl || c.url,
+            rawPlaceData: c as unknown as Record<string, unknown>,
+          },
+          {
+            runId: job.id,
+            costUsd: fetchResult.spendUsd,
+          },
+        );
+      }
+    }
+
     // Check cancellation or budget
     if (totalSpendUsd > 10.0) {
       stopReason = "budget_cap_reached";
@@ -265,6 +301,43 @@ export async function orchestrateDiscovery(
     funnelReport.rejectionsByStage.handleDiscovery = handleResult.counters;
     logStageObservability(job.id, "handleDiscovery", { in: mapsGateResult.survivors.length, out: routing.igCandidates.length + routing.multiChannelCandidates.length }, 0, handleResult.durationMs, handleResult.rejected);
 
+    // STEP 2: Candidates with valid handles become Leads immediately with status ENRICH_PENDING
+    for (const c of routing.igCandidates) {
+      const pid = c.gmapsPlaceId || c.url || c.fullName;
+      if (pid && c.username) {
+        await saveLeadAsEnrichPending({
+          campaignId: campaign.id,
+          scrapeJobId: job.id,
+          userId,
+          placeId: pid,
+          name: c.fullName || "Unknown",
+          handle: c.username,
+          website: c.website || c.externalUrl,
+          phone: c.phone,
+          city: c.gmapsCity || c.city,
+          rating: c.gmapsRating ?? c.rating,
+          reviewsCount: c.gmapsReviews ?? c.reviewCount,
+          handleSource: c.handleSource,
+          handleConfidence: c.handleConfidence,
+          isDryRun: context.isDryRun,
+        });
+      }
+    }
+
+    // Candidates without handles: marked NO_IG_HANDLE
+    for (const c of routing.multiChannelCandidates) {
+      const pid = c.gmapsPlaceId || c.url || c.fullName;
+      if (pid) {
+        await updateCandidateHandleResult(campaign.id, pid, {
+          status: "NO_IG_HANDLE",
+          handle: null,
+          handleSource: c.handleSource,
+          handleConfidence: c.handleConfidence,
+          socialLinks: c.socialLinks as Record<string, unknown> | null,
+        });
+      }
+    }
+
     // Stage 7: profileEnrichment (lazy)
     const candidateMetaMap = new Map<string, DiscoveredProfile>();
     for (const c of routing.igCandidates) {
@@ -272,11 +345,29 @@ export async function orchestrateDiscovery(
     }
     const igUsernames = routing.igCandidates.map((c) => c.username!).filter(Boolean);
 
-    const enrichResult = await profileEnrichmentStage(
-      { usernames: igUsernames, candidateMetaByUsername: candidateMetaMap },
-      context,
-      deps,
-    );
+    let enrichResult: StageResult<LeadProfile>;
+    try {
+      enrichResult = await profileEnrichmentStage(
+        { usernames: igUsernames, candidateMetaByUsername: candidateMetaMap },
+        context,
+        deps,
+      );
+    } catch (enrichErr: unknown) {
+      const enrichMsg = enrichErr instanceof Error ? enrichErr.message : String(enrichErr);
+      console.warn(`[DISCOVERY-PIPELINE] Profile enrichment stage failed: ${enrichMsg}. Leads preserved as ENRICH_PENDING.`);
+      enrichResult = {
+        survivors: [],
+        rejected: igUsernames.map((u) => ({
+          id: u,
+          reason: "ENRICHMENT_FAILED",
+          detail: enrichMsg,
+          gate: "profileEnrichment",
+        })),
+        spendUsd: 0,
+        counters: { failed: igUsernames.length },
+        durationMs: 0,
+      };
+    }
     totalSpendUsd += enrichResult.spendUsd;
     funnelReport.profilesEnriched = enrichResult.survivors.length;
     funnelReport.rejectionsByStage.profileEnrichment = enrichResult.counters;
@@ -351,8 +442,8 @@ export async function orchestrateDiscovery(
       examples: data.examples,
     }));
 
-    const igReadyCount = persistedProfiles.filter((p) => Boolean(p.username)).length;
-    const contactOnlyCount = persistedProfiles.filter((p) => !p.username).length;
+    igReadyCount = persistedProfiles.filter((p) => Boolean(p.username)).length;
+    contactOnlyCount = persistedProfiles.filter((p) => !p.username).length;
     const duplicateRejections = (skipExamplesMap.get("DUPLICATE")?.count || 0) +
       (persistResult.counters.softDuplicates || 0) +
       (persistResult.counters.hardDuplicates || 0);
@@ -374,8 +465,8 @@ export async function orchestrateDiscovery(
           totalUsd: totalSpendUsd,
           stopReason,
           summaryHeadline,
-          igReadyCount,
-          contactOnlyCount,
+          igReadyCount: persistedProfiles.filter((p) => Boolean(p.username)).length,
+          contactOnlyCount: persistedProfiles.filter((p) => !p.username).length,
           rejectedCount: nonDuplicateRejections,
           duplicatesCount: duplicateRejections,
           skipTable,
@@ -412,10 +503,13 @@ export async function orchestrateDiscovery(
   } catch (err: unknown) {
     // Stage failure handling: keep already saved leads and record spend
     const safeMessage = err instanceof Error ? err.message.slice(0, 200) : String(err).slice(0, 200);
+    const hasPaidPlaces = (funnelReport.placesFound ?? 0) > 0 || totalSpendUsd > 0;
+    const finalStatus = hasPaidPlaces ? ScrapeJobStatus.COMPLETED_WITH_WARNINGS : ScrapeJobStatus.FAILED;
+
     await prisma.scrapeJob.update({
       where: { id: job.id },
       data: {
-        status: ScrapeJobStatus.FAILED,
+        status: finalStatus,
         completedAt: new Date(),
         errorMessage: safeMessage,
         usage: {
@@ -426,6 +520,35 @@ export async function orchestrateDiscovery(
         } as unknown as Prisma.InputJsonValue,
       },
     });
+
+    if (hasPaidPlaces) {
+      return {
+        campaignId: campaign.id,
+        scrapeJobId: job.id,
+        discoveryActor,
+        enrichmentActor: getActiveEnrichmentActorId(),
+        requestedLimit: request.maxLeads,
+        existingLeads: existingLeadCount,
+        candidatesDiscovered: funnelReport.placesFound,
+        candidatesEnriched: funnelReport.profilesEnriched,
+        existingSkipped: 0,
+        skipped: sumSkipCounts(skipCounts),
+        persisted: totalPersisted,
+        remainingCapacity: Math.max(0, request.maxLeads - (existingLeadCount + totalPersisted)),
+        notice: `Job completed with warnings: ${safeMessage}. Paid discovery results preserved.`,
+        skipCounts,
+        profiles: persistedProfiles,
+        apifyCostUsd: totalSpendUsd,
+        usageSummary: {
+          summaryHeadline: `Completed with warnings: ${safeMessage}`,
+          igReadyCount,
+          contactOnlyCount,
+          rejectedCount: 0,
+          duplicatesCount: 0,
+          skipTable: [],
+        },
+      };
+    }
     throw err;
   }
 }

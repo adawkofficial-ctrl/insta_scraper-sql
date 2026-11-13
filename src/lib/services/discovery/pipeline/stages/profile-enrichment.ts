@@ -111,30 +111,44 @@ export async function profileEnrichmentStage(
       enrichedProfiles.push(...live);
       counters.liveEnriched += live.length;
     } else {
-      const enrichment = await scrapeInstagramProfiles(
-        uncachedUsernames,
-        uncachedUsernames.length,
-        {
-          campaignId: context.campaign.id,
-          userId: context.userId,
-        },
-      );
-      if (enrichment.usageTotalUsd) {
-        spendUsd += enrichment.usageTotalUsd;
-      }
-      enrichedProfiles.push(...enrichment.profiles);
-      counters.liveEnriched += enrichment.profiles.length;
-      counters.failed += enrichment.skipped.length;
+      try {
+        const enrichment = await scrapeInstagramProfiles(
+          uncachedUsernames,
+          uncachedUsernames.length,
+          {
+            campaignId: context.campaign.id,
+            userId: context.userId,
+          },
+        );
+        if (enrichment.usageTotalUsd) {
+          spendUsd += enrichment.usageTotalUsd;
+        }
+        enrichedProfiles.push(...enrichment.profiles);
+        counters.liveEnriched += enrichment.profiles.length;
+        counters.failed += enrichment.skipped.length;
 
-      for (const skipped of enrichment.skipped) {
-        const u = typeof skipped === "string" ? skipped : skipped.username;
-        const detail = typeof skipped === "object" && skipped.reason ? skipped.reason : "Profile scraper was unable to retrieve profile details";
-        rejected.push({
-          id: u,
-          reason: "ENRICHMENT_FAILED",
-          detail,
-          gate: "profileEnrichment",
-        });
+        for (const skipped of enrichment.skipped) {
+          const u = typeof skipped === "string" ? skipped : skipped.username;
+          const detail = typeof skipped === "object" && skipped.reason ? skipped.reason : "Profile scraper was unable to retrieve profile details";
+          rejected.push({
+            id: u,
+            reason: "ENRICHMENT_FAILED",
+            detail,
+            gate: "profileEnrichment",
+          });
+        }
+      } catch (err: unknown) {
+        const errMsg = err instanceof Error ? err.message : String(err);
+        console.warn(`[PROFILE-ENRICHMENT] Profile scraper failed for batch: ${errMsg}. Preserving leads as ENRICH_PENDING.`);
+        counters.failed += uncachedUsernames.length;
+        for (const u of uncachedUsernames) {
+          rejected.push({
+            id: u,
+            reason: "ENRICHMENT_FAILED",
+            detail: errMsg,
+            gate: "profileEnrichment",
+          });
+        }
       }
     }
   }

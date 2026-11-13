@@ -17,6 +17,9 @@
 
 // Preload server-only mock before any server module is loaded
 import "dotenv/config";
+// Test doubles (Apify mock) are only honored when NODE_ENV=test. Set it here so
+// running this file directly can never hit the live Apify API.
+(process.env as Record<string, string | undefined>).NODE_ENV = "test";
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const { getTestDatabaseUrl } = require("./test_db_guard.cjs");
 process.env.DATABASE_URL = getTestDatabaseUrl();
@@ -315,6 +318,91 @@ async function runTests() {
     check(
       result.noInstagramCount === 2,
       `noInstagramCount is 2 (got ${result.noInstagramCount})`,
+    );
+  }
+
+  console.log("\n=== C2. COUNTRY-LEVEL LOCATION USES THE PLANNED CITY FALLBACK ===");
+  {
+    let actorCalls = 0;
+    const mockClient = {
+      actor: () => ({
+        call: async () => {
+          actorCalls++;
+          return {
+            id: `run-country-${actorCalls}`,
+            status: "SUCCEEDED",
+            defaultDatasetId: `dataset-country-${actorCalls}`,
+            usageTotalUsd: 0.01,
+            stats: { computeUnits: 0.01 },
+          };
+        },
+      }),
+      run: () => ({
+        waitForFinish: async () => ({
+          id: "run-country",
+          status: "SUCCEEDED",
+          defaultDatasetId: "dataset-country",
+          usageTotalUsd: 0.01,
+          stats: { computeUnits: 0.01 },
+        }),
+      }),
+      dataset: () => ({
+        listItems: async () => ({
+          items: [
+            {
+              title: "Canada Wide Dental",
+              address: "100 King St W, Toronto, ON",
+              city: "Toronto",
+              state: "ON",
+              countryCode: "CA",
+              categoryName: "Dentist",
+              phone: "+1 416-555-0199",
+              website: "https://canadawidedental.ca",
+              totalScore: 4.7,
+              reviewsCount: 80,
+              socialMediaProfiles: {
+                instagram: "https://www.instagram.com/canadawidedental/",
+              },
+            },
+          ],
+        }),
+      }),
+    };
+
+    setApifyClientForTesting(mockClient as any);
+    const provider = new GoogleMapsDiscoveryProvider();
+    const result = await provider.discover({
+      query: "dental clinic",
+      limit: 10,
+      location: "Canada",
+    });
+
+    check(
+      result.stopReason !== "country_level_requires_cities",
+      "Country-level location does not stop before paid calls",
+      `stopReason=${result.stopReason}`,
+    );
+    check(
+      actorCalls > 0,
+      `Country-level location executes the planned city search (actor calls=${actorCalls})`,
+    );
+    check(
+      (result.executedQueries ?? []).length === 1 &&
+        (result.executedQueries ?? [])[0]?.includes("Toronto"),
+      "Country fallback runs the first planned city only (no 5-city fanout)",
+      JSON.stringify(result.executedQueries),
+    );
+    check(
+      result.candidates.length > 0,
+      `Country fallback returns candidates (got ${result.candidates.length})`,
+      JSON.stringify(result.candidates.map((c) => c.username)),
+    );
+    check(
+      typeof result.notice === "string" &&
+        result.notice.includes("Canada") &&
+        result.notice.includes("Searching planned city"),
+      "Country fallback result carries the planned-city notice",
+      String(result.notice),
     );
   }
 
@@ -792,6 +880,36 @@ async function runTests() {
       ),
       "Notice shows funnel and duplicates reason when all handles were duplicates",
       noticeAllDuplicates || undefined,
+    );
+
+    // Case 4: Country-level requirement is preserved with the provider's
+    // actionable notice instead of being rewritten to all_keywords_exhausted.
+    const countryNotice =
+      'Location "Canada" is a country or province. Please choose specific target cities in the campaign settings (suggested: Toronto, ON, Vancouver, BC).';
+    const noticeCountry = buildDiscoveryNotice({
+      persisted: 0,
+      requested: 20,
+      existingLeads: 13,
+      discovered: 0,
+      existingSkipped: 0,
+      enrichSkipped: 0,
+      remainingCapacity: 7,
+      stopReason: "country_level_requires_cities",
+      providerNotice: countryNotice,
+      gmapsPlacesFound: 0,
+      gmapsWithWebsite: 0,
+      gmapsWithInstagram: 0,
+      gmapsDuplicatesSkipped: 0,
+    });
+
+    check(
+      Boolean(
+        noticeCountry?.includes(countryNotice) &&
+          noticeCountry?.includes("No paid Google Maps calls were made") &&
+          !noticeCountry?.includes("all_keywords_exhausted"),
+      ),
+      "Country-level stop reason keeps its actionable notice (not all_keywords_exhausted)",
+      noticeCountry || undefined,
     );
   }
 

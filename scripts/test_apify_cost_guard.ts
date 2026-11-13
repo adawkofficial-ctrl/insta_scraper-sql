@@ -14,6 +14,11 @@
 
 import "./preload_server_only.cjs";
 import "dotenv/config";
+// Test doubles (Apify mock) are only honored when NODE_ENV=test.
+(process.env as Record<string, string | undefined>).NODE_ENV = "test";
+// Keep budget guards active so a misconfigured direct run fails before any
+// live actor call instead of silently spending money.
+process.env.APIFY_COST_LIMITS_ENABLED = "true";
 import fs from "node:fs";
 import path from "node:path";
 import {

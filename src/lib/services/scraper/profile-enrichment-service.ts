@@ -1,7 +1,7 @@
 import "server-only";
 
 import { getPrismaClient } from "@/lib/db/prisma";
-import { Prisma } from "@/generated/prisma/client";
+import { LeadStatus, Prisma } from "@/generated/prisma/client";
 import { BadRequestError, NotFoundError } from "@/lib/errors";
 import {
   normalizeInstagramProfileItem,
@@ -14,9 +14,11 @@ import {
   getMonthlyApifyBudgetRemaining,
 } from "./apify-cost-guard";
 import { findMatchedNegativeKeyword } from "../discovery/negative-keywords";
-import { runHandleDiscoveryWaterfall } from "../discovery/handle-discovery-waterfall";
-import { checkNameWebsiteMismatch } from "../discovery/name-website-matcher";
-import { computeLeadScore } from "../discovery/lead-quality-score";
+import { resolveCountryCode } from "../discovery/country-cities";
+import {
+  scrapeLeadWebsite,
+  applyWebsiteEnrichmentToLead,
+} from "../enrichment/website-lead-enricher";
 import type { LeadProfile } from "@/lib/types";
 
 export type EnrichLeadsInput = {
@@ -56,6 +58,8 @@ export const HANDLE_ENRICHMENT_COOLDOWN_DAYS = 7;
 export async function enrichLeadHandleWaterfall(
   lead: {
     id: string;
+    username?: string | null;
+    instagramUsername?: string | null;
     fullName?: string | null;
     website?: string | null;
     lastHandleEnrichmentAt?: Date | string | null;
@@ -65,18 +69,27 @@ export async function enrichLeadHandleWaterfall(
     isChain?: boolean | null;
     email?: string | null;
     phone?: string | null;
+    city?: string | null;
     availableChannels?: string[] | null;
     scoreFlags?: string[] | null;
+    rawProfileData?: unknown;
+    handleSource?: string | null;
+    handleConfidence?: string | null;
+    status?: LeadStatus;
+    campaign?: { location?: string | null; userId?: string } | null;
   },
   prismaClient?: ReturnType<typeof getPrismaClient>,
+  options?: { force?: boolean },
 ): Promise<{
   outcome: "found" | "not_found" | "cooldown" | "no_website";
   handle: string | null;
   handleSource: string | null;
   handleConfidence: string | null;
   message: string;
+  pagesTried?: number;
+  socialsFound?: string[];
 }> {
-  const prisma = prismaClient ?? getPrismaClient();
+  void prismaClient;
 
   if (!lead.website || !lead.website.trim()) {
     return {
@@ -88,8 +101,8 @@ export async function enrichLeadHandleWaterfall(
     };
   }
 
-  // 7-day cooldown check
-  if (lead.lastHandleEnrichmentAt) {
+  // 7-day cooldown check (explicit per-lead button can force a fresh scrape)
+  if (lead.lastHandleEnrichmentAt && !options?.force) {
     const lastAt = new Date(lead.lastHandleEnrichmentAt).getTime();
     const elapsedMs = Date.now() - lastAt;
     const cooldownMs = HANDLE_ENRICHMENT_COOLDOWN_DAYS * 24 * 60 * 60 * 1000;
@@ -105,88 +118,58 @@ export async function enrichLeadHandleWaterfall(
     }
   }
 
-  // Run handle discovery waterfall
-  const waterfallRes = await runHandleDiscoveryWaterfall({
+  // Free website scraper: homepage + up to 4 same-domain pages. Extracts
+  // Instagram, other socials, emails, and phones. Never overwrites an existing
+  // handle; it only fills missing channels.
+  const extraction = await scrapeLeadWebsite({
+    website: lead.website,
     businessName: lead.fullName,
-    websiteUrl: lead.website,
+    countryCode: resolveCountryCodeForLead(lead),
   });
+  const applied = await applyWebsiteEnrichmentToLead(
+    {
+      ...lead,
+      campaign: (lead as { campaign?: { location?: string | null } | null }).campaign,
+      status: lead.status,
+    } as Parameters<typeof applyWebsiteEnrichmentToLead>[0],
+    extraction,
+  );
 
-  const now = new Date();
-
-  if (waterfallRes.handle) {
-    const mismatch = checkNameWebsiteMismatch({
-      businessName: lead.fullName,
-      websiteUrl: lead.website,
-      homepageTitle: waterfallRes.homepageTitle,
-      homepageH1: waterfallRes.homepageH1,
-      ogSiteName: waterfallRes.ogSiteName,
-      homepageHtml: waterfallRes.homepageHtml,
-    });
-    let confidence = waterfallRes.handleConfidence ?? "high";
-    const flags = [...(lead.scoreFlags ?? [])];
-    if (mismatch.isMismatch) {
-      if (!flags.includes("NAME_WEBSITE_MISMATCH")) flags.push("NAME_WEBSITE_MISMATCH");
-      // Mismatch lowers confidence only (to medium), NEVER discards the handle
-      if (confidence === "high") {
-        confidence = "medium";
-      }
-    }
-
-    const channels = Array.from(new Set([...(lead.availableChannels ?? []), "INSTAGRAM"]));
-    const newScore = computeLeadScore({
-      rating: lead.rating,
-      reviewCount: lead.reviewCount,
-      website: lead.website,
-      phone: lead.phone,
-      isClaimed: lead.isClaimed,
-      isChain: lead.isChain,
-      hasInstagram: true,
-      email: lead.email,
-      availableChannels: channels,
-      handleConfidence: confidence,
-      handleSource: waterfallRes.handleSource,
-      websiteMismatch: mismatch.isMismatch,
-    });
-
-    await prisma.lead.update({
-      where: { id: lead.id },
-      data: {
-        username: waterfallRes.handle,
-        usernameNormalized: waterfallRes.handle.toLowerCase(),
-        handleSource: waterfallRes.handleSource,
-        handleConfidence: confidence,
-        availableChannels: channels,
-        qualityScore: newScore.score,
-        qualityTier: newScore.tier,
-        scoreBreakdown: newScore.breakdown,
-        scoreFlags: newScore.flags,
-        lastHandleEnrichmentAt: now,
-      },
-    });
-
-    return {
-      outcome: "found",
-      handle: waterfallRes.handle,
-      handleSource: waterfallRes.handleSource,
-      handleConfidence: confidence,
-      message: `Handle found: @${waterfallRes.handle} (source: ${waterfallRes.handleSource}, confidence: ${confidence})`,
-    };
-  } else {
-    await prisma.lead.update({
-      where: { id: lead.id },
-      data: {
-        lastHandleEnrichmentAt: now,
-      },
-    });
-
+  const found = applied.handleStored || Boolean(applied.emailFound) || applied.socialsFound.length > 0;
+  if (!found) {
     return {
       outcome: "not_found",
       handle: null,
       handleSource: null,
       handleConfidence: null,
-      message: "No Instagram handle found across homepage, /contact, or link hubs.",
+      message: `No Instagram handle, email, or social link found across ${applied.pagesTried} page(s).`,
+      pagesTried: applied.pagesTried,
+      socialsFound: [],
     };
   }
+
+  const parts = [
+    applied.handleStored ? `IG @${applied.handleFound}` : null,
+    applied.emailFound ? `email ${applied.emailFound}` : null,
+    applied.socialsFound.length > 0 ? `${applied.socialsFound.length} social link(s)` : null,
+  ].filter(Boolean);
+
+  return {
+    outcome: "found",
+    handle: applied.handleStored ? applied.handleFound : lead.username ?? null,
+    handleSource: applied.handleStored ? "website" : lead.username ? "existing" : null,
+    handleConfidence: extraction.handleConfidence,
+    message: `Website enrichment found ${parts.join(", ")} across ${applied.pagesTried} page(s).`,
+    pagesTried: applied.pagesTried,
+    socialsFound: applied.socialsFound,
+  };
+}
+
+function resolveCountryCodeForLead(lead: {
+  campaign?: { location?: string | null } | null;
+}): string | undefined {
+  const location = lead.campaign?.location;
+  return location ? resolveCountryCode(location) ?? undefined : undefined;
 }
 
 /**
@@ -314,11 +297,13 @@ export async function enrichLeadsOnDemand(
       };
     }
 
+    const safetyMaxItems = Math.max(5, 2 * uncachedUsernames.length);
+
     const safeResult = await runActorSafely<Record<string, unknown>>(
       actorId,
       actorInput,
       {
-        maxItems: uncachedUsernames.length,
+        maxItems: safetyMaxItems,
         userId,
         campaignId: leads[0]?.campaignId,
         operationName:
