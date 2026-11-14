@@ -553,7 +553,7 @@ Phase 1 schema placeholders: 11 scalar-list fields are temporarily `Json?`/`Json
 - Typecheck: 0 errors.
 - Lint: 0 errors, 6 pre-existing warnings.
 - New tests: guard keys (including concurrent inserts + corrupted-row verification), strict truncation, DNC case/whitespace/accent variants — all pass.
-- Full MySQL suite: `57 PASS / 16 FAIL / 6 SKIPPED`, `2312 passed / 14 failed` before the final follow-up/task8 test fixes. Remaining failures are the Phase 3 raw-SQL list below plus one async execution-test race (`test_task8_execution_engine` pause/resume completed before the test call).
+- Full MySQL suite: `59 PASS / 14 FAIL / 0 BLOCKED / 6 SKIPPED`, `2274 passed / 12 failed`. All 14 failures are the Phase 3 raw-SQL list below; no other suite fails.
 
 ### Known Phase 3 failures (raw SQL only)
 
