@@ -517,6 +517,51 @@ Lint: 0 errors, 6 pre-existing warnings
 
 Phase 1 schema placeholders: 11 scalar-list fields are temporarily `Json?`/`Json` with `TODO(mysql-port): Phase 2`; `CompanyProfile.services` is nullable until the JSON-default decision; partial unique indexes are not in the baseline (Phase 2); `mode: "insensitive"` and raw SQL are untouched (Phase 3).
 
+## 8.2 Phase 2 status (implemented on `mysql-port`)
+
+### Decisions applied
+
+| Field | Final representation |
+|---|---|
+| `Lead.availableChannels` | boolean columns `hasInstagram`, `hasEmail`, `hasPhone`, `hasWebsite`, `hasOtherSocial`, indexed, synced by `withLeadChannelFlags()` / `leadChannelsFromFlags()` |
+| `Lead.scoreFlags` | child table `LeadScoreFlag(leadId, flag)`, unique `(leadId, flag)`, index `(flag)`; filters use `some: { flag: { in } }` |
+| `Lead.previousUsernames` | `Json` string[]; `parseLeadPreviousUsernames()` |
+| `Campaign.followUpDelayDays` | `Json` number[]; `parseCampaignFollowUpDelayDays()` |
+| `Campaign.followUpTemplates` | `Json` string[]; `parseCampaignFollowUpTemplates()` |
+| `Campaign.customNegativeKeywords` / `customPositiveKeywords` | `Json` string[]; `parseCampaignNegativeKeywords()` / `parseCampaignPositiveKeywords()` |
+| `CompanyProfile.targetIndustries` / `targetCountries` / `forbiddenClaims` / `services` | nullable `Json` string[]; typed accessors; `services` defaults to `[]` in code |
+| `NotificationConfig.eventTypes` | nullable `Json`; `parseNotificationEventTypes()` + app-side filtering |
+
+### Guard keys
+
+- `Lead.activeInstagramGuard = IF(duplicateOfLeadId IS NULL AND instagramUserId IS NOT NULL, instagramUserId, NULL)`
+- `Lead.activeUsernameGuard = IF(duplicateOfLeadId IS NULL AND usernameNormalized IS NOT NULL, usernameNormalized, NULL)`
+- `Lead.activeEmailGuard = IF(duplicateOfLeadId IS NULL AND emailNormalized IS NOT NULL, emailNormalized, NULL)`
+- Normal unique indexes on `(userId, active*Guard)`; NULL means not guarded.
+- Computed centrally by the Prisma client extension in `src/lib/db/prisma.ts` for create/createMany/update/updateMany/upsert.
+- `scripts/verify_guard_keys.ts` recomputes every row and exits non-zero on mismatch.
+
+### Migration policy
+
+- Baseline: `prisma/migrations/20261114000000_mysql_baseline` (generated from the final Phase 2 schema, applied to empty local dev/test DBs).
+- **From the first real deployment onward this baseline is NEVER edited. Only new migrations are added.**
+- Old Postgres migrations remain in `prisma/migrations-postgres/` (and `main` history).
+
+### Verified
+
+- `prisma validate`, `prisma generate`, `prisma migrate deploy`, `prisma migrate diff --exit-code`: clean (no drift).
+- Typecheck: 0 errors.
+- Lint: 0 errors, 6 pre-existing warnings.
+- New tests: guard keys (including concurrent inserts + corrupted-row verification), strict truncation, DNC case/whitespace/accent variants — all pass.
+- Full MySQL suite: `57 PASS / 16 FAIL / 6 SKIPPED`, `2312 passed / 14 failed` before the final follow-up/task8 test fixes. Remaining failures are the Phase 3 raw-SQL list below plus one async execution-test race (`test_task8_execution_engine` pause/resume completed before the test call).
+
+### Known Phase 3 failures (raw SQL only)
+
+| Suite | Exact error |
+|---|---|
+| `test_step3_sparior`, `test_task24_sparior_keyword_discovery`, `test_task_intent_and_continuation`, `test_discovery_runaway_guard`, `test_step4_dedup`, `test_discovery_pipeline_stages`, `test_discovery_fixes` | `P2010 ... This command is not supported in the prepared statement protocol yet` from dedup `SAVEPOINT` / `RELEASE SAVEPOINT` |
+| `test_step6_quality_approval`, `test_task18_instagram_sender`, `test_step9_reply_send`, `test_outbound_send_safety`, `test_e2e_full_pipeline`, `test_pre_pilot_safety`, `test_task11_errors` | `P2010 ... syntax ... near '"InstagramSenderAccount" WHERE id = ? FOR UPDATE'` from send-gate raw lock |
+
 ## 9. Open questions
 
 1. Confirm the exact Hostinger server version and whether it is **MySQL 8** or **MariaDB** (phpMyAdmin “Server version”).
