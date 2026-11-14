@@ -15,6 +15,7 @@ import {
 } from "./apify-cost-guard";
 import { findMatchedNegativeKeyword } from "../discovery/negative-keywords";
 import { resolveCountryCode } from "../discovery/country-cities";
+import { scoreFlagReplace, scoreFlagsFromRows } from "../lead/lead-channels";
 import {
   evaluateEnrichmentCriteria,
   DEFAULT_ENRICHMENT_CRITERIA,
@@ -128,7 +129,6 @@ export async function enrichLeadHandleWaterfall(
     phone?: string | null;
     city?: string | null;
     availableChannels?: string[] | null;
-    scoreFlags?: string[] | null;
     rawProfileData?: unknown;
     handleSource?: string | null;
     handleConfidence?: string | null;
@@ -264,6 +264,7 @@ export async function enrichLeadsOnDemand(
       campaign: {
         select: { id: true, userId: true, intent: true, category: true, location: true },
       },
+      scoreFlags: { select: { flag: true } },
     },
   });
 
@@ -485,7 +486,10 @@ export async function enrichLeadsOnDemand(
           category: profile.businessCategoryName || profile.category || lead.category,
           businessCategoryName: profile.businessCategoryName || lead.businessCategoryName,
           rawProfileData: updatedRawData as Prisma.InputJsonValue,
-          scoreFlags: Array.from(new Set([...(lead.scoreFlags ?? []), ...criteriaScoreFlags])),
+          scoreFlags: scoreFlagReplace([
+            ...scoreFlagsFromRows(lead.scoreFlags),
+            ...criteriaScoreFlags,
+          ]),
           scrapedAt: new Date(),
         },
       });

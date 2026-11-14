@@ -7,6 +7,7 @@ import {
   NotificationLogStatus,
 } from "@/generated/prisma/client";
 import { getNotificationMaxPerMinute } from "@/lib/env";
+import { parseNotificationEventTypes } from "../lead/json-lists";
 
 export { NotificationEventType, NotificationLogStatus };
 
@@ -144,7 +145,7 @@ export class NtfyNotifier {
         !config ||
         !config.enabled ||
         !config.ntfyTopic ||
-        !config.eventTypes.includes(eventType)
+        !parseNotificationEventTypes(config.eventTypes).includes(eventType)
       ) {
         await this.recordLog({
           userId,

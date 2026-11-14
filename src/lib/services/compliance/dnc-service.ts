@@ -32,9 +32,13 @@ export { DncChannel, DncIdentifierType, DncSource };
  * - Strips Instagram URL wrappers (e.g. "https://instagram.com/user", "instagram.com/user/")
  * - Strips trailing query parameters and slashes
  */
+function stripDiacritics(value: string): string {
+  return value.normalize("NFKD").replace(/[\u0300-\u036f]/g, "");
+}
+
 export function normalizeUsername(rawUsername: string): string {
   if (!rawUsername) return "";
-  let cleaned = rawUsername.trim().toLowerCase();
+  let cleaned = stripDiacritics(rawUsername.trim().toLowerCase());
 
   // Strip full or partial Instagram URLs
   cleaned = cleaned.replace(/^https?:\/\/(www\.)?instagram\.com\//i, "");
@@ -60,7 +64,7 @@ export function normalizeUsername(rawUsername: string): string {
  */
 export function normalizeEmail(rawEmail: string): string {
   if (!rawEmail) return "";
-  let cleaned = rawEmail.trim().toLowerCase();
+  let cleaned = stripDiacritics(rawEmail.trim().toLowerCase());
   cleaned = cleaned.replace(/^mailto:/i, "").trim();
 
   const atIndex = cleaned.lastIndexOf("@");
@@ -87,7 +91,7 @@ export function normalizeEmail(rawEmail: string): string {
  */
 export function normalizeDomain(rawDomain: string): string {
   if (!rawDomain) return "";
-  let cleaned = rawDomain.trim().toLowerCase();
+  let cleaned = stripDiacritics(rawDomain.trim().toLowerCase());
 
   // Strip protocol
   cleaned = cleaned.replace(/^https?:\/\//i, "");
@@ -827,7 +831,7 @@ export async function addDoNotContact(
       .filter((e) => e.type === DncIdentifierType.USERNAME)
       .map((e) => e.normalized);
     if (usernames.length > 0) {
-      leadOrConditions.push({ username: { in: usernames, mode: "insensitive" } });
+      leadOrConditions.push({ username: { in: usernames } });
     }
 
     const igIds = normalizedList
@@ -842,7 +846,7 @@ export async function addDoNotContact(
       .map((e) => e.normalized);
     if (emails.length > 0) {
       leadOrConditions.push(
-        { email: { in: emails, mode: "insensitive" } },
+        { email: { in: emails } },
         { emailNormalized: { in: emails } },
       );
     }
@@ -853,7 +857,7 @@ export async function addDoNotContact(
     if (domains.length > 0) {
       leadOrConditions.push(
         { websiteDomain: { in: domains } },
-        { website: { in: domains, mode: "insensitive" } },
+        { website: { in: domains } },
       );
     }
 
@@ -973,18 +977,18 @@ export async function removeDoNotContact(input: {
       };
 
       if (entry.identifierType === DncIdentifierType.USERNAME) {
-        filter.username = { equals: entry.identifierNormalized, mode: "insensitive" };
+        filter.username = { equals: entry.identifierNormalized };
       } else if (entry.identifierType === DncIdentifierType.INSTAGRAM_ID) {
         filter.instagramUserId = entry.identifierNormalized;
       } else if (entry.identifierType === DncIdentifierType.EMAIL) {
         filter.OR = [
-          { email: { equals: entry.identifierNormalized, mode: "insensitive" } },
+          { email: { equals: entry.identifierNormalized } },
           { emailNormalized: entry.identifierNormalized },
         ];
       } else if (entry.identifierType === DncIdentifierType.DOMAIN) {
         filter.OR = [
           { websiteDomain: entry.identifierNormalized },
-          { website: { contains: entry.identifierNormalized, mode: "insensitive" } },
+          { website: { contains: entry.identifierNormalized } },
         ];
       } else if (entry.identifierType === DncIdentifierType.PHONE) {
         filter.OR = [
@@ -1090,7 +1094,7 @@ export async function listDoNotContact(input: {
       ? {
           OR: [
             { identifierNormalized: { contains: search.trim().toLowerCase() } },
-            { reason: { contains: search.trim(), mode: "insensitive" } },
+            { reason: { contains: search.trim() } },
           ],
         }
       : {}),

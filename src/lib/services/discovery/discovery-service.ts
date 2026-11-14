@@ -41,6 +41,7 @@ import { checkManySuppression } from "../compliance/dnc-service";
 import { UsageProvider } from "@/generated/prisma/client";
 import type { DiscoveredProfile, DiscoveryProvider, DiscoveredCandidate, DiscoveryResult } from "./discovery-provider";
 import { computeAvailableChannels } from "../contact/contact-parser";
+import { parseCompanyTargetIndustries } from "../lead/json-lists";
 import {
   buildDiscoverySearchTerm,
   buildPerKeywordSearchQueries,
@@ -1543,7 +1544,7 @@ async function executeDiscoveryRun(params: ExecuteDiscoveryRunParams): Promise<D
               company: campaign.companyProfile
                 ? {
                     description: campaign.companyProfile.description,
-                    targetIndustries: campaign.companyProfile.targetIndustries,
+                    targetIndustries: parseCompanyTargetIndustries(campaign.companyProfile.targetIndustries),
                   }
                 : null,
             },
@@ -2153,7 +2154,7 @@ async function executeDiscoveryRun(params: ExecuteDiscoveryRunParams): Promise<D
               company: campaign.companyProfile
                 ? {
                     description: campaign.companyProfile.description,
-                    targetIndustries: campaign.companyProfile.targetIndustries,
+                    targetIndustries: parseCompanyTargetIndustries(campaign.companyProfile.targetIndustries),
                   }
                 : null,
             },

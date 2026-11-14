@@ -243,7 +243,7 @@ export async function sendSingleMessage(
   }
 
   // Multi-channel check: leads without an Instagram handle cannot be messaged via Instagram DM
-  if (!lead.username || !lead.username.trim() || (lead.availableChannels && lead.availableChannels.length > 0 && !lead.availableChannels.includes("INSTAGRAM"))) {
+  if (!lead.username || !lead.username.trim()) {
     throw new BadRequestError(
       "NO_INSTAGRAM_CHANNEL",
       "Lead does not have an Instagram handle and is not eligible for Instagram direct messaging.",

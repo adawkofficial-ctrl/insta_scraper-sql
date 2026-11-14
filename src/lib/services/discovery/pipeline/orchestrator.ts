@@ -6,6 +6,7 @@
  */
 
 import { getPrismaClient } from "@/lib/db/prisma";
+import { parseCompanyTargetIndustries } from "../../lead/json-lists";
 import { ScrapeJobStatus, Prisma } from "@/generated/prisma/client";
 import { ConflictError, NotFoundError } from "@/lib/errors";
 import type { LeadProfile } from "@/lib/types";
@@ -161,7 +162,10 @@ export async function orchestrateDiscovery(
       minRating: campaign.minRating,
       minReviews: campaign.minReviews,
       excludeChains: campaign.excludeChains,
-      companyProfile: campaign.companyProfile,
+      companyProfile: {
+        ...campaign.companyProfile,
+        targetIndustries: parseCompanyTargetIndustries(campaign.companyProfile.targetIndustries),
+      },
     },
     jobId: job.id,
     userId,

@@ -107,9 +107,9 @@ export async function listCampaignLeads(
     if (search.length > 0) {
       conditions.push({
         OR: [
-          { username: { contains: search, mode: "insensitive" } },
-          { fullName: { contains: search, mode: "insensitive" } },
-          { biography: { contains: search, mode: "insensitive" } },
+          { username: { contains: search } },
+          { fullName: { contains: search } },
+          { biography: { contains: search } },
         ],
       });
     }
@@ -121,8 +121,8 @@ export async function listCampaignLeads(
     if (category.length > 0) {
       conditions.push({
         OR: [
-          { category: { contains: category, mode: "insensitive" } },
-          { businessCategoryName: { contains: category, mode: "insensitive" } },
+          { category: { contains: category } },
+          { businessCategoryName: { contains: category } },
         ],
       });
     }
@@ -209,23 +209,13 @@ export async function listCampaignLeads(
     const trimmedChannel = rawChannel.trim().toLowerCase();
     if (trimmedChannel && trimmedChannel !== "all") {
       if (trimmedChannel === "has_instagram" || trimmedChannel === "with_instagram") {
-        conditions.push({
-          AND: [
-            { username: { not: null } },
-            { username: { not: "" } },
-          ],
-        });
+        conditions.push({ hasInstagram: true });
       } else if (trimmedChannel === "no_instagram" || trimmedChannel === "without_instagram") {
-        conditions.push({
-          OR: [
-            { username: null },
-            { username: "" },
-          ],
-        });
+        conditions.push({ hasInstagram: false });
       } else if (trimmedChannel === "has_email" || trimmedChannel === "email") {
         conditions.push({
           OR: [
-            { availableChannels: { has: "EMAIL" } },
+            { hasEmail: true },
             { email: { not: null } },
             { emailNormalized: { not: null } },
           ],
@@ -233,7 +223,7 @@ export async function listCampaignLeads(
       } else if (trimmedChannel === "has_phone" || trimmedChannel === "phone") {
         conditions.push({
           OR: [
-            { availableChannels: { has: "PHONE" } },
+            { hasPhone: true },
             { phone: { not: null } },
             { phoneNormalized: { not: null } },
           ],
@@ -241,7 +231,7 @@ export async function listCampaignLeads(
       } else if (trimmedChannel === "has_website" || trimmedChannel === "website") {
         conditions.push({
           OR: [
-            { availableChannels: { has: "WEBSITE" } },
+            { hasWebsite: true },
             { website: { not: null } },
             { websiteDomain: { not: null } },
           ],
@@ -254,12 +244,9 @@ export async function listCampaignLeads(
         // Contactable = has an Instagram handle, a website, or an email.
         conditions.push({
           OR: [
-            {
-              AND: [
-                { username: { not: null } },
-                { username: { not: "" } },
-              ],
-            },
+            { hasInstagram: true },
+            { hasWebsite: true },
+            { hasEmail: true },
             { website: { not: null } },
             { websiteDomain: { not: null } },
             { email: { not: null } },
@@ -269,17 +256,16 @@ export async function listCampaignLeads(
       } else if (trimmedChannel === "has_social" || trimmedChannel === "has_other_social" || trimmedChannel === "social") {
         conditions.push({
           OR: [
-            { availableChannels: { has: "SOCIAL" } },
+            { hasOtherSocial: true },
             { socialLink: { not: null } },
           ],
         });
       } else if (trimmedChannel === "instagram_only" || trimmedChannel === "instagram") {
         conditions.push({
           AND: [
-            { username: { not: null } },
-            { username: { not: "" } },
-            { OR: [{ email: null }, { email: "" }] },
-            { OR: [{ phone: null }, { phone: "" }] },
+            { hasInstagram: true },
+            { OR: [{ hasEmail: false }, { email: null }, { email: "" }] },
+            { OR: [{ hasPhone: false }, { phone: null }, { phone: "" }] },
           ],
         });
       } else {
@@ -303,7 +289,7 @@ export async function listCampaignLeads(
             { followersCount: { not: null } },
             {
               rawProfileData: {
-                path: ["enrichmentStatus"],
+                path: "$.enrichmentStatus",
                 equals: "ENRICHED",
               },
             },
@@ -312,7 +298,7 @@ export async function listCampaignLeads(
       } else if (trimmedEnrichment === "not_enriched") {
         conditions.push({
           OR: [
-            { rawProfileData: { path: ["enrichmentStatus"], equals: "NOT_ENRICHED" } },
+            { rawProfileData: { path: "$.enrichmentStatus", equals: "NOT_ENRICHED" } },
             {
               AND: [
                 { followersCount: null },
@@ -345,7 +331,7 @@ export async function listCampaignLeads(
       .map((f) => f.trim())
       .filter(Boolean);
     if (flags.length > 0) {
-      conditions.push({ scoreFlags: { hasSome: flags } });
+      conditions.push({ scoreFlags: { some: { flag: { in: flags } } } });
     }
   }
 

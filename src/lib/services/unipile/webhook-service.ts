@@ -523,7 +523,7 @@ export async function handleInboundMessageWebhook(
           ...(providerSenderId ? [{ instagramUserId: providerSenderId }] : []),
           ...(cleanUsername ? [{ usernameNormalized: cleanUsername }] : []),
           ...(cleanUsername
-            ? [{ username: { equals: cleanUsername, mode: "insensitive" as const } }]
+            ? [{ username: { equals: cleanUsername } }]
             : []),
         ],
       },

@@ -10,6 +10,10 @@ import {
 } from "@/generated/prisma/client";
 import { logger } from "@/lib/logger";
 import { checkLeadSuppression } from "../compliance";
+import {
+  parseCampaignFollowUpDelayDays,
+  parseCampaignFollowUpTemplates,
+} from "../lead/json-lists";
 import { addDoNotContact, DncIdentifierType } from "../compliance/dnc-service";
 import {
   canSendNow,
@@ -258,8 +262,9 @@ export async function scheduleFollowUpsForLead(input: {
   }
 
   const maxCount = Math.min(2, Math.max(1, campaign.followUpCount));
-  const delayDaysList = campaign.followUpDelayDays || [3, 5];
-  const templates = campaign.followUpTemplates || [];
+  const parsedDelayDays = parseCampaignFollowUpDelayDays(campaign.followUpDelayDays);
+  const delayDaysList = parsedDelayDays.length > 0 ? parsedDelayDays : [3, 5];
+  const templates = parseCampaignFollowUpTemplates(campaign.followUpTemplates);
 
   const results: FollowUpMessage[] = [];
   let previousRenderedText: string | null = null;

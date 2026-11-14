@@ -13,6 +13,7 @@ import {
 import { scrapeLeadWebsite } from "./website-lead-enricher";
 import { resolveCountryCode } from "../discovery/country-cities";
 import { getPrismaClient } from "@/lib/db/prisma";
+import { withLeadChannelFlags } from "../lead/lead-channels";
 import { Prisma } from "@/generated/prisma/client";
 import type { LeadProfile } from "@/lib/types";
 
@@ -823,7 +824,7 @@ export async function extractContactsForLeadsOnDemand(params: {
         website: targetWebsite,
         websiteDomain: targetDomain,
         contactSource,
-        availableChannels,
+        ...withLeadChannelFlags(availableChannels),
         rawProfileData: updatedRaw as Prisma.InputJsonValue,
       },
     });

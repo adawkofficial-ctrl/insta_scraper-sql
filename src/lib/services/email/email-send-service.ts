@@ -84,7 +84,7 @@ export async function sendEmailForLead(input: {
       city: true,
       website: true,
       groupKey: true,
-      availableChannels: true,
+      hasEmail: true,
       campaign: { select: { id: true, name: true, userId: true, companyProfile: { select: { name: true } } } },
     },
   });

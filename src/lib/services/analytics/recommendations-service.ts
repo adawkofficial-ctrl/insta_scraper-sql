@@ -3,6 +3,10 @@ import "server-only";
 import { getPrismaClient } from "@/lib/db/prisma";
 import { getCampaignOutcomeAnalytics } from "./outcome-analytics-service";
 import { logger } from "@/lib/logger";
+import {
+  parseCampaignNegativeKeywords,
+  parseCampaignPositiveKeywords,
+} from "../lead/json-lists";
 
 export type RecommendationType =
   | "SCALE_SEGMENT"
@@ -216,7 +220,7 @@ export async function applyCampaignRecommendation(
   const updatedFields: string[] = [];
 
   if (rec.actionPayload.customPositiveKeywords?.length) {
-    const existing = new Set(campaign.customPositiveKeywords || []);
+    const existing = new Set(parseCampaignPositiveKeywords(campaign.customPositiveKeywords));
     for (const kw of rec.actionPayload.customPositiveKeywords) {
       existing.add(kw);
     }
@@ -225,7 +229,7 @@ export async function applyCampaignRecommendation(
   }
 
   if (rec.actionPayload.customNegativeKeywords?.length) {
-    const existing = new Set(campaign.customNegativeKeywords || []);
+    const existing = new Set(parseCampaignNegativeKeywords(campaign.customNegativeKeywords));
     for (const kw of rec.actionPayload.customNegativeKeywords) {
       existing.add(kw);
     }

@@ -7,6 +7,7 @@ import {
 } from "@/generated/prisma/client";
 import { sendNotification } from "./ntfy-notifier";
 import { getNotificationHighScoreThreshold } from "@/lib/env";
+import { parseNotificationEventTypes } from "../lead/json-lists";
 
 export type PublicNotificationConfig = {
   id: string;
@@ -46,7 +47,7 @@ export async function getNotificationConfig(
     hasAccessToken: Boolean(config.ntfyAccessToken && config.ntfyAccessToken.trim().length > 0),
     maskedAccessToken: maskAccessToken(config.ntfyAccessToken),
     enabled: config.enabled,
-    eventTypes: config.eventTypes,
+    eventTypes: parseNotificationEventTypes(config.eventTypes),
     createdAt: config.createdAt,
     updatedAt: config.updatedAt,
   };
@@ -119,7 +120,7 @@ export async function upsertNotificationConfig(
     hasAccessToken: Boolean(saved.ntfyAccessToken && saved.ntfyAccessToken.trim().length > 0),
     maskedAccessToken: maskAccessToken(saved.ntfyAccessToken),
     enabled: saved.enabled,
-    eventTypes: saved.eventTypes,
+    eventTypes: parseNotificationEventTypes(saved.eventTypes),
     createdAt: saved.createdAt,
     updatedAt: saved.updatedAt,
   };

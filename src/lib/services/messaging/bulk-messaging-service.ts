@@ -1,4 +1,4 @@
-import { getPrismaClient } from "@/lib/db/prisma";
+﻿import { getPrismaClient } from "@/lib/db/prisma";
 import {
   BulkMessageJobStatus,
   BulkMessageItemStatus,
@@ -312,9 +312,9 @@ function buildLeadFilterConditions(
       const s = f.search.trim();
       conditions.push({
         OR: [
-          { username: { contains: s, mode: "insensitive" } },
-          { fullName: { contains: s, mode: "insensitive" } },
-          { biography: { contains: s, mode: "insensitive" } },
+          { username: { contains: s } },
+          { fullName: { contains: s } },
+          { biography: { contains: s } },
         ],
       });
     }
@@ -323,8 +323,8 @@ function buildLeadFilterConditions(
       const c = f.category.trim();
       conditions.push({
         OR: [
-          { category: { contains: c, mode: "insensitive" } },
-          { businessCategoryName: { contains: c, mode: "insensitive" } },
+          { category: { contains: c } },
+          { businessCategoryName: { contains: c } },
         ],
       });
     }
@@ -564,7 +564,7 @@ export async function previewBulkMessageJob(
   }
 
   for (const lead of rawLeads) {
-    if (!lead.username || !lead.username.trim() || (lead.availableChannels && lead.availableChannels.length > 0 && !lead.availableChannels.includes("INSTAGRAM"))) {
+    if (!lead.username || !lead.username.trim()) {
       skippedReasons.push({
         leadId: lead.id,
         username: lead.username ?? "",
@@ -834,7 +834,7 @@ export async function createBulkMessageJob(
   }
 
   for (const lead of rawLeads) {
-    if (!lead.username || !lead.username.trim() || (lead.availableChannels && lead.availableChannels.length > 0 && !lead.availableChannels.includes("INSTAGRAM"))) {
+    if (!lead.username || !lead.username.trim()) {
       skippedCount++;
       continue;
     }
@@ -2173,3 +2173,4 @@ export async function listCampaignBulkJobs(
 
   return Promise.all(jobs.map((j) => getBulkMessageJobStatus(j.id, userId)));
 }
+

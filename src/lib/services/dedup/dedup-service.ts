@@ -12,6 +12,8 @@ import {
   normalizeWebsite,
 } from "./identity";
 import { normalizePhone, computeAvailableChannels } from "../contact/contact-parser";
+import { withLeadChannelFlags } from "../lead/lead-channels";
+import { parseLeadPreviousUsernames } from "../lead/json-lists";
 import {
   detectSocialPlatform,
   cleanBusinessWebsite,
@@ -579,7 +581,11 @@ const EXISTING_ENRICH_SELECT = {
   phone: true,
   phoneNormalized: true,
   contactSource: true,
-  availableChannels: true,
+  hasInstagram: true,
+  hasEmail: true,
+  hasPhone: true,
+  hasWebsite: true,
+  hasOtherSocial: true,
 } as const;
 
 /**
@@ -660,17 +666,22 @@ export async function applyClassifiedProfiles(
       }
       const combinedEmail = (data.email as string | undefined) ?? existing.email;
       const combinedPhone = (data.phone as string | undefined) ?? existing.phone;
-      data.availableChannels = computeAvailableChannels({
-        hasInstagram: Boolean(
-          profile.username ||
-          profile.instagramUsername ||
-          existing.username ||
-          existing.instagramUserId,
+      Object.assign(
+        data,
+        withLeadChannelFlags(
+          computeAvailableChannels({
+            hasInstagram: Boolean(
+              profile.username ||
+              profile.instagramUsername ||
+              existing.username ||
+              existing.instagramUserId,
+            ),
+            email: combinedEmail,
+            phone: combinedPhone,
+            website: n.website ?? existing.website,
+          }),
         ),
-        email: combinedEmail,
-        phone: combinedPhone,
-        website: n.website ?? existing.website,
-      });
+      );
 
       // Username change: matched by instagramUserId but handle differs.
       const handleChanged =
@@ -684,7 +695,7 @@ export async function applyClassifiedProfiles(
         data.usernameNormalized = n.usernameNormalized;
         data.profileUrlCanonical = n.profileUrlCanonical;
         data.previousUsernames = uniq([
-          ...(existing.previousUsernames ?? []),
+          ...parseLeadPreviousUsernames(existing.previousUsernames),
           existing.usernameNormalized ?? existing.username,
         ]);
       }
@@ -742,12 +753,15 @@ export async function applyClassifiedProfiles(
       phone: profile.phone ?? null,
       phoneNormalized: n.phoneNormalized,
       contactSource: profile.contactSource ?? null,
-      availableChannels: profile.availableChannels ?? computeAvailableChannels({
-        hasInstagram: Boolean(n.usernameNormalized),
-        email: profile.email,
-        phone: profile.phone,
-        website: n.website,
-      }),
+      ...withLeadChannelFlags(
+        profile.availableChannels ??
+          computeAvailableChannels({
+            hasInstagram: Boolean(n.usernameNormalized),
+            email: profile.email,
+            phone: profile.phone,
+            website: n.website,
+          }),
+      ),
       website: n.website,
       websiteDomain: n.websiteDomain,
       websiteKey: n.websiteKey,

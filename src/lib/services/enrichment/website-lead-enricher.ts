@@ -18,6 +18,7 @@ import { resolveCountryCode } from "../discovery/country-cities";
 import { safeFetchHtml } from "../discovery/handle-discovery-waterfall";
 import { checkNameWebsiteMismatch } from "../discovery/name-website-matcher";
 import { computeLeadScore } from "../discovery/lead-quality-score";
+import { scoreFlagReplace, withLeadChannelFlags } from "../lead/lead-channels";
 
 // ============================================================================
 // Types
@@ -1353,7 +1354,7 @@ export async function applyWebsiteEnrichmentToLead(
 
   const data: Prisma.LeadUpdateInput = {
     rawProfileData: updatedRaw as Prisma.InputJsonValue,
-    availableChannels: Array.from(new Set(channels)),
+    ...withLeadChannelFlags(channels),
     lastHandleEnrichmentAt: new Date(),
     email: primaryEmail,
     phone: primaryPhone,
@@ -1368,7 +1369,7 @@ export async function applyWebsiteEnrichmentToLead(
     qualityScore: score.score,
     qualityTier: score.tier,
     scoreBreakdown: score.breakdown as Prisma.InputJsonValue,
-    scoreFlags: Array.from(new Set([...(Array.isArray(raw.scoreFlags) ? (raw.scoreFlags as string[]) : []), ...flags])),
+    scoreFlags: scoreFlagReplace([...flags]),
   };
 
   if (!lead.email && primaryEmail) {

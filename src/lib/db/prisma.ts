@@ -87,12 +87,144 @@ function buildMariaDbPoolConfig(connectionString: string) {
     // Prisma/MySQL DATETIME has no timezone; keep the driver in UTC.
     timezone: "Z",
     multipleStatements: false,
+    // Strictness per connection: fail instead of silently truncating. These
+    // modes are supported by both MySQL 8 and MariaDB 10.6+.
+    initSql: [
+      "SET SESSION sql_mode='STRICT_ALL_TABLES,NO_ZERO_DATE,NO_ZERO_IN_DATE,ERROR_FOR_DIVISION_BY_ZERO'",
+      "SET SESSION time_zone='+00:00'",
+      "SET NAMES utf8mb4 COLLATE utf8mb4_unicode_ci",
+    ],
   };
+}
+
+export type LeadGuardIdentity = {
+  instagramUserId?: string | null;
+  usernameNormalized?: string | null;
+  emailNormalized?: string | null;
+  duplicateOfLeadId?: string | null;
+};
+
+export type LeadGuardKeys = {
+  activeInstagramGuard: string | null;
+  activeUsernameGuard: string | null;
+  activeEmailGuard: string | null;
+};
+
+export function computeLeadGuardKeys(identity: LeadGuardIdentity): LeadGuardKeys {
+  const guarded = !identity.duplicateOfLeadId;
+  return {
+    activeInstagramGuard: guarded ? identity.instagramUserId ?? null : null,
+    activeUsernameGuard: guarded ? identity.usernameNormalized ?? null : null,
+    activeEmailGuard: guarded ? identity.emailNormalized ?? null : null,
+  };
+}
+
+const LEAD_GUARD_FIELDS = [
+  "instagramUserId",
+  "usernameNormalized",
+  "emailNormalized",
+  "duplicateOfLeadId",
+] as const;
+
+function touchesLeadGuardFields(data: unknown): boolean {
+  if (!data || typeof data !== "object") return false;
+  return LEAD_GUARD_FIELDS.some((field) => field in data);
+}
+
+function applyLeadGuardKeys<T extends object>(target: T, identity: LeadGuardIdentity): T {
+  Object.assign(target, computeLeadGuardKeys(identity));
+  return target;
 }
 
 function applyCampaignExtension(client: PrismaClient): PrismaClient {
   return client.$extends({
     query: {
+      lead: {
+        async create({ args, query }) {
+          applyLeadGuardKeys(args.data as object, args.data as LeadGuardIdentity);
+          return query(args);
+        },
+        async createMany({ args, query }) {
+          const data = args.data;
+          if (Array.isArray(data)) {
+            for (const row of data) {
+              applyLeadGuardKeys(row as object, row as LeadGuardIdentity);
+            }
+          } else if (data && typeof data === "object") {
+            applyLeadGuardKeys(data as object, data as LeadGuardIdentity);
+          }
+          return query(args);
+        },
+        async update({ args, query }) {
+          if (touchesLeadGuardFields(args.data)) {
+            const existing = await client.lead.findUnique({
+              where: args.where,
+              select: {
+                instagramUserId: true,
+                usernameNormalized: true,
+                emailNormalized: true,
+                duplicateOfLeadId: true,
+              },
+            });
+            if (existing) {
+              applyLeadGuardKeys(args.data as object, {
+                ...existing,
+                ...(args.data as LeadGuardIdentity),
+              });
+            }
+          }
+          return query(args);
+        },
+        async updateMany({ args, query }) {
+          if (!touchesLeadGuardFields(args.data)) {
+            return query(args);
+          }
+          const rows = await client.lead.findMany({
+            where: args.where,
+            select: {
+              id: true,
+              instagramUserId: true,
+              usernameNormalized: true,
+              emailNormalized: true,
+              duplicateOfLeadId: true,
+            },
+          });
+          await Promise.all(
+            rows.map((row) =>
+              client.lead.update({
+                where: { id: row.id },
+                data: {
+                  ...(args.data as object),
+                  ...computeLeadGuardKeys({
+                    ...row,
+                    ...(args.data as LeadGuardIdentity),
+                  }),
+                },
+              }),
+            ),
+          );
+          return { count: rows.length };
+        },
+        async upsert({ args, query }) {
+          const existing = await client.lead.findUnique({
+            where: args.where,
+            select: {
+              instagramUserId: true,
+              usernameNormalized: true,
+              emailNormalized: true,
+              duplicateOfLeadId: true,
+            },
+          });
+          if (existing) {
+            applyLeadGuardKeys(args.update as object, {
+              ...existing,
+              ...(args.update as LeadGuardIdentity),
+            });
+          }
+          applyLeadGuardKeys(args.create as object, args.create as LeadGuardIdentity);
+          return query(args);
+        },
+      },
       campaign: {
         async create({ args, query }) {
           const data = args.data as Record<string, unknown>;

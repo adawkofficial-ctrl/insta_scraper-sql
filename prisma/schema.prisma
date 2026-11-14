@@ -280,8 +280,8 @@ model Campaign {
   // Follow-up Configuration
   followUpEnabled         Boolean             @default(false)
   followUpCount           Int                 @default(1)
-  followUpDelayDays       Json?               // TODO(mysql-port): Phase 2 - was Int[]; choose child table vs Json
-  followUpTemplates       Json?               // TODO(mysql-port): Phase 2 - was String[]; choose child table vs Json
+  followUpDelayDays       Json?               // JSON number[]; use parseFollowUpDelayDays()
+  followUpTemplates       Json?               // JSON string[]; use parseStringArray()
   createdAt               DateTime            @default(now())
   updatedAt               DateTime            @updatedAt
 
@@ -318,8 +318,8 @@ model Campaign {
   qualityMaxRegenerations Int          @default(2)
 
   // Quality score & chain filtering settings
-  customNegativeKeywords Json? // TODO(mysql-port): Phase 2 - was String[]
-  customPositiveKeywords Json? // TODO(mysql-port): Phase 2 - was String[]
+  customNegativeKeywords Json? // JSON string[]; use parseStringArray()
+  customPositiveKeywords Json? // JSON string[]; use parseStringArray()
   minRating              Float?
   minReviews             Int?
   excludeChains          Boolean  @default(true)
@@ -388,7 +388,12 @@ model Lead {
   emailRole         String? // "generic" | "named" | null
   emailInvalid      Boolean  @default(false)
   emailOptOutAt     DateTime?
-  availableChannels Json? // TODO(mysql-port): Phase 2 - was String[]; filtered by lead-service
+  // Canonical channel flags. Keep in sync via syncLeadChannelFlags().
+  hasInstagram   Boolean @default(false)
+  hasEmail       Boolean @default(false)
+  hasPhone       Boolean @default(false)
+  hasWebsite     Boolean @default(false)
+  hasOtherSocial Boolean @default(false)
   leadScore         Int?
   leadQuality       String? // "high" | "medium" | "low"
   aiStatus          AiStatus   @default(PENDING)
@@ -403,12 +408,17 @@ model Lead {
   usernameNormalized        String? @db.VarChar(191)
   profileUrlCanonical       String? @db.Text
   websiteKey                String? @db.VarChar(191)
-  previousUsernames         Json? // TODO(mysql-port): Phase 2 - was String[]
+  previousUsernames         Json? // JSON string[]; use parsePreviousUsernames()
   duplicateOfLeadId         String?
   dedupMatchedBy            String?
   dedupFlaggedAt            DateTime?
   possibleDuplicateOfLeadId String?
   possibleDuplicateReason   String?
+  // App-maintained guard keys for the three former Postgres partial unique
+  // indexes. NULL means "not guarded"; Prisma extension keeps them in sync.
+  activeInstagramGuard String?
+  activeUsernameGuard  String?
+  activeEmailGuard     String?
 
   // Google Maps / Multi-channel discovery fields
   gmapsPlaceId              String? @db.VarChar(191)
@@ -422,7 +432,7 @@ model Lead {
   qualityScore              Int?
   qualityTier               String? // "A" | "B" | "C" | "D"
   scoreBreakdown            Json?
-  scoreFlags                Json? // TODO(mysql-port): Phase 2 - was String[]; filtered by lead-service
+  scoreFlags                LeadScoreFlag[]
   isChain                   Boolean   @default(false)
   isClaimed                 Boolean?
   lastPostAt                DateTime?
@@ -473,6 +483,14 @@ model Lead {
   // reports them as DROP INDEX, do NOT accept it — they are the concurrency guard.
 
   @@unique([campaignId, username])
+  @@unique([userId, activeInstagramGuard])
+  @@unique([userId, activeUsernameGuard])
+  @@unique([userId, activeEmailGuard])
+  @@index([hasInstagram])
+  @@index([hasEmail])
+  @@index([hasPhone])
+  @@index([hasWebsite])
+  @@index([hasOtherSocial])
   @@index([campaignId])
   @@index([username])
   @@index([profileUrl])
@@ -505,6 +523,16 @@ model Lead {
   @@index([groupKey])
   @@index([campaignId, groupKey])
   @@index([messageVariant])
+}
+
+model LeadScoreFlag {
+  id     String @id @default(cuid())
+  leadId String
+  flag   String @db.VarChar(191)
+  lead   Lead   @relation(fields: [leadId], references: [id], onDelete: Cascade)
+
+  @@unique([leadId, flag])
+  @@index([flag])
 }
 
 /// Records that a lead was seen in a campaign/run. Never merges or deletes;
@@ -1182,16 +1210,16 @@ model CompanyProfile {
   userId               String
   name                 String @db.VarChar(191)
   isDefault            Boolean  @default(false)
-  description          String   @db.Text
-  services             Json? // TODO(mysql-port): Phase 2 - MySQL JSON cannot use @default("[]")
-  targetIndustries     Json? // TODO(mysql-port): Phase 2 - was String[]
-  targetCountries      Json? // TODO(mysql-port): Phase 2 - was String[]
+  description          String?  @db.Text
+  services             Json? // JSON string[]; default [] applied in code
+  targetIndustries     Json? // JSON string[]; use parseStringArray()
+  targetCountries      Json? // JSON string[]; use parseStringArray()
   idealCustomerProfile String? @db.Text
   brandTone            String?
   messageLanguage      String   @default("en")
   preferredLength      Json?
   ctaStyle             String?
-  forbiddenClaims      Json? // TODO(mysql-port): Phase 2 - was String[]
+  forbiddenClaims      Json? // JSON string[]; use parseStringArray()
   pricingPolicy        String? @db.Text
   exampleMessages      Json?
   objectionNotes       String? @db.Text
@@ -1366,7 +1394,7 @@ model NotificationConfig {
   ntfyServerUrl   String                  @default("https://ntfy.sh") @db.VarChar(191)
   ntfyAccessToken String? @db.LongText
   enabled         Boolean                 @default(true)
-  eventTypes      Json? // TODO(mysql-port): Phase 2 - was NotificationEventType[] with default
+  eventTypes      Json? // JSON NotificationEventType[]; app-side filtering
   createdAt       DateTime                @default(now())
   updatedAt       DateTime                @updatedAt
 

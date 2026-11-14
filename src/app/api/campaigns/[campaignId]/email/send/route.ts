@@ -43,7 +43,6 @@ export async function POST(
         email: { not: null },
         emailInvalid: false,
         emailOptOutAt: null,
-        OR: [{ username: null }, { availableChannels: { has: "EMAIL" } }],
       },
       orderBy: { createdAt: "asc" },
       take: 10,

@@ -4,6 +4,7 @@ import { getPrismaClient } from "@/lib/db/prisma";
 import { LeadStatus, Prisma } from "@/generated/prisma/client";
 import { NotFoundError, BadRequestError } from "@/lib/errors";
 import { parseLeadCsv, type CsvParseResult } from "./csv-lead-parser";
+import { withLeadChannelFlags } from "./lead-channels";
 
 export type CsvImportOptions = {
   skipExisting?: boolean; // If true, don't update existing leads, just skip
@@ -230,7 +231,7 @@ export async function importLeadsFromCsv(
             location: item.location,
             source: "csv_upload",
             status: defaultStatus,
-            availableChannels,
+            ...withLeadChannelFlags(availableChannels),
             contactSource: item.email || item.phone ? "csv" : null,
           },
         });

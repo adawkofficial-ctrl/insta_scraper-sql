@@ -34,6 +34,10 @@ import {
   getDefaultCompanyProfileRecord,
 } from "../company-profile";
 import { getCampaignFollowUpSummary } from "../messaging/follow-up-service";
+import {
+  parseCampaignFollowUpDelayDays,
+  parseCampaignFollowUpTemplates,
+} from "../lead/json-lists";
 
 export const CAMPAIGN_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 
@@ -62,7 +66,7 @@ export type CampaignSummary = {
   companyProfile?: {
     id: string;
     name: string;
-    description: string;
+    description: string | null;
     isDefault: boolean;
   } | null;
   requireApproval: boolean;
@@ -239,7 +243,7 @@ export async function createCampaign(
   companyProfile?: {
     id: string;
     name: string;
-    description: string;
+    description: string | null;
     isDefault: boolean;
   } | null;
   requireApproval: boolean;
@@ -520,7 +524,11 @@ export async function createCampaign(
     },
   });
 
-  return campaign;
+  return {
+    ...campaign,
+    followUpDelayDays: parseCampaignFollowUpDelayDays(campaign.followUpDelayDays),
+    followUpTemplates: parseCampaignFollowUpTemplates(campaign.followUpTemplates),
+  };
 }
 
 export async function listCampaigns(userId?: string): Promise<CampaignSummary[]> {
@@ -698,8 +706,8 @@ export async function getCampaignById(
     leadLimit: campaign.leadLimit,
     followUpEnabled: campaign.followUpEnabled,
     followUpCount: campaign.followUpCount,
-    followUpDelayDays: campaign.followUpDelayDays,
-    followUpTemplates: campaign.followUpTemplates,
+    followUpDelayDays: parseCampaignFollowUpDelayDays(campaign.followUpDelayDays),
+    followUpTemplates: parseCampaignFollowUpTemplates(campaign.followUpTemplates),
     followUpSummary,
     companyProfileId: campaign.companyProfileId,
     companyProfile: campaign.companyProfile,
@@ -746,7 +754,7 @@ export async function updateCampaign(
   companyProfile?: {
     id: string;
     name: string;
-    description: string;
+    description: string | null;
     isDefault: boolean;
   } | null;
   createdAt: Date;
@@ -1217,7 +1225,11 @@ export async function updateCampaign(
     },
   });
 
-  return updated;
+  return {
+    ...updated,
+    followUpDelayDays: parseCampaignFollowUpDelayDays(updated.followUpDelayDays),
+    followUpTemplates: parseCampaignFollowUpTemplates(updated.followUpTemplates),
+  };
 }
 
 export async function deleteCampaign(

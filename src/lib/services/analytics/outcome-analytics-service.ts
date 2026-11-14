@@ -4,6 +4,7 @@ import { getPrismaClient } from "@/lib/db/prisma";
 import { LeadEventType, MessageChannel, type Prisma } from "@/generated/prisma/client";
 import { getCampaignVariantMetrics, type VariantMetric } from "../messaging/ab-testing-service";
 import { getServerEnv } from "@/lib/env";
+import { leadChannelsFromFlags } from "../lead/lead-channels";
 
 export type OutcomeAnalyticsFilter = {
   campaignId: string;
@@ -164,7 +165,11 @@ export async function getCampaignOutcomeAnalytics(
       qualityTier: true,
       handleSource: true,
       isChain: true,
-      availableChannels: true,
+      hasInstagram: true,
+      hasEmail: true,
+      hasPhone: true,
+      hasWebsite: true,
+      hasOtherSocial: true,
       followersCount: true,
       followers: true,
       messageVariant: true,
@@ -221,9 +226,12 @@ export async function getCampaignOutcomeAnalytics(
 
   for (const lead of leads) {
     // Contactable if has any channel
-    const channels = lead.availableChannels || [];
     const isContactable =
-      channels.length > 0 ||
+      lead.hasInstagram ||
+      lead.hasEmail ||
+      lead.hasPhone ||
+      lead.hasWebsite ||
+      lead.hasOtherSocial ||
       Boolean(lead.instagramUsername || lead.username || lead.email || lead.phone);
     if (isContactable) {
       contactableCount++;
@@ -377,11 +385,10 @@ export async function getCampaignOutcomeAnalytics(
   const byTier = buildSegmentRows((l) => (l.qualityTier ? `Tier ${l.qualityTier}` : "Untiered"));
   const byHandleSource = buildSegmentRows((l) => l.handleSource || "direct");
   const byChainType = buildSegmentRows((l) => (l.isChain ? "Chain" : "Independent"));
-  const byChannel = buildSegmentRows((l) =>
-    l.availableChannels && l.availableChannels.length > 0
-      ? l.availableChannels
-      : ["INSTAGRAM"],
-  );
+  const byChannel = buildSegmentRows((l) => {
+    const channels = leadChannelsFromFlags(l);
+    return channels.length > 0 ? channels : ["INSTAGRAM"];
+  });
   const byFollowerBand = buildSegmentRows((l) =>
     getFollowerBand(l.followersCount ?? l.followers),
   );

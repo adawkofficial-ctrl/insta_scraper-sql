@@ -111,7 +111,11 @@ CREATE TABLE `Lead` (
     `emailRole` VARCHAR(191) NULL,
     `emailInvalid` BOOLEAN NOT NULL DEFAULT false,
     `emailOptOutAt` DATETIME(3) NULL,
-    `availableChannels` JSON NULL,
+    `hasInstagram` BOOLEAN NOT NULL DEFAULT false,
+    `hasEmail` BOOLEAN NOT NULL DEFAULT false,
+    `hasPhone` BOOLEAN NOT NULL DEFAULT false,
+    `hasWebsite` BOOLEAN NOT NULL DEFAULT false,
+    `hasOtherSocial` BOOLEAN NOT NULL DEFAULT false,
     `leadScore` INTEGER NULL,
     `leadQuality` VARCHAR(191) NULL,
     `aiStatus` ENUM('PENDING', 'DONE', 'FAILED', 'SKIPPED') NOT NULL DEFAULT 'PENDING',
@@ -130,6 +134,9 @@ CREATE TABLE `Lead` (
     `dedupFlaggedAt` DATETIME(3) NULL,
     `possibleDuplicateOfLeadId` VARCHAR(191) NULL,
     `possibleDuplicateReason` VARCHAR(191) NULL,
+    `activeInstagramGuard` VARCHAR(191) NULL,
+    `activeUsernameGuard` VARCHAR(191) NULL,
+    `activeEmailGuard` VARCHAR(191) NULL,
     `gmapsPlaceId` VARCHAR(191) NULL,
     `rating` DOUBLE NULL,
     `reviewCount` INTEGER NULL,
@@ -139,7 +146,6 @@ CREATE TABLE `Lead` (
     `qualityScore` INTEGER NULL,
     `qualityTier` VARCHAR(191) NULL,
     `scoreBreakdown` JSON NULL,
-    `scoreFlags` JSON NULL,
     `isChain` BOOLEAN NOT NULL DEFAULT false,
     `isClaimed` BOOLEAN NULL,
     `lastPostAt` DATETIME(3) NULL,
@@ -155,6 +161,11 @@ CREATE TABLE `Lead` (
     `groupKey` VARCHAR(191) NULL,
     `lastHandleEnrichmentAt` DATETIME(3) NULL,
 
+    INDEX `Lead_hasInstagram_idx`(`hasInstagram`),
+    INDEX `Lead_hasEmail_idx`(`hasEmail`),
+    INDEX `Lead_hasPhone_idx`(`hasPhone`),
+    INDEX `Lead_hasWebsite_idx`(`hasWebsite`),
+    INDEX `Lead_hasOtherSocial_idx`(`hasOtherSocial`),
     INDEX `Lead_campaignId_idx`(`campaignId`),
     INDEX `Lead_username_idx`(`username`),
     INDEX `Lead_profileUrl_idx`(`profileUrl`),
@@ -188,6 +199,20 @@ CREATE TABLE `Lead` (
     INDEX `Lead_campaignId_groupKey_idx`(`campaignId`, `groupKey`),
     INDEX `Lead_messageVariant_idx`(`messageVariant`),
     UNIQUE INDEX `Lead_campaignId_username_key`(`campaignId`, `username`),
+    UNIQUE INDEX `Lead_userId_activeInstagramGuard_key`(`userId`, `activeInstagramGuard`),
+    UNIQUE INDEX `Lead_userId_activeUsernameGuard_key`(`userId`, `activeUsernameGuard`),
+    UNIQUE INDEX `Lead_userId_activeEmailGuard_key`(`userId`, `activeEmailGuard`),
+    PRIMARY KEY (`id`)
+) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
+
+-- CreateTable
+CREATE TABLE `LeadScoreFlag` (
+    `id` VARCHAR(191) NOT NULL,
+    `leadId` VARCHAR(191) NOT NULL,
+    `flag` VARCHAR(191) NOT NULL,
+
+    INDEX `LeadScoreFlag_flag_idx`(`flag`),
+    UNIQUE INDEX `LeadScoreFlag_leadId_flag_key`(`leadId`, `flag`),
     PRIMARY KEY (`id`)
 ) DEFAULT CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 
@@ -795,7 +820,7 @@ CREATE TABLE `CompanyProfile` (
     `userId` VARCHAR(191) NOT NULL,
     `name` VARCHAR(191) NOT NULL,
     `isDefault` BOOLEAN NOT NULL DEFAULT false,
-    `description` TEXT NOT NULL,
+    `description` TEXT NULL,
     `services` JSON NULL,
     `targetIndustries` JSON NULL,
     `targetCountries` JSON NULL,
@@ -1047,6 +1072,9 @@ ALTER TABLE `Lead` ADD CONSTRAINT `Lead_duplicateOfLeadId_fkey` FOREIGN KEY (`du
 
 -- AddForeignKey
 ALTER TABLE `Lead` ADD CONSTRAINT `Lead_possibleDuplicateOfLeadId_fkey` FOREIGN KEY (`possibleDuplicateOfLeadId`) REFERENCES `Lead`(`id`) ON DELETE SET NULL ON UPDATE CASCADE;
+
+-- AddForeignKey
+ALTER TABLE `LeadScoreFlag` ADD CONSTRAINT `LeadScoreFlag_leadId_fkey` FOREIGN KEY (`leadId`) REFERENCES `Lead`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;
 
 -- AddForeignKey
 ALTER TABLE `LeadSighting` ADD CONSTRAINT `LeadSighting_leadId_fkey` FOREIGN KEY (`leadId`) REFERENCES `Lead`(`id`) ON DELETE CASCADE ON UPDATE CASCADE;

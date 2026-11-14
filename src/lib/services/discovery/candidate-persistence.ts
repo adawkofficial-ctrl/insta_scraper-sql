@@ -3,6 +3,13 @@ import "server-only";
 import { getPrismaClient } from "@/lib/db/prisma";
 import { LeadStatus, Prisma } from "@/generated/prisma/client";
 import { computeLeadScore } from "./lead-quality-score";
+import {
+  leadChannelsFromFlags,
+  scoreFlagCreate,
+  scoreFlagReplace,
+  scoreFlagsFromRows,
+  withLeadChannelFlags,
+} from "../lead/lead-channels";
 
 export type WebsiteEmailInput = {
   value: string;
@@ -445,6 +452,7 @@ export async function saveLeadAsEnrichPending(params: {
           { gmapsPlaceId: params.placeId },
         ],
       },
+      include: { scoreFlags: { select: { flag: true } } },
     });
 
     if (existing) {
@@ -476,11 +484,17 @@ export async function saveLeadAsEnrichPending(params: {
           reviewCount: existing.reviewCount ?? params.reviewsCount ?? null,
           handleSource: existing.handleSource || params.handleSource || null,
           handleConfidence: existing.handleConfidence || params.handleConfidence || null,
-          availableChannels: Array.from(new Set([...(existing.availableChannels ?? []), ...channels])),
+          ...withLeadChannelFlags([
+            ...leadChannelsFromFlags(existing),
+            ...channels,
+          ]),
           qualityScore: existing.qualityScore ?? score.score,
           qualityTier: existing.qualityTier ?? score.tier,
           scoreBreakdown: (existing.scoreBreakdown as Prisma.InputJsonValue) ?? (score.breakdown as Prisma.InputJsonValue),
-          scoreFlags: Array.from(new Set([...(existing.scoreFlags ?? []), ...score.flags])),
+          scoreFlags: scoreFlagReplace([
+            ...scoreFlagsFromRows(existing.scoreFlags),
+            ...score.flags,
+          ]),
           rawProfileData: raw as Prisma.InputJsonValue,
           discoveryCity: existing.discoveryCity || params.city || null,
           contactSource:
@@ -524,11 +538,11 @@ export async function saveLeadAsEnrichPending(params: {
           reviewCount: params.reviewsCount ?? null,
           handleSource: params.handleSource || null,
           handleConfidence: params.handleConfidence || null,
-          availableChannels: channels,
+          ...withLeadChannelFlags(channels),
           qualityScore: score.score,
           qualityTier: score.tier,
           scoreBreakdown: score.breakdown as Prisma.InputJsonValue,
-          scoreFlags: score.flags,
+          scoreFlags: scoreFlagCreate(score.flags),
           rawProfileData: mergeRawProfileData(null, mapsRaw, contactsRaw, fields.fieldSources ?? null) as Prisma.InputJsonValue,
           status: LeadStatus.ENRICH_PENDING,
           source: "google_maps",
@@ -645,6 +659,7 @@ export async function saveContactOnlyLead(params: {
         campaignId: params.campaignId,
         gmapsPlaceId: params.placeId,
       },
+      include: { scoreFlags: { select: { flag: true } } },
     });
 
     if (existing) {
@@ -671,11 +686,17 @@ export async function saveContactOnlyLead(params: {
           reviewCount: existing.reviewCount ?? params.reviewsCount,
           socialLink: existing.socialLink || socialLink,
           socialPlatform: existing.socialPlatform || socialPlatform,
-          availableChannels: Array.from(new Set([...existing.availableChannels, ...availableChannels])),
+          ...withLeadChannelFlags([
+            ...leadChannelsFromFlags(existing),
+            ...availableChannels,
+          ]),
           qualityScore: existing.qualityScore ?? score.score,
           qualityTier: existing.qualityTier ?? score.tier,
           scoreBreakdown: (existing.scoreBreakdown as Prisma.InputJsonValue) ?? (score.breakdown as Prisma.InputJsonValue),
-          scoreFlags: Array.from(new Set([...(existing.scoreFlags ?? []), ...score.flags])),
+          scoreFlags: scoreFlagReplace([
+            ...scoreFlagsFromRows(existing.scoreFlags),
+            ...score.flags,
+          ]),
           rawProfileData: raw as Prisma.InputJsonValue,
           discoveryCity: existing.discoveryCity || params.city || null,
           contactSource:
@@ -705,11 +726,11 @@ export async function saveContactOnlyLead(params: {
           reviewCount: params.reviewsCount ?? null,
           socialLink,
           socialPlatform,
-          availableChannels,
+          ...withLeadChannelFlags(availableChannels),
           qualityScore: score.score,
           qualityTier: score.tier,
           scoreBreakdown: score.breakdown as Prisma.InputJsonValue,
-          scoreFlags: score.flags,
+          scoreFlags: scoreFlagCreate(score.flags),
           rawProfileData: mergeRawProfileData(null, mapsRaw, contactsRaw, fields.fieldSources ?? null) as Prisma.InputJsonValue,
           status: LeadStatus.NEW,
           source: "google_maps",

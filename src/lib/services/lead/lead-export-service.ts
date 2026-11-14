@@ -1,5 +1,6 @@
 import { getPrismaClient } from "@/lib/db/prisma";
 import { NotFoundError } from "@/lib/errors";
+import { leadChannelsFromFlags } from "./lead-channels";
 
 export interface ExportLeadsOptions {
   campaignId: string;
@@ -94,7 +95,11 @@ export async function exportCampaignLeads(
       gmapsPlaceId: true,
       socialLink: true,
       socialPlatform: true,
-      availableChannels: true,
+      hasInstagram: true,
+      hasEmail: true,
+      hasPhone: true,
+      hasWebsite: true,
+      hasOtherSocial: true,
       rawProfileData: true,
       status: true,
       leadScore: true,
@@ -165,7 +170,7 @@ export async function exportCampaignLeads(
     const address = (raw.address as string) || (raw.street as string) || lead.location || "";
     const city = lead.city || (raw.city as string) || lead.location || "";
     const mapsUrl = (raw.mapsUrl as string) || (raw.url as string) || (lead.gmapsPlaceId ? `https://www.google.com/maps/place/?q=place_id:${lead.gmapsPlaceId}` : "");
-    const sourceNotes = [lead.contactSource, lead.source, lead.availableChannels?.join(";")].filter(Boolean).join(" | ");
+    const sourceNotes = [lead.contactSource, lead.source, leadChannelsFromFlags(lead).join(";")].filter(Boolean).join(" | ");
 
     const row = [
       escapeCsvValue(lead.id),
