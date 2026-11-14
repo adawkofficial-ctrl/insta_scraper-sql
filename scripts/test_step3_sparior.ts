@@ -617,6 +617,10 @@ async function runStep3Tests() {
   if (failed > 0) {
     process.exit(1);
   }
+  // Close the MySQL pool explicitly; otherwise the driver keeps the process
+  // alive/non-zero after a successful run.
+  await prisma.$disconnect();
+  process.exit(0);
 }
 
 runStep3Tests().catch((err) => {

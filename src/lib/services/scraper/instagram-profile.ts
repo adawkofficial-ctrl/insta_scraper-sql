@@ -11,6 +11,7 @@ import {
 } from "../contact/contact-parser";
 import { getEnrichmentProviderName } from "@/lib/env";
 import { MAX_CAMPAIGN_LEAD_LIMIT } from "@/lib/constants/campaign-limits";
+import { getMaxResultsWanted } from "@/lib/constants/input-limits";
 
 export const INSTAGRAM_PROFILE_ACTOR_ID = "apify/instagram-profile-scraper";
 
@@ -119,11 +120,12 @@ export class ScrapeInputError extends Error {
 }
 
 /**
- * Validates the "Maximum Leads" value on the server. Never trusts the client.
- * Normalizes numeric strings, rejects non-integers, floats, NaN, and out-of-range (1-100).
+ * Validates the "results wanted" value on the server. Never trusts the client.
+ * Normalizes numeric strings, rejects non-integers/floats/NaN, and enforces
+ * MAX_RESULTS_WANTED (default 5000). This is input validation, not a budget cap.
  */
 export function parseLeadLimit(value: unknown, allowDefault = true): number {
-  const maxLimit = getMaxLeadLimit();
+  const maxLimit = getMaxResultsWanted();
   if (value === undefined || value === null) {
     if (allowDefault) {
       return DEFAULT_LEAD_LIMIT;

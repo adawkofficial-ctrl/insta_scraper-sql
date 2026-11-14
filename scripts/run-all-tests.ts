@@ -132,12 +132,9 @@ function runSuite(suite: Suite, baseUrl: string): { result: Result; passed: numb
   const output = `${proc.stdout || ""}\n${proc.stderr || ""}`;
   const { passed, failed } = parseCounts(output);
   const blocked = /ECONNREFUSED|fetch failed/i.test(output) && proc.status !== 0 && !failed;
-  // MySQL driver pools/teardown can exit non-zero after every assertion has
-  // passed. Treat that as PASS only when an explicit 0-failure count exists.
-  const assertionsGreen = failed === 0 && (passed ?? 0) > 0;
   const result: Result = blocked
     ? "BLOCKED"
-    : (proc.status === 0 || assertionsGreen) && (failed === null || failed === 0)
+    : proc.status === 0 && (failed === null || failed === 0)
       ? "PASS"
       : "FAIL";
   const tail = result === "FAIL" ? output.trim().split("\n").slice(-80).join(" | ").slice(0, 12000) : "";

@@ -16,7 +16,7 @@ import {
   MAX_PROFILE_BATCH,
 } from "@/lib/api/scraper";
 import { ApiClientError } from "@/lib/api/client";
-import { MAX_CAMPAIGN_LEAD_LIMIT } from "@/lib/constants/campaign-limits";
+import { CONFIRM_RESULTS_ABOVE, DEFAULT_MAX_RESULTS_WANTED } from "@/lib/constants/input-limits";
 import { planInstagramQueries } from "@/lib/services/discovery/instagram-all-in-one-query";
 
 type ScrapeMode = "discover" | "profiles";
@@ -40,7 +40,7 @@ function formatSkipCounts(skipCounts?: DiscoverySkipCounts): string | null {
   const parts = Object.entries(skipCounts)
     .filter(([, count]) => (count ?? 0) > 0)
     .map(([reason, count]) => `${reason}=${count}`);
-  return parts.length > 0 ? parts.join(" · ") : null;
+  return parts.length > 0 ? parts.join(" Ã‚Â· ") : null;
 }
 
 type ScrapeLeadsModalProps = {
@@ -146,6 +146,7 @@ export function ScrapeLeadsModal({
   const [maxFollowers, setMaxFollowers] = useState("500000");
   const [minPosts, setMinPosts] = useState("3");
   const [strictMode, setStrictMode] = useState(false);
+  const [confirmHighResults, setConfirmHighResults] = useState(false);
 
   useEffect(() => {
     if (isOpen) {
@@ -167,7 +168,7 @@ export function ScrapeLeadsModal({
   // stale cached budget.maxLeadsCap from before the cap was removed.
   const currentLeads = currentLeadCount;
   const discoveryMaxLeadLimit =
-    budget?.discoveryStage === "pilot_small" ? 10 : MAX_CAMPAIGN_LEAD_LIMIT;
+    budget?.discoveryStage === "pilot_small" ? 10 : DEFAULT_MAX_RESULTS_WANTED;
   const parsedInputLimit = parseLimitInput(discoverLimitInput, discoveryMaxLeadLimit);
   const configuredLimit = campaignLeadLimit ?? (parsedInputLimit ?? DEFAULT_MAX_LEADS);
   const effectiveLimit = configuredLimit;
@@ -234,6 +235,10 @@ export function ScrapeLeadsModal({
       setError(
         `Lead Limit must be an integer between ${MIN_MAX_LEADS} and ${maxAllowedLimit}${budget?.discoveryStage === "pilot_small" ? " (pilot cap: 10)" : ""}.`,
       );
+      return;
+    }
+    if (parsedLimit > CONFIRM_RESULTS_ABOVE && !confirmHighResults) {
+      setError(`Lead Limit above ${CONFIRM_RESULTS_ABOVE} requires explicit confirmation.`);
       return;
     }
 
@@ -318,6 +323,7 @@ export function ScrapeLeadsModal({
           category: trimmedCategory,
           maxLeads: parsedLimit,
           criteria,
+          ...(parsedLimit > CONFIRM_RESULTS_ABOVE ? { confirmHighResults } : {}),
         },
         (event) => setProgress(event),
       );
@@ -345,6 +351,7 @@ export function ScrapeLeadsModal({
                 maxLeads: parsedLimit,
                 criteria,
                 confirmHighCostRetry: true,
+                ...(parsedLimit > CONFIRM_RESULTS_ABOVE ? { confirmHighResults } : {}),
               },
               (event) => setProgress(event),
             );
@@ -644,7 +651,7 @@ export function ScrapeLeadsModal({
                           <td className="py-1 font-semibold text-amber-400">{row.reason}</td>
                           <td className="py-1 text-right">{row.count}</td>
                           <td className="py-1 pl-3 text-zinc-400 truncate max-w-[200px]" title={row.examples.join(", ")}>
-                            {row.examples.join(", ") || "—"}
+                            {row.examples.join(", ") || "Ã¢â‚¬â€"}
                           </td>
                         </tr>
                       ))}
@@ -661,14 +668,14 @@ export function ScrapeLeadsModal({
             </p>
             {discoverResult.meta.usageSummary?.resultsConsumed && (
               <p className="mt-1 text-[11px] text-zinc-400 font-mono">
-                Results consumed — search: {discoverResult.meta.usageSummary.resultsConsumed.search} &bull; details:{" "}
+                Results consumed Ã¢â‚¬â€ search: {discoverResult.meta.usageSummary.resultsConsumed.search} &bull; details:{" "}
                 {discoverResult.meta.usageSummary.resultsConsumed.details} &bull; stop:{" "}
                 {discoverResult.meta.usageSummary.stopReason ?? "completed"}
               </p>
             )}
             {discoverResult.meta.usageSummary?.conversionFunnel && (
               <p className="mt-1 text-[11px] text-zinc-400 font-mono">
-                Funnel — found: {discoverResult.meta.usageSummary.conversionFunnel.found} &bull; after rules:{" "}
+                Funnel Ã¢â‚¬â€ found: {discoverResult.meta.usageSummary.conversionFunnel.found} &bull; after rules:{" "}
                 {discoverResult.meta.usageSummary.conversionFunnel.afterFreeRules} &bull; after pre-gate:{" "}
                 {discoverResult.meta.usageSummary.conversionFunnel.afterGeminiPreGate} &bull; detailed:{" "}
                 {discoverResult.meta.usageSummary.conversionFunnel.detailed} &bull; saved:{" "}
@@ -1049,8 +1056,15 @@ export function ScrapeLeadsModal({
                   className="mt-1.5 block w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3.5 py-2.5 text-sm text-zinc-100 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:opacity-50"
                 />
                 <p className="mt-1 text-[11px] text-zinc-500">
-                  Enter 1 or more leads. {budget?.discoveryStage === "pilot_small" && "(pilot cap: 10)"}
+                  Enter 1â€“{DEFAULT_MAX_RESULTS_WANTED} leads. {budget?.discoveryStage === "pilot_small" && "(pilot cap: 10)"}
                 </p>
+                {parseLimitInput(discoverLimitInput, discoveryMaxLeadLimit) !== null &&
+                  (parseLimitInput(discoverLimitInput, discoveryMaxLeadLimit) ?? 0) > CONFIRM_RESULTS_ABOVE && (
+                    <label className="mt-2 flex items-center gap-2 text-[11px] text-amber-300">
+                      <input type="checkbox" checked={confirmHighResults} onChange={(e) => setConfirmHighResults(e.target.checked)} />
+                      I confirm requesting more than {CONFIRM_RESULTS_ABOVE} results.
+                    </label>
+                  )}
               </div>
             </div>
 
@@ -1423,7 +1437,7 @@ export function ScrapeLeadsModal({
                     {(budget?.keywordSuggestions?.length ?? 0) > 0 && (
                       <div className="mt-2 text-[11px] text-emerald-300/90">
                         Best past keywords:{" "}
-                        {budget!.keywordSuggestions!.map((s) => `${s.keyword} (${(s.yield * 100).toFixed(0)}% IG)`).join(" • ")}
+                        {budget!.keywordSuggestions!.map((s) => `${s.keyword} (${(s.yield * 100).toFixed(0)}% IG)`).join(" Ã¢â‚¬Â¢ ")}
                       </div>
                     )}
                   </div>

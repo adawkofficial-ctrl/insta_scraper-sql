@@ -111,6 +111,8 @@ async function main() {
       ["missing query", { campaignId: cA.id, maxLeads: 5 }],
       ["maxLeads 0", { campaignId: cA.id, query: "fitness", maxLeads: 0 }],
       ["maxLeads abc", { campaignId: cA.id, query: "fitness", maxLeads: "abc" }],
+      ["maxLeads 1500 without confirm", { campaignId: cA.id, query: "fitness", maxLeads: 1500 }],
+      ["maxLeads 5001 above MAX_RESULTS_WANTED", { campaignId: cA.id, query: "fitness", maxLeads: 5001, confirmHighResults: true }],
       ["malformed campaignId", { campaignId: "bad id!", query: "fitness", maxLeads: 5 }],
     ] as Array<[string, unknown]>) {
       const r = await call("/api/scraper/instagram/discover", A.cookie, "POST", payload);

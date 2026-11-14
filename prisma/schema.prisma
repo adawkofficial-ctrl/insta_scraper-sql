@@ -379,7 +379,7 @@ model Lead {
   phoneNormalized   String? @db.VarChar(191)
   website           String? @db.Text
   websiteDomain     String? @db.VarChar(191)
-  socialLink        String?
+  socialLink        String?  @db.VarChar(512)
   socialPlatform    String?
   contactSource     String?
   emailSourceUrl    String? @db.Text
@@ -570,7 +570,7 @@ model ScrapeJob {
   completedAt          DateTime?
   createdAt            DateTime        @default(now())
   // Discovery metadata (nullable for plain profile-scrape jobs)
-  query                String?
+  query                String?  @db.VarChar(255)
   location             String?
   category             String?
   discoveryActor       String?

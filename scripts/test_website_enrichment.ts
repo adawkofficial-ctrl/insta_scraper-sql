@@ -38,6 +38,7 @@ import {
   createCampaign,
   parseCampaignLeadLimit,
 } from "../src/lib/services/campaign/campaign-service";
+import { parseDiscoveryRequest } from "../src/lib/services/discovery/discovery-service";
 import {
   getMaxLeadLimit,
   parseLeadLimit,
@@ -618,7 +619,35 @@ async function runTests() {
       }
       check(rejected, `campaign lead limit rejects ${invalid}`);
     }
+    const discoveryBase = {
+      campaignId: "cmysqlvalidation0000000000",
+      query: "dentist",
+      location: "Toronto, ON",
+      category: "Dentist",
+    };
+    let confirmRequired = false;
+    try {
+      parseDiscoveryRequest({ ...discoveryBase, maxLeads: 1500 });
+    } catch (err) {
+      confirmRequired = (err as { code?: string }).code === "CONFIRM_REQUIRED";
+    }
+    check(confirmRequired, "1500 results without confirmation is rejected");
+    const confirmed = parseDiscoveryRequest({
+      ...discoveryBase,
+      maxLeads: 1500,
+      confirmHighResults: true,
+    });
+    check(confirmed.maxLeads === 1500, "1500 results with confirmation is accepted");
+    let tooManyRejected = false;
+    try {
+      parseDiscoveryRequest({ ...discoveryBase, maxLeads: 5001, confirmHighResults: true });
+    } catch (err) {
+      tooManyRejected = (err as { code?: string }).code === "LEAD_LIMIT_OUT_OF_RANGE";
+    }
+    check(tooManyRejected, "5001 results is rejected by MAX_RESULTS_WANTED");
+
     const bigCampaign = await createCampaign(
+
       {
         name: `${tag} 1000 lead limit`,
         intent: "Dental clinics",

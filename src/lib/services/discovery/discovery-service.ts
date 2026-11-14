@@ -8,6 +8,7 @@ import {
   ScrapeJobStatus,
 } from "@/generated/prisma/enums";
 import { ConflictError, NotFoundError } from "@/lib/errors";
+import { CONFIRM_RESULTS_ABOVE } from "@/lib/constants/input-limits";
 import {
   getActiveEnrichmentActorId,
   ScrapeInputError,
@@ -95,6 +96,7 @@ export type DiscoveryRequest = {
   maxLeads: number;
   criteria?: EnrichmentCriteria;
   confirmHighCostRetry?: boolean;
+  confirmHighResults?: boolean;
 };
 
 export type DiscoveryProgressEvent = {
@@ -254,6 +256,14 @@ export function parseDiscoveryRequest(body: unknown): DiscoveryRequest {
   const category = readOptional(record.category, "category", MAX_CATEGORY_LENGTH);
 
   const maxLeads = parseLeadLimit(record.maxLeads ?? record.limit);
+  const confirmHighResults = Boolean(record.confirmHighResults);
+
+  if (maxLeads > CONFIRM_RESULTS_ABOVE && !confirmHighResults) {
+    throw new ScrapeInputError(
+      "CONFIRM_REQUIRED",
+      `"maxLeads" above ${CONFIRM_RESULTS_ABOVE} requires explicit confirmation (confirmHighResults=true).`,
+    );
+  }
 
   if (process.env.DISCOVERY_STAGE === "pilot_small" && maxLeads > 10) {
     throw new ScrapeInputError(
@@ -322,6 +332,7 @@ export function parseDiscoveryRequest(body: unknown): DiscoveryRequest {
     maxLeads,
     ...(criteria ? { criteria } : {}),
     ...(confirmHighCostRetry ? { confirmHighCostRetry: true } : {}),
+    ...(confirmHighResults ? { confirmHighResults: true } : {}),
   };
 }
 
