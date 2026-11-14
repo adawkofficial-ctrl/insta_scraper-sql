@@ -1,4 +1,4 @@
-# InstaScraper — Instagram Campaign & Lead Engine SaaS
+# InstaScraper â€” Instagram Campaign & Lead Engine SaaS
 
 A full-stack Next.js + TypeScript SaaS platform for Instagram lead generation, profile scraping, message templating, AI personalization preview, and controlled human-in-the-loop campaign execution.
 
@@ -19,11 +19,13 @@ cp .env.example .env
 Ensure `DATABASE_URL` and `AUTH_SECRET` (at least 32 characters) are set. Optional providers (`APIFY_API_TOKEN`, `OPENAI_API_KEY`, `GEMINI_API_KEY`) can be added as needed.
 
 ### 3. Database Setup & Prisma Migration
-Ensure your PostgreSQL database is running, then run Prisma schema generation and migrations:
+Ensure your MySQL/MariaDB database is running and `DATABASE_URL` uses the `mysql://user:pass@host:3306/db` format, then run Prisma schema generation and apply the baseline migration:
 ```bash
 npx prisma generate
-npx prisma migrate dev
+npx prisma migrate deploy
 ```
+
+Remote managed MySQL (Hostinger) does not allow shadow databases or `prisma migrate dev`; generate migrations locally and apply them with `prisma migrate deploy`.
 
 For validating database schema and migrations:
 ```bash
@@ -34,7 +36,7 @@ npx prisma validate
 ### Database Separation: Real Data vs. Tests
 To protect production and user data, test suites never run against the application's real database:
 - **Application Database (`DATABASE_URL`)**: Used by the application in development and production (e.g., `insta_scraper_prod`).
-- **Dedicated Test Database (`DATABASE_URL_TEST`)**: Used exclusively for running automated test suites (defaults to `insta_scraper_test`).
+- **Dedicated Test Database (`DATABASE_URL_TEST`)**: Used exclusively for running automated test suites (defaults to `insta_scraper_mysql_test`).
 - **One-Command Setup**: Run `npm run test:db:setup` to automatically create the test database and run all migrations on it:
   ```bash
   npm run test:db:setup
@@ -140,7 +142,7 @@ Migration `20260928130500_step4_dedup_unique_guards` adds three **partial** uniq
 expressible in `schema.prisma`. Verified with
 `prisma migrate diff --from-config-datasource --to-schema`: it currently reports **no drift**
 (Prisma ignores unmodelled partial indexes). If a future Prisma version reports them as
-`DROP INDEX`, **do not accept it** — they are the concurrency guard for duplicate inserts.
+`DROP INDEX`, **do not accept it** â€” they are the concurrency guard for duplicate inserts.
 See the comment on the `Lead` model.
 
 ## Architecture & Security Principles
@@ -152,7 +154,7 @@ See the comment on the `Lead` model.
 
 ## Connecting an Instagram Sender Account
 
-Messages are sent from **your own authorized Instagram account** through a dedicated Playwright browser session. Apify is used only for discovery/enrichment — never for sending. The app **never** stores your Instagram password, and never stores raw cookies or access tokens in the database.
+Messages are sent from **your own authorized Instagram account** through a dedicated Playwright browser session. Apify is used only for discovery/enrichment â€” never for sending. The app **never** stores your Instagram password, and never stores raw cookies or access tokens in the database.
 
 How to connect an account:
 
@@ -170,7 +172,7 @@ Important notes:
 - The manual-login browser stays open until you verify or disconnect. A long safety timeout (`INSTAGRAM_MANUAL_LOGIN_TIMEOUT_MS`, default 15 minutes) eventually closes an abandoned login browser and moves the account to **Authentication Required**; normal short idle cleanup applies only to connected messaging sessions.
 - The account must remain authorized. Instagram may expire the session at any time; when that happens the sender shows **Authentication Required** and you can reconnect and verify again.
 - If Instagram presents a CAPTCHA, checkpoint, or rate limit, messaging **pauses** and surfaces the error instead of attempting to bypass it.
-- `SESSION_UNAVAILABLE` / `AUTH_REQUIRED` means no message was sent — the app never marks a message SENT unless Instagram confirmed it in the browser.
+- `SESSION_UNAVAILABLE` / `AUTH_REQUIRED` means no message was sent â€” the app never marks a message SENT unless Instagram confirmed it in the browser.
 - `Disconnect` closes the browser session and deletes the local profile directory for that sender account.
 
 ---
@@ -289,7 +291,7 @@ The application provides instant mobile and desktop push notifications via [ntfy
 3. Leave Server URL as `https://ntfy.sh` (or specify your self-hosted instance).
 4. Choose the notification events you wish to receive:
    - `Inbound Lead Replies`: Real-time push alert with a safe ~150 char preview whenever a prospect responds.
-   - `High-Value Leads`: Immediate alert when a lead crosses the high score threshold (default: score ≥ 85).
+   - `High-Value Leads`: Immediate alert when a lead crosses the high score threshold (default: score â‰¥ 85).
    - `Session Expired`: Urgent notice when an Instagram sender requires re-authentication.
    - `Sender Account Errors`: Alert when a sender encounters a rate limit or dispatch failure.
    - `Provider & System Errors`: Immediate alert when Apify, Sparior, or Gemini run out of quota or fail authentication.
@@ -298,7 +300,7 @@ The application provides instant mobile and desktop push notifications via [ntfy
 
 ---
 
-## Production Pipeline & Safety Reference (Fix 1–6 Integration)
+## Production Pipeline & Safety Reference (Fix 1â€“6 Integration)
 
 ### 1. Pipeline Stage Order
 The lead generation and outreach engine follows a strict 7-stage sequential funnel designed to minimize paid API costs and prevent premature account bans:
@@ -307,7 +309,7 @@ The lead generation and outreach engine follows a strict 7-stage sequential funn
 2. **Low-Cost Discovery & Waterfall (Stage 2)**: Candidate businesses are ingested via Google Maps ($0.004/place). The multi-channel waterfall scrapes homepage, `/contact`, and link hubs for free before falling back to external lookups. Closed businesses, national chains (via 3+ location frequency), and wrong-city results are pruned immediately.
 3. **Multi-Channel Handle Yield & Deduplication (Stage 3)**: Places with valid Instagram handles proceed to IG outreach. Places without Instagram but possessing phone or email are **retained** as multi-channel leads (`CONTACTABLE_NON_IG`) rather than discarded. Records are deduplicated by `placeId`, normalized `websiteDomain`, and E.164 phone number.
 4. **Stage Spend Ceilings & Pre-Enrichment Gate (Stage 4)**: Cumulative spend per stage is strictly budgeted (`MAX_STAGE_SPEND_MAPS_USD`, `MAX_STAGE_SPEND_ENRICHMENT_USD`). If the budget ceiling is hit, discovery gracefully terminates with `stop_reason: "BUDGET_CEILING_REACHED"`. Gemini Flash gates evaluate only viable candidates.
-5. **Lazy Instagram Profile Enrichment & Quality Scoring (Stage 5)**: Paid profile enrichment ($0.003–$0.005) runs **only** on surviving qualified candidates. The engine calculates an objective 100-point Lead Quality Score and classifies leads into Tiers A, B, C, and D.
+5. **Lazy Instagram Profile Enrichment & Quality Scoring (Stage 5)**: Paid profile enrichment ($0.003â€“$0.005) runs **only** on surviving qualified candidates. The engine calculates an objective 100-point Lead Quality Score and classifies leads into Tiers A, B, C, and D.
 6. **Human-in-the-Loop Send Gate & Dispatch (Stage 6)**: Tiers A & B qualify for personalized DM draft generation; Tier C is held for manual review; Tier D is rejected. Dispatches pass through the centralized `sendGate` enforcing global and campaign-level DNC suppression, daily/hourly caps, warm-up pacing, non-constant jitter, and recipient timezone working hours.
 7. **Inbound Reply Processing & Outcome Analytics (Stage 7)**: Inbound replies via Unipile or Playwright are classified (`positive`, `question`, `stop`, `unknown`). Opt-outs automatically add the lead to DNC and cancel pending messages. Outcome analytics tracks real acquisition costs, conversion rates, and ROI across keywords, cities, and tiers.
 
@@ -321,27 +323,27 @@ The platform enforces a "Zero Dollar Leakage" accounting model where every cent 
 | **Place Discovery** | Google Maps (Apify Actor) | **$0.0040 / place** ($4.00 / 1k places) | Scrapes place name, address, website, phone, rating, reviews. |
 | **Handle Waterfall** | Internal HTTP Scraper | **$0.0000 (Free)** | Zero-cost local Cheerio scraper extracts IG handles and emails from home, contact, and Linktree pages. |
 | **Candidate Gate** | Google Gemini 1.5 Flash | **$0.00015 / eval** (~$0.075 / 1M tokens) | Evaluates relevance only when heuristics are ambiguous. Skipped for high-confidence matches. |
-| **Profile Enrichment** | Apify Instagram Profile | **$0.0030–$0.0050 / profile** | **Lazy Gate**: Executed ONLY on surviving candidates after free waterfall and chain filtering. |
+| **Profile Enrichment** | Apify Instagram Profile | **$0.0030â€“$0.0050 / profile** | **Lazy Gate**: Executed ONLY on surviving candidates after free waterfall and chain filtering. |
 | **Fast Lookups** | Sparior Pro (RapidAPI) | **$0.0015 / request** | Alternative lightweight profile lookup provider with budget soft limits. |
 | **DM Dispatch** | Unipile / Playwright | **Direct Session** | Sent through your authenticated sender account with atomic reservation slots. |
 
 ---
 
-### 3. Lead Quality Scoring Weights (0–100 Points)
+### 3. Lead Quality Scoring Weights (0â€“100 Points)
 Every discovered lead receives an objective composite score based on 5 independent weighted pillars:
 
 | Pillar | Weight | Evaluation Criteria |
 |---|---|---|
 | **Business Health & Reputation** | **25%** | Google rating $\ge 4.0$, $\ge 10$ customer reviews, valid active website domain. |
 | **Independence / Non-Chain** | **20%** | Independent single-location business, non-franchise, distinct brand identity. |
-| **Instagram Presence & Activity** | **25%** | Active profile, 500–50k target followers, posted within last 30 days, healthy engagement rate. |
+| **Instagram Presence & Activity** | **25%** | Active profile, 500â€“50k target followers, posted within last 30 days, healthy engagement rate. |
 | **Target Audience Alignment** | **15%** | Bio relevance match, absence of negative keywords, explicit location match in target city. |
 | **Reachability & Multi-Channel** | **15%** | Multiple active channels available (Instagram DM, email, phone, website form). |
 
 #### Score Tiers & Action Policy:
 - **Tier A (Score $\ge 80$)**: High-value local business. Auto-approved for personalized DM campaign.
-- **Tier B (Score $65–79$)**: Qualified prospect. Approved for standard template outreach.
-- **Tier C (Score $50–64$)**: Borderline / low engagement. **Held in review queue**; requires human approval before draft creation.
+- **Tier B (Score $65â€“79$)**: Qualified prospect. Approved for standard template outreach.
+- **Tier C (Score $50â€“64$)**: Borderline / low engagement. **Held in review queue**; requires human approval before draft creation.
 - **Tier D (Score $< 50$)**: Disqualified / inactive / chain. Automatically rejected; no outreach attempted.
 
 ---
@@ -351,10 +353,10 @@ To protect sender accounts from Instagram action blocks and automated spam detec
 
 | Account Stage | Age / History | Hourly Cap | Daily Cap | Target Delay Between Messages |
 |---|---|---|---|---|
-| **Warm-up Phase 1** | Days 1–3 | **2 DMs / hr** | **10 DMs / day** | 15–25 min + non-constant jitter ($\pm 20\%$) |
-| **Warm-up Phase 2** | Days 4–7 | **4 DMs / hr** | **20 DMs / day** | 10–18 min + non-constant jitter ($\pm 20\%$) |
-| **Warm-up Phase 3** | Days 8–14 | **6 DMs / hr** | **35 DMs / day** | 8–14 min + non-constant jitter ($\pm 20\%$) |
-| **Mature Outreach** | Day 15+ | **8 DMs / hr** | **50 DMs / day** *(Hard Ceiling)* | 6–12 min + non-constant jitter ($\pm 20\%$) |
+| **Warm-up Phase 1** | Days 1â€“3 | **2 DMs / hr** | **10 DMs / day** | 15â€“25 min + non-constant jitter ($\pm 20\%$) |
+| **Warm-up Phase 2** | Days 4â€“7 | **4 DMs / hr** | **20 DMs / day** | 10â€“18 min + non-constant jitter ($\pm 20\%$) |
+| **Warm-up Phase 3** | Days 8â€“14 | **6 DMs / hr** | **35 DMs / day** | 8â€“14 min + non-constant jitter ($\pm 20\%$) |
+| **Mature Outreach** | Day 15+ | **8 DMs / hr** | **50 DMs / day** *(Hard Ceiling)* | 6â€“12 min + non-constant jitter ($\pm 20\%$) |
 
 #### Safety & Compliance Rules:
 - **Working Hours Deferral**: Messages are only dispatched between **09:00 and 18:00** in the lead's local timezone. Deliveries outside this window are automatically deferred to 09:00 the following morning.
@@ -369,7 +371,7 @@ Key configuration variables in `.env` (refer to `.env.example` for template):
 
 ```bash
 # --- Core Application & Security ---
-DATABASE_URL="postgresql://user:password@localhost:5432/insta_scraper_prod"
+DATABASE_URL="mysql://user:password@localhost:3306/insta_scraper_prod?connection_limit=5"
 AUTH_SECRET="your-32-char-random-auth-secret-here"
 NEXTAUTH_URL="http://localhost:3001"
 
@@ -409,6 +411,6 @@ Follow this checklist to safely execute your initial campaign without risking ac
   - Confirm that multi-channel leads (without IG, but with phone/email) are safely marked and preserved.
 - [ ] **5. Review Message Drafts**: Inspect generated drafts for Tier A and Tier B leads. Ensure tone and merge variables (`{{businessName}}`, `{{city}}`) render accurately.
 - [ ] **6. Approve & Dispatch First Test DM**: Click **"Send Controlled Test Message"** for a single lead to verify real-time browser delivery and session integrity.
-- [ ] **7. Enable Scheduled Queue**: Queue the remaining approved leads. The engine will automatically space sends with 15–25 minute randomized jitter during recipient business hours (9am–6pm).
+- [ ] **7. Enable Scheduled Queue**: Queue the remaining approved leads. The engine will automatically space sends with 15â€“25 minute randomized jitter during recipient business hours (9amâ€“6pm).
 - [ ] **8. Monitor Outcome Analytics**: Check the **Analytics** tab to track delivered messages, reply rates, and cost per positive response.
 

@@ -41,7 +41,7 @@ Ensure the following variables are configured in the production environment (do 
 
 ### Core Application & Database
 - `NODE_ENV` (`production`)
-- `DATABASE_URL` (production PostgreSQL connection string)
+- `DATABASE_URL` (production MySQL/MariaDB connection string, e.g. `mysql://user:pass@host:3306/db?connection_limit=5`; add TLS parameters if remote access is enabled)
 - `AUTH_SECRET` (minimum 32-character high-entropy secret)
 - `APP_URL` or `NEXT_PUBLIC_APP_URL` (public canonical URL)
 

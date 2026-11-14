@@ -1,8 +1,7 @@
 /* eslint-disable */
 // Automated API verification script for Step 5
-import { PrismaClient } from "./src/generated/prisma/client";
-import { PrismaPg } from "@prisma/adapter-pg";
 import "dotenv/config";
+import { createPrismaClient } from "./src/lib/db/prisma";
 
 const BASE_URL = "http://localhost:3001";
 
@@ -21,10 +20,7 @@ async function main() {
     }
   }
 
-  const connectionString = process.env.DATABASE_URL;
-  const prisma = new PrismaClient({
-    adapter: new PrismaPg({ connectionString: connectionString! }),
-  });
+  const prisma = createPrismaClient();
 
   // 1. Test POST /api/campaigns validation (empty name)
   {
