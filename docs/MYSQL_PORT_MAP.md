@@ -497,6 +497,26 @@ TODO(mysql-port): Phase 4 - ETL, dedup guard verification, concurrency tests
 TODO(mysql-port): Phase 5 - cutover/rollback plan
 ```
 
+## 8.1 Phase 1 status (implemented on `mysql-port`)
+
+```text
+Local MySQL: 8.0.46 at 127.0.0.1:3307 (Docker)
+Dev DB: insta_scraper_mysql_dev (baseline applied)
+Test DB: insta_scraper_mysql_test (baseline applied)
+Baseline migration: prisma/migrations/20261114000000_mysql_baseline
+Old Postgres migrations: prisma/migrations-postgres/ (40, kept for main)
+Tables created: 35 + _prisma_migrations
+Drift check: prisma migrate diff -> No difference detected (exit 0)
+Smoke test: scripts/test_mysql_smoke.ts -> PASS (create user/profile/campaign/lead, read, cascade delete)
+Typecheck: 65 errors, all expected Phase 2/3 work (22 unsupported Json/filter operators,
+  16 type assignability from list placeholders, 14 JsonValue property/method errors,
+  4 argument-shape errors, 2 non-iterable Json, 2 index errors, 2 null guards,
+  2 overload errors, 1 missing campaign relation in a selected lead type)
+Lint: 0 errors, 6 pre-existing warnings
+```
+
+Phase 1 schema placeholders: 11 scalar-list fields are temporarily `Json?`/`Json` with `TODO(mysql-port): Phase 2`; `CompanyProfile.services` is nullable until the JSON-default decision; partial unique indexes are not in the baseline (Phase 2); `mode: "insensitive"` and raw SQL are untouched (Phase 3).
+
 ## 9. Open questions
 
 1. Confirm the exact Hostinger server version and whether it is **MySQL 8** or **MariaDB** (phpMyAdmin “Server version”).
