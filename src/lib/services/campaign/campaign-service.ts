@@ -2,6 +2,7 @@ import "server-only";
 
 import type { LeadProfile, SkippedScrapeProfile } from "@/lib/types";
 import { getPrismaClient } from "@/lib/db/prisma";
+import { withMysqlRetry } from "@/lib/db/mysql-retry";
 import {
   CampaignStatus,
   ScrapeJobStatus,
@@ -38,6 +39,7 @@ import {
   parseCampaignFollowUpDelayDays,
   parseCampaignFollowUpTemplates,
 } from "../lead/json-lists";
+import { scoreFlagCreate, withLeadChannelFlags } from "../lead/lead-channels";
 
 export const CAMPAIGN_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 
@@ -1533,7 +1535,8 @@ export async function persistCampaignLeads(
   const source = options?.source ?? "apify";
   const isDryRun = options?.isDryRun === true;
 
-  return await prisma.$transaction(async (tx) => {
+  return await withMysqlRetry(() =>
+    prisma.$transaction(async (tx) => {
     // In real runs, dry-run leads never count towards currentTotal or limits
     const currentTotal = await tx.lead.count({
       where: {
@@ -1574,7 +1577,12 @@ export async function persistCampaignLeads(
       updatedLeads: result.stats.enriched,
       dedupStats: result.stats,
     };
-  });
+    }, {
+      isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
+      timeout: 30_000,
+      maxWait: 5_000,
+    }),
+  );
 }
 
 /** Rich (enrichment) fields shared by create and enrich. Images are explicitly null to drop unwanted actor fields. */
@@ -1599,7 +1607,7 @@ function richProfileFields(profile: LeadProfile) {
     socialLink: profile.socialLink ?? null,
     socialPlatform: profile.socialPlatform ?? null,
     contactSource: profile.contactSource ?? null,
-    availableChannels: profile.availableChannels ?? [],
+    ...withLeadChannelFlags(profile.availableChannels ?? []),
     gmapsPlaceId: profile.gmapsPlaceId ?? null,
     rating: profile.rating ?? profile.gmapsRating ?? null,
     reviewCount: profile.reviewCount ?? profile.gmapsReviews ?? null,
@@ -1610,7 +1618,7 @@ function richProfileFields(profile: LeadProfile) {
     qualityScore: profile.qualityScore ?? null,
     qualityTier: profile.qualityTier ?? null,
     scoreBreakdown: profile.scoreBreakdown ? (profile.scoreBreakdown as Prisma.InputJsonValue) : Prisma.DbNull,
-    scoreFlags: profile.scoreFlags ?? [],
+    scoreFlags: scoreFlagCreate(profile.scoreFlags ?? []),
     isChain: profile.isChain ?? false,
     isGroup: profile.isGroup ?? false,
     groupKey: profile.groupKey ?? null,

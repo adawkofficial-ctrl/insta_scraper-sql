@@ -246,29 +246,6 @@ function uniq(values: Array<string | null | undefined>): string[] {
   );
 }
 
-/**
- * Runs `fn` inside a Postgres SAVEPOINT so a unique-violation (or any error)
- * does not abort the whole transaction. Without this, a P2002 inside a Prisma
- * interactive transaction makes every subsequent statement fail with 25P02
- * ("current transaction is aborted").
- */
-async function withSavepoint<T>(
-  tx: Prisma.TransactionClient,
-  fn: () => Promise<T>,
-): Promise<{ ok: true; value: T } | { ok: false; error: unknown }> {
-  const name = `sp_${Math.random().toString(36).slice(2, 10)}`;
-  await tx.$executeRawUnsafe(`SAVEPOINT ${name}`);
-  try {
-    const value = await fn();
-    await tx.$executeRawUnsafe(`RELEASE SAVEPOINT ${name}`);
-    return { ok: true, value };
-  } catch (error) {
-    await tx.$executeRawUnsafe(`ROLLBACK TO SAVEPOINT ${name}`).catch(() => undefined);
-    await tx.$executeRawUnsafe(`RELEASE SAVEPOINT ${name}`).catch(() => undefined);
-    return { ok: false, error };
-  }
-}
-
 /** Prefer CONTACTED-or-later, then oldest createdAt, then id for stability. */
 function pickCanonical(leads: CandidateLead[]): CandidateLead {
   return [...leads].sort((a, b) => {
@@ -701,24 +678,32 @@ export async function applyClassifiedProfiles(
       }
 
       if (Object.keys(data).length > 0) {
-        const attempt = await withSavepoint(tx, () =>
-          tx.lead.update({ where: { id: winnerId }, data }),
-        );
-        if (attempt.ok) {
+        try {
+          await tx.lead.update({ where: { id: winnerId }, data });
           stats.enriched += 1;
-        } else if ((attempt.error as { code?: string }).code === "P2002") {
+        } catch (error) {
+          if ((error as { code?: string }).code !== "P2002") throw error;
+          // MySQL/InnoDB rolls back only the failed statement; the transaction
+          // remains usable. Retry without the unique-constrained fields.
           logger.warn("[DEDUP] username change skipped (unique conflict)", { leadId: winnerId });
           const fallback: Prisma.LeadUpdateInput = { ...data };
+          // Every guarded identity field can collide: username, email and the
+          // Instagram user id all have active unique guard indexes.
           delete fallback.username;
           delete fallback.usernameNormalized;
+          delete fallback.emailNormalized;
+          delete fallback.instagramUserId;
           delete fallback.profileUrlCanonical;
           delete fallback.previousUsernames;
+          delete fallback.scoreFlags;
           if (Object.keys(fallback).length > 0) {
-            await tx.lead.update({ where: { id: winnerId }, data: fallback });
-            stats.enriched += 1;
+            try {
+              await tx.lead.update({ where: { id: winnerId }, data: fallback });
+              stats.enriched += 1;
+            } catch (fallbackError) {
+              logger.warn("[DEDUP] fallback enrich failed", { leadId: winnerId, code: (fallbackError as { code?: string }).code, message: (fallbackError as { message?: string }).message });
+            }
           }
-        } else {
-          throw attempt.error;
         }
       }
       continue;
@@ -793,15 +778,18 @@ export async function applyClassifiedProfiles(
     };
 
     const extras = input.extraCreateFields?.(profile, index) ?? {};
-    const attempt = await withSavepoint(tx, () =>
-      tx.lead.create({
+    let created: { id: string } | null = null;
+    let createError: unknown = null;
+    try {
+      created = await tx.lead.create({
         data: { ...extras, ...createData } as Prisma.LeadUncheckedCreateInput,
         select: { id: true },
-      }),
-    );
+      });
+    } catch (error) {
+      createError = error;
+    }
 
-    if (attempt.ok) {
-      const created = attempt.value;
+    if (created) {
       createdLeadIds.push(created.id);
       createdByIndex.set(index, created.id);
       currentTotal += 1;
@@ -817,17 +805,17 @@ export async function applyClassifiedProfiles(
       continue;
     }
 
-    if ((attempt.error as { code?: string }).code !== "P2002" || !n.usernameNormalized) {
-      throw attempt.error;
+    if ((createError as { code?: string }).code !== "P2002" || !n.usernameNormalized) {
+      throw createError;
     }
 
-    // Race: another writer inserted the same person. The savepoint rolled back
-    // the failed INSERT, so the transaction is usable again.
+    // Race: another writer inserted the same person. InnoDB only rolls back the
+    // failed INSERT, so the transaction is still usable; re-read and link.
     const existing = (await tx.lead.findFirst({
       where: { userId: input.userId, usernameNormalized: n.usernameNormalized },
       select: CANDIDATE_SELECT,
     })) as CandidateLead | null;
-    if (!existing) throw attempt.error;
+    if (!existing) throw createError;
 
     stats.hardDuplicates += 1;
     stats.byKey.USERNAME += 1;
@@ -901,7 +889,7 @@ export async function wasPreviouslyContacted(
  * `lastContactedAt` set or an OUTBOUND SENT message. The group spans both the
  * duplicate-pointer group AND same-user + same-usernameNormalized siblings, so
  * a person contacted via another campaign is excluded even before links exist.
- * Bounded queries (≤4), never per lead.
+ * Bounded queries (Ã¢â€°Â¤4), never per lead.
  */
 export async function findPreviouslyContactedLeadIds(
   leadIds: string[],

@@ -6,6 +6,8 @@ import {
   InstagramSenderStatus,
   MessageStatus,
 } from "@/generated/prisma/enums";
+import { Prisma } from "@/generated/prisma/client";
+import { withMysqlRetry } from "@/lib/db/mysql-retry";
 import { logger } from "@/lib/logger";
 import { checkLeadSuppression, DncChannel } from "../compliance";
 import { notifySenderStatusChange } from "../notifications/notification-triggers";
@@ -537,7 +539,7 @@ export function formatSenderHourString(date: Date, timezone = "UTC"): string {
 }
 
 // ---------------------------------------------------------------------------
-// STEP 1 — SHARED SEND GATE: canSendNow
+// STEP 1 â€” SHARED SEND GATE: canSendNow
 // ---------------------------------------------------------------------------
 
 export type CanSendNowInput = {
@@ -580,6 +582,8 @@ export type CanSendNowInput = {
   bypassGapCheck?: boolean;
   bypassWorkingHours?: boolean;
   skipWeekends?: boolean;
+  /** Reuse the caller's transaction connection to avoid pool starvation. */
+  tx?: Prisma.TransactionClient;
 };
 
 export type CanSendNowResult = {
@@ -598,7 +602,7 @@ export type CanSendNowResult = {
 };
 
 /**
- * STEP 1 — The single shared send gate.
+ * STEP 1 â€” The single shared send gate.
  * Checks, strictly in order:
  * 1. Sender status healthy (not paused, connected/active/warming)
  * 2. DNC / suppression
@@ -612,8 +616,6 @@ export async function canSendNow(
   arg1: string | CanSendNowInput,
   arg2?: Date | (Omit<CanSendNowInput, "senderAccountId"> & { now?: Date }),
 ): Promise<CanSendNowResult> {
-  const prisma = getPrismaClient();
-
   let input: CanSendNowInput;
   if (typeof arg1 === "string") {
     if (arg2 instanceof Date) {
@@ -627,6 +629,7 @@ export async function canSendNow(
     input = arg1;
   }
 
+  const prisma = input.tx ?? getPrismaClient();
   const now = input.now ?? getSendGateNow();
 
   // 0a. Global Outbound Sending Kill Switch
@@ -816,6 +819,7 @@ export async function canSendNow(
         userId: sender.userId,
         lead: leadToCheck,
         channel: DncChannel.INSTAGRAM,
+        tx: input.tx,
       });
 
       if (suppression.suppressed) {
@@ -979,7 +983,7 @@ export async function canSendNow(
 }
 
 // ---------------------------------------------------------------------------
-// STEP 2 — PERSISTENT COUNTERS: Atomic Reservation & Release
+// STEP 2 â€” PERSISTENT COUNTERS: Atomic Reservation & Release
 // ---------------------------------------------------------------------------
 
 export type ReserveSendSlotInput = {
@@ -1048,7 +1052,8 @@ export async function reserveSendSlot(
     ? createHash("sha256").update(input.messageText.trim()).digest("hex")
     : null;
 
-  return prisma.$transaction(async (tx) => {
+  return withMysqlRetry(() =>
+    prisma.$transaction(async (tx) => {
     let dbLead: {
       id: string;
       isDryRun: boolean;
@@ -1140,7 +1145,9 @@ export async function reserveSendSlot(
     }
 
     // 0. Serialize concurrent slot allocations for this sender via row locking
-    await tx.$queryRaw`SELECT id FROM "InstagramSenderAccount" WHERE id = ${input.senderAccountId} FOR UPDATE`;
+    await tx.$queryRaw(
+      Prisma.sql`SELECT id FROM \`InstagramSenderAccount\` WHERE id = ${input.senderAccountId} FOR UPDATE`,
+    );
 
     // 1. Check idempotency: Never send the same (campaignId, leadId, step) twice
     const existing = await tx.outboundSendIdempotency.findUnique({
@@ -1218,6 +1225,7 @@ export async function reserveSendSlot(
       bypassGapCheck: input.bypassGapCheck,
       bypassWorkingHours: input.bypassWorkingHours,
       skipWeekends: input.skipWeekends,
+      tx,
     });
 
     if (!gateCheck.allowed) {
@@ -1288,7 +1296,12 @@ export async function reserveSendSlot(
       step,
       idempotencyKey: idempotency.id,
     };
-  });
+    }, {
+      isolationLevel: Prisma.TransactionIsolationLevel.ReadCommitted,
+      timeout: 60_000,
+      maxWait: 5_000,
+    }),
+  );
 }
 
 export type ReleaseSendSlotInput = {
@@ -1493,7 +1506,7 @@ export async function reconcileUnknownSendSlot(
 
 
 // ---------------------------------------------------------------------------
-// STEP 3 — SPREAD SENDS ACROSS HEALTHY SENDERS (ROUND-ROBIN BY REMAINING QUOTA)
+// STEP 3 â€” SPREAD SENDS ACROSS HEALTHY SENDERS (ROUND-ROBIN BY REMAINING QUOTA)
 // ---------------------------------------------------------------------------
 
 export type SenderWithQuota = {
@@ -1578,7 +1591,7 @@ export function chooseHealthySender(
 }
 
 // ---------------------------------------------------------------------------
-// STEP 5 — MESSAGE VARIATION & SPAM SIGNAL REDUCTION GUARD
+// STEP 5 â€” MESSAGE VARIATION & SPAM SIGNAL REDUCTION GUARD
 // ---------------------------------------------------------------------------
 
 export type MessageVariationValidationResult =
