@@ -95,6 +95,18 @@ Copied exactly as stored; never decrypted or printed:
 - Resume test (partial tables + `--resume`): verify **82 PASS / 0 FAIL**.
 - MariaDB staging: 1265 written, 0 quarantine, 1.3 s, **~981 rows/s**; verify **82 PASS / 0 FAIL**.
 
+## Staging smoke (app run against staging)
+
+`scripts/etl/smoke-staging.ts` (sending disabled):
+- health 200, health/ready 200
+- login 200
+- campaign list = 1 real campaign
+- campaign lead count = 223
+- lead list/detail 200; lead has a sighting row; lead events readable
+- 20 DNC entries added via API; all 20 case/whitespace variants suppressed
+
+Result: **11 PASS / 0 FAIL**. The staging-only smoke admin owns the copied campaign; source was not modified.
+
 ## Cutover TODOs (Phase 5)
 
 - Re-register Unipile accounts/webhooks; re-login or re-create Playwright sessions on the new host.
