@@ -166,21 +166,38 @@ async function runTests() {
   assert(dupStartData.isNew === false, "Returns isNew: false for duplicate active execution");
 
   console.log("\n5. TEST: Pause button & state transition");
-  // Ensure campaign is RUNNING before testing pause
-  await prisma.campaign.update({
-    where: { id: campaignA.id },
-    data: { status: CampaignStatus.RUNNING },
-  });
-  await prisma.campaignExecution.updateMany({
-    where: { campaignId: campaignA.id },
-    data: { status: CampaignExecutionStatus.RUNNING },
-  });
-
-  const pauseRes = await fetch(`${BASE_URL}/api/campaigns/${campaignA.id}/pause`, {
-    method: "POST",
-    headers: { Cookie: userA.cookie },
-  });
-  const pauseBody = await pauseRes.clone().text();
+  // The background worker can auto-pause between the reset and this request.
+  // Reset a terminal execution and retry; assertions stay the same.
+  let pauseRes: Response | null = null;
+  let pauseBody = "";
+  for (let attempt = 0; attempt < 3; attempt++) {
+    await prisma.campaign.update({
+      where: { id: campaignA.id },
+      data: { status: CampaignStatus.RUNNING },
+    });
+    await prisma.campaignExecution.updateMany({
+      where: {
+        campaignId: campaignA.id,
+        status: {
+          in: [
+            CampaignExecutionStatus.PAUSED,
+            CampaignExecutionStatus.COMPLETED,
+            CampaignExecutionStatus.PARTIAL,
+            CampaignExecutionStatus.FAILED,
+          ],
+        },
+      },
+      data: { status: CampaignExecutionStatus.RUNNING },
+    });
+    pauseRes = await fetch(`${BASE_URL}/api/campaigns/${campaignA.id}/pause`, {
+      method: "POST",
+      headers: { Cookie: userA.cookie },
+    });
+    pauseBody = await pauseRes.clone().text();
+    if (pauseRes.ok) break;
+    await new Promise((resolve) => setTimeout(resolve, 200));
+  }
+  if (!pauseRes) throw new Error("Pause request was not issued");
   assert(pauseRes.ok, "Pause endpoint returns 200 OK", `status=${pauseRes.status} body=${pauseBody}`);
   const pausedStatus = await getCampaignExecutionStatus(campaignA.id, userA.user.id);
   assert(pausedStatus.campaignStatus === "PAUSED", "Campaign status updated to PAUSED in DB");

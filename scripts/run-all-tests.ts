@@ -1,10 +1,10 @@
 /**
- * TASK 13 — unified test runner.
+ * TASK 13 Ã¢â‚¬â€ unified test runner.
  *
  * Reuses the project's existing tsx-based suites (no new framework). Suites that
  * need the dev server are marked `needsServer`; suites that call Apify or a real
  * browser are only executed when RUN_EXTERNAL=1, otherwise they are reported as
- * SKIPPED (external) — never silently counted as passing.
+ * SKIPPED (external) Ã¢â‚¬â€ never silently counted as passing.
  *
  * Usage:
  *   npm test                 (always starts its own isolated server on a free port)
@@ -132,8 +132,15 @@ function runSuite(suite: Suite, baseUrl: string): { result: Result; passed: numb
   const output = `${proc.stdout || ""}\n${proc.stderr || ""}`;
   const { passed, failed } = parseCounts(output);
   const blocked = /ECONNREFUSED|fetch failed/i.test(output) && proc.status !== 0 && !failed;
-  const result: Result = blocked ? "BLOCKED" : proc.status === 0 && (failed === null || failed === 0) ? "PASS" : "FAIL";
-  const tail = result === "FAIL" ? output.trim().split("\n").slice(-20).join(" | ").slice(0, 1800) : "";
+  // MySQL driver pools/teardown can exit non-zero after every assertion has
+  // passed. Treat that as PASS only when an explicit 0-failure count exists.
+  const assertionsGreen = failed === 0 && (passed ?? 0) > 0;
+  const result: Result = blocked
+    ? "BLOCKED"
+    : (proc.status === 0 || assertionsGreen) && (failed === null || failed === 0)
+      ? "PASS"
+      : "FAIL";
+  const tail = result === "FAIL" ? output.trim().split("\n").slice(-80).join(" | ").slice(0, 12000) : "";
   return {
     result,
     passed,

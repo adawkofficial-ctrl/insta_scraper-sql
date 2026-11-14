@@ -370,11 +370,22 @@ async function main() {
   // Orchestrator End-to-End Coordination Test
   // -------------------------------------------------------------
   console.log("\n--- Orchestrator Coordination Test ---");
+  // Dedup is user-global, so use an isolated user for the orchestrator test to
+  // avoid cross-test hard-duplicate classification.
+  const orchUser = await prisma.user.create({
+    data: {
+      email: `orch_user_${runId}@example.com`,
+      passwordHash: "hash123",
+    },
+  });
+  const orchProfileRecord = await prisma.companyProfile.create({
+    data: { userId: orchUser.id, name: "Orchestrator Co" },
+  });
   const orchestratorCampaign = await prisma.campaign.create({
     data: {
-      userId: user.id,
+      userId: orchUser.id,
       name: "Orchestrator Coordination Campaign",
-      companyProfileId: companyProfile.id,
+      companyProfileId: orchProfileRecord.id,
       intent: "Dentist",
       location: "Austin, TX",
       leadLimit: 10,
@@ -459,7 +470,7 @@ async function main() {
       category: "Dentist",
       maxLeads: 10,
     },
-    user.id,
+    orchUser.id,
     undefined,
     {
       discoveryProvider: orchDiscoveryProvider,
@@ -484,8 +495,10 @@ async function main() {
   await prisma.lead.deleteMany({ where: { campaignId: { in: [campaign.id, orchestratorCampaign.id] } } });
   await prisma.scrapeJob.deleteMany({ where: { campaignId: { in: [campaign.id, orchestratorCampaign.id] } } });
   await prisma.campaign.deleteMany({ where: { id: { in: [campaign.id, orchestratorCampaign.id] } } });
-  await prisma.companyProfile.deleteMany({ where: { id: companyProfile.id } });
-  await prisma.user.deleteMany({ where: { id: user.id } });
+  await prisma.companyProfile.deleteMany({
+    where: { id: { in: [companyProfile.id, orchProfileRecord.id] } },
+  });
+  await prisma.user.deleteMany({ where: { id: { in: [user.id, orchUser.id] } } });
   console.log("Cleanup complete.\n");
 
   console.log("=================================================================");

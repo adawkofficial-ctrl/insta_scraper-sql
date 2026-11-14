@@ -42,16 +42,30 @@ function assertSafeTestDatabase(testDbUrl, options) {
     process.exit(1);
   }
 
-  if (!/^(mysql|mariadb):\/\//i.test(dbUrl)) {
-    const msg = `FATAL: mysql-port tests require a mysql:// or mariadb:// DATABASE_URL_TEST.`;
+  // Refuse production/live names before checking the URL scheme so a
+  // production Postgres URL is still rejected with the expected safety error.
+  if (/prod|live/i.test(dbName)) {
+    const msg = `FATAL: Refusing to run tests against production/live database: "${dbName}". Tests must run against a dedicated test database (DATABASE_URL_TEST).`;
     if (options && options.throwOnError) throw new Error(msg);
     console.error(msg);
     process.exit(1);
   }
 
-  // Refuse if name matches /prod|live/i
-  if (/prod|live/i.test(dbName)) {
-    const msg = `FATAL: Refusing to run tests against production/live database: "${dbName}". Tests must run against a dedicated test database (DATABASE_URL_TEST).`;
+  // Refuse if equals DATABASE_URL's DB while NODE_ENV=production.
+  const prodUrl = (options && options.prodDbUrl) || process.env.ORIGINAL_DATABASE_URL || process.env.DATABASE_URL;
+  const nodeEnv = (options && options.nodeEnv) || process.env.NODE_ENV;
+  if (prodUrl && nodeEnv === "production") {
+    const prodDbName = extractDatabaseName(prodUrl);
+    if (dbName === prodDbName) {
+      const msg = `FATAL: Refusing to run tests against primary database "${dbName}" while NODE_ENV=production. Tests must run against a dedicated test database (DATABASE_URL_TEST).`;
+      if (options && options.throwOnError) throw new Error(msg);
+      console.error(msg);
+      process.exit(1);
+    }
+  }
+
+  if (!/^(mysql|mariadb):\/\//i.test(dbUrl)) {
+    const msg = `FATAL: mysql-port tests require a mysql:// or mariadb:// DATABASE_URL_TEST.`;
     if (options && options.throwOnError) throw new Error(msg);
     console.error(msg);
     process.exit(1);
@@ -64,18 +78,6 @@ function assertSafeTestDatabase(testDbUrl, options) {
     process.exit(1);
   }
 
-  // Refuse if equals DATABASE_URL's DB while NODE_ENV=production
-  const prodUrl = (options && options.prodDbUrl) || process.env.ORIGINAL_DATABASE_URL || process.env.DATABASE_URL;
-  const nodeEnv = (options && options.nodeEnv) || process.env.NODE_ENV;
-  if (prodUrl && nodeEnv === "production") {
-    const prodDbName = extractDatabaseName(prodUrl);
-    if (dbName === prodDbName) {
-      const msg = `FATAL: Refusing to run tests against primary database "${dbName}" while NODE_ENV=production. Tests must run against a dedicated test database (DATABASE_URL_TEST).`;
-      if (options && options.throwOnError) throw new Error(msg);
-      console.error(msg);
-      process.exit(1);
-    }
-  }
 }
 
 module.exports = {

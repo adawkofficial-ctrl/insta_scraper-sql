@@ -52,7 +52,7 @@ function check(cond: boolean, name: string, detail?: string) {
   }
 }
 
-/** Controlled Playwright replacement — no real browser or Instagram traffic. */
+/** Controlled Playwright replacement â€” no real browser or Instagram traffic. */
 class MockSession implements SenderBrowserSession {
   readonly id = `mock_${Math.random().toString(36).slice(2, 8)}`;
   readonly context = {} as BrowserContext;
@@ -650,10 +650,15 @@ async function main() {
   const sessionManualClose = manager.getInteractiveSession(senderManualClose.id) as unknown as MockSession | null;
   check(sessionManualClose !== null, "[F] manual-login session tracked before manual close");
   sessionManualClose!.simulateExternalClose();
-  await sleep(80);
-  const manualCloseRow = await prisma.instagramSenderAccount.findUnique({
+  let manualCloseRow = await prisma.instagramSenderAccount.findUnique({
     where: { id: senderManualClose.id },
   });
+  for (let i = 0; i < 40 && manualCloseRow?.status !== "AUTH_REQUIRED"; i++) {
+    await sleep(50);
+    manualCloseRow = await prisma.instagramSenderAccount.findUnique({
+      where: { id: senderManualClose.id },
+    });
+  }
   check(
     manualCloseRow?.status === "AUTH_REQUIRED",
     "[F] user-closed browser moves CONNECTING -> AUTH_REQUIRED",

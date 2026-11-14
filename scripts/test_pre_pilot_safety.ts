@@ -352,15 +352,15 @@ async function run() {
   const { assertSafeTestDatabase, extractDatabaseName } = require("./test_db_guard.cjs");
 
   assert.strictEqual(
-    extractDatabaseName("postgresql://user:pass@localhost:5432/insta_scraper_test?schema=public"),
-    "insta_scraper_test",
+    extractDatabaseName("mysql://user:pass@localhost:3306/insta_scraper_mysql_test?schema=public"),
+    "insta_scraper_mysql_test",
     "extractDatabaseName must correctly extract db name"
   );
 
   // 4A: Blocks database matching /prod/i
   assert.throws(
     () => {
-      assertSafeTestDatabase("postgresql://localhost:5432/insta_scraper_prod", { throwOnError: true });
+      assertSafeTestDatabase("mysql://localhost:3306/insta_scraper_prod", { throwOnError: true });
     },
     /Refusing to run tests against production\/live database/,
     "Must refuse to run against database matching /prod/i"
@@ -369,7 +369,7 @@ async function run() {
   // 4B: Blocks database matching /live/i
   assert.throws(
     () => {
-      assertSafeTestDatabase("postgresql://localhost:5432/client_live_db", { throwOnError: true });
+      assertSafeTestDatabase("mysql://localhost:3306/client_live_db", { throwOnError: true });
     },
     /Refusing to run tests against production\/live database/,
     "Must refuse to run against database matching /live/i"
@@ -378,8 +378,8 @@ async function run() {
   // 4C: Blocks when DB equals primary DB and NODE_ENV=production
   assert.throws(
     () => {
-      assertSafeTestDatabase("postgresql://localhost:5432/my_custom_db", {
-        prodDbUrl: "postgresql://localhost:5432/my_custom_db",
+      assertSafeTestDatabase("mysql://localhost:3306/my_custom_db", {
+        prodDbUrl: "mysql://localhost:3306/my_custom_db",
         nodeEnv: "production",
         throwOnError: true,
       });
@@ -390,7 +390,7 @@ async function run() {
 
   // 4D: Allows safe test DB
   assert.doesNotThrow(() => {
-    assertSafeTestDatabase("postgresql://localhost:5432/insta_scraper_test", { throwOnError: true });
+    assertSafeTestDatabase("mysql://localhost:3306/insta_scraper_mysql_test", { throwOnError: true });
   }, "Must allow dedicated test database");
   console.log("  PASS: Database isolation guard blocks prod/live DBs and production collisions");
 

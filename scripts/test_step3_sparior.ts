@@ -357,11 +357,17 @@ async function runStep3Tests() {
       fetchFn: mockFetch,
     });
 
+    const usageUser = await prisma.user.create({
+      data: {
+        email: `sparior_profile_test_${Date.now()}@example.com`,
+        passwordHash: "hash123",
+      },
+    });
     const provider = new SpariorDiscoveryProvider(client);
     const result = await provider.discover({
       query: "fitness",
       limit: 10,
-      userId: `user_test8_${Date.now()}`,
+      userId: usageUser.id,
     });
 
     assert.equal(result.candidates.length, 4);
