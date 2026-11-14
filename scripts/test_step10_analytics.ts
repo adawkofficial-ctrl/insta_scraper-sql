@@ -1,7 +1,7 @@
 /* eslint-disable */
 import "dotenv/config";
 import { PrismaClient } from "../src/generated/prisma/client";
-import { PrismaPg } from "@prisma/adapter-pg";
+import { createPrismaClient } from "../src/lib/db/prisma";
 
 const BASE_URL = "http://localhost:3001";
 
@@ -24,9 +24,7 @@ async function runStep10Tests() {
   }
 
   const connectionString = process.env.DATABASE_URL!;
-  const prisma = new PrismaClient({
-    adapter: new PrismaPg({ connectionString }),
-  });
+  const prisma = createPrismaClient();
 
   try {
     // ----------------------------------------------------

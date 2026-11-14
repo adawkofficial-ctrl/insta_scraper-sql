@@ -1,6 +1,6 @@
 import "dotenv/config";
 import { PrismaClient } from "../src/generated/prisma/client";
-import { PrismaPg } from "@prisma/adapter-pg";
+import { createPrismaClient } from "../src/lib/db/prisma";
 
 async function main() {
   console.log("===============================================================");
@@ -8,9 +8,7 @@ async function main() {
   console.log("===============================================================\n");
 
   const connectionString = process.env.DATABASE_URL!;
-  const prisma = new PrismaClient({
-    adapter: new PrismaPg({ connectionString }),
-  });
+  const prisma = createPrismaClient();
 
   // 1. Authenticate user
   console.log("[1] Authenticating user...");

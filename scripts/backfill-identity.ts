@@ -19,16 +19,14 @@
  */
 import "dotenv/config";
 import { PrismaClient } from "../src/generated/prisma/client";
-import { PrismaPg } from "@prisma/adapter-pg";
+import { createPrismaClient } from "../src/lib/db/prisma";
 import { normalizeEmail, normalizeUsername, normalizeWebsite, canonicalProfileUrl } from "../src/lib/services/dedup/identity";
 
 const DRY_RUN = process.argv.includes("--dry-run");
 const BATCH = 500;
 
 async function main() {
-  const prisma = new PrismaClient({
-    adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL! }),
-  });
+  const prisma = createPrismaClient();
 
   const total = await prisma.lead.count();
   let scanned = 0;

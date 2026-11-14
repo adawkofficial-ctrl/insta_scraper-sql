@@ -1,6 +1,6 @@
 import "dotenv/config";
 import { PrismaClient, Prisma } from "../src/generated/prisma/client";
-import { PrismaPg } from "@prisma/adapter-pg";
+import { createPrismaClient } from "../src/lib/db/prisma";
 import {
   normalizeInstagramProfileItem,
   extractActorError,
@@ -50,9 +50,7 @@ async function main() {
   console.log(`   Base URL: ${BASE_URL}`);
   console.log("=================================================================\n");
 
-  const prisma = new PrismaClient({
-    adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL! }),
-  });
+  const prisma = createPrismaClient();
 
   // -------------------------------------------------------------
   // 1. Profile Response Normalization Unit Tests

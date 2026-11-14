@@ -1,7 +1,7 @@
 /* eslint-disable @typescript-eslint/no-explicit-any */
 import "dotenv/config";
 import { PrismaClient } from "../src/generated/prisma/client";
-import { PrismaPg } from "@prisma/adapter-pg";
+import { createPrismaClient } from "../src/lib/db/prisma";
 import { BulkMessageItemStatus } from "../src/generated/prisma/enums";
 
 const BASE_URL = process.env.TEST_BASE_URL || "http://localhost:3005";
@@ -64,7 +64,7 @@ async function main() {
   console.log("   TASK 13: E2E + REGRESSION GAP SUITE (deterministic)           ");
   console.log("=================================================================");
 
-  const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL! }) });
+  const prisma = createPrismaClient();
 
   try {
     const A = await register("A");

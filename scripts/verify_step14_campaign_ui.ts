@@ -1,14 +1,12 @@
 import "dotenv/config";
 import { PrismaClient } from "../src/generated/prisma/client";
-import { PrismaPg } from "@prisma/adapter-pg";
+import { createPrismaClient } from "../src/lib/db/prisma";
 
 async function main() {
   console.log("==> Running Step 14 Campaign Verification...");
 
   const connectionString = process.env.DATABASE_URL!;
-  const prisma = new PrismaClient({
-    adapter: new PrismaPg({ connectionString }),
-  });
+  const prisma = createPrismaClient();
 
   const user = await prisma.user.findUnique({
     where: { email: "pcplayer809@gmail.com" },

@@ -4,7 +4,7 @@ import fs from "fs";
 import path from "path";
 import { chromium, type Page, type Request as PlaywrightRequest } from "playwright";
 import { PrismaClient } from "../src/generated/prisma/client";
-import { PrismaPg } from "@prisma/adapter-pg";
+import { createPrismaClient } from "../src/lib/db/prisma";
 import { SignJWT } from "jose";
 
 const BASE_URL = process.env.TEST_BASE_URL || "http://localhost:3001";
@@ -71,9 +71,7 @@ async function runTest() {
   console.log(`   Campaign ID: ${CAMPAIGN_ID}`);
   console.log("==================================================================\n");
 
-  const prisma = new PrismaClient({
-    adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL! }),
-  });
+  const prisma = createPrismaClient();
 
   const sessionToken = await createAuthToken();
   const cookie = `insta_session=${sessionToken}`;

@@ -18,7 +18,7 @@
  */
 import "dotenv/config";
 import { PrismaClient } from "../src/generated/prisma/client";
-import { PrismaPg } from "@prisma/adapter-pg";
+import { createPrismaClient } from "../src/lib/db/prisma";
 import { MessageDirection, MessageStatus } from "../src/generated/prisma/enums";
 
 const APPLY = process.argv.includes("--apply");
@@ -43,9 +43,7 @@ type LeadRow = {
 };
 
 async function main() {
-  const prisma = new PrismaClient({
-    adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL! }),
-  });
+  const prisma = createPrismaClient();
 
   const leads = (await prisma.lead.findMany({
     select: {

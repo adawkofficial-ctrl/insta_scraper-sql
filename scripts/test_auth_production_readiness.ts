@@ -18,16 +18,14 @@ import {
 import { checkRateLimit, getClientIp, checkAuthRateLimit } from "../src/lib/services/auth/rate-limiter";
 import { extractTokenFromRequest } from "../src/lib/services/auth/auth-guard";
 import { getSafeRedirect } from "../src/components/auth-card";
-import { PrismaPg } from "@prisma/adapter-pg";
+import { createPrismaClient } from "../src/lib/db/prisma";
 import { PrismaClient } from "../src/generated/prisma/client";
 
 async function runTests() {
   console.log("=== Testing Auth Production Readiness & Fixes ===");
 
   const connectionString = process.env.DATABASE_URL!;
-  const prisma = new PrismaClient({
-    adapter: new PrismaPg({ connectionString }),
-  });
+  const prisma = createPrismaClient();
 
   // 1. Unified Secrets & Tokens
   console.log("\n[Test 1] Auth secret bytes and constants");

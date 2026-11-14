@@ -13,7 +13,7 @@
 import "dotenv/config";
 import "./preload_server_only.cjs";
 import { PrismaClient, NotificationEventType, NotificationLogStatus } from "../src/generated/prisma/client";
-import { PrismaPg } from "@prisma/adapter-pg";
+import { createPrismaClient } from "../src/lib/db/prisma";
 import {
   NtfyNotifier,
   setNotificationFetchFn,
@@ -34,9 +34,7 @@ import {
   notifySystemError,
 } from "../src/lib/services/notifications/notification-triggers";
 
-const db = new PrismaClient({
-  adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL! }),
-});
+const db = createPrismaClient();
 
 let passed = 0;
 let failed = 0;

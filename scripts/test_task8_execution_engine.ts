@@ -10,7 +10,7 @@ import {
   BulkMessageItemStatus,
   MessageStatus,
 } from "../src/generated/prisma/client";
-import { PrismaPg } from "@prisma/adapter-pg";
+import { createPrismaClient } from "../src/lib/db/prisma";
 import {
   validateCampaignStateTransition,
   preflightValidateCampaignExecution,
@@ -23,10 +23,7 @@ import {
 import { renderTemplate } from "../src/lib/services/template/template-renderer";
 
 const BASE_URL = process.env.TEST_BASE_URL || "http://localhost:3005";
-const connectionString = process.env.DATABASE_URL!;
-const prisma = new PrismaClient({
-  adapter: new PrismaPg({ connectionString }),
-});
+const prisma = createPrismaClient();
 
 let passed = 0;
 let failed = 0;

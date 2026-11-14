@@ -1,7 +1,7 @@
 /* eslint-disable */
 import "dotenv/config";
 import { PrismaClient } from "../src/generated/prisma/client";
-import { PrismaPg } from "@prisma/adapter-pg";
+import { createPrismaClient } from "../src/lib/db/prisma";
 import {
   renderTemplate,
   renderTemplateDetailed,
@@ -163,9 +163,7 @@ async function main() {
 
   testRendererUnit();
 
-  const prisma = new PrismaClient({
-    adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL! }),
-  });
+  const prisma = createPrismaClient();
 
   try {
     const cookieA = await register("A");

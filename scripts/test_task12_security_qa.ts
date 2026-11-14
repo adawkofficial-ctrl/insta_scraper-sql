@@ -2,7 +2,7 @@ import "dotenv/config";
 import fs from "node:fs";
 import path from "node:path";
 import { PrismaClient } from "../src/generated/prisma/client";
-import { PrismaPg } from "@prisma/adapter-pg";
+import { createPrismaClient } from "../src/lib/db/prisma";
 
 const BASE_URL = process.env.TEST_BASE_URL || "http://localhost:3005";
 const COOKIE_NAME = "insta_session";
@@ -108,7 +108,7 @@ async function main() {
 
   scanSourceForClientSecretLeaks();
 
-  const prisma = new PrismaClient({ adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL! }) });
+  const prisma = createPrismaClient();
 
   try {
     const A = await register("A");

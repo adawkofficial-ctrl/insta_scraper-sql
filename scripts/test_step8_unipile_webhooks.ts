@@ -1,15 +1,13 @@
 import "dotenv/config";
 import "./preload_server_only.cjs";
 import { PrismaClient } from "../src/generated/prisma/client";
-import { PrismaPg } from "@prisma/adapter-pg";
+import { createPrismaClient } from "../src/lib/db/prisma";
 import { LeadStatus } from "../src/generated/prisma/enums";
 
 const BASE_URL = process.env.TEST_BASE_URL || "http://localhost:3005";
 const WEBHOOK_SECRET = process.env.UNIPILE_WEBHOOK_PATH_SECRET || "dev_unipile_webhook_secret_2026";
 
-const db = new PrismaClient({
-  adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL! }),
-});
+const db = createPrismaClient();
 
 let passed = 0;
 let failed = 0;

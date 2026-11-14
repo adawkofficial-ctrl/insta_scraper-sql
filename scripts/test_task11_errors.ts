@@ -5,7 +5,7 @@ import {
   BulkMessageJobStatus,
   MessageStatus,
 } from "../src/generated/prisma/enums";
-import { PrismaPg } from "@prisma/adapter-pg";
+import { createPrismaClient } from "../src/lib/db/prisma";
 import {
   ALL_ERROR_CODES,
   ERROR_CATALOG,
@@ -189,9 +189,7 @@ async function main() {
   testStaleRecovery();
   testSanitization();
 
-  const prisma = new PrismaClient({
-    adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL! }),
-  });
+  const prisma = createPrismaClient();
 
   try {
     console.log("\n[HTTP] Correlation id + no-secret responses");

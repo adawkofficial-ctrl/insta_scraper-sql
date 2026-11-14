@@ -1,7 +1,7 @@
 /* eslint-disable */
 import "dotenv/config";
 import { PrismaClient } from "../src/generated/prisma/client";
-import { PrismaPg } from "@prisma/adapter-pg";
+import { createPrismaClient } from "../src/lib/db/prisma";
 import { renderTemplate } from "../src/lib/services/template/template-renderer";
 import {
   parseLeadLimit,
@@ -162,9 +162,7 @@ async function main() {
   testLeadLimitParsing();
 
   const connectionString = process.env.DATABASE_URL!;
-  const prisma = new PrismaClient({
-    adapter: new PrismaPg({ connectionString }),
-  });
+  const prisma = createPrismaClient();
 
   const stamp = Date.now();
   const email = `qa14_${stamp}@example.com`;

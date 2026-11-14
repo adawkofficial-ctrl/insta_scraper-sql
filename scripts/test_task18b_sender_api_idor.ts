@@ -1,11 +1,9 @@
 import "dotenv/config";
 import { PrismaClient } from "../src/generated/prisma/client";
-import { PrismaPg } from "@prisma/adapter-pg";
+import { createPrismaClient } from "../src/lib/db/prisma";
 
 const BASE_URL = process.env.TEST_BASE_URL || "http://localhost:3005";
-const db = new PrismaClient({
-  adapter: new PrismaPg({ connectionString: process.env.DATABASE_URL! }),
-});
+const db = createPrismaClient();
 
 let passed = 0;
 let failed = 0;
