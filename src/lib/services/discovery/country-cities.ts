@@ -343,36 +343,79 @@ export function buildQualifiedLocationString(
   targetContext?: string | null,
   countryCode?: string | null,
 ): string {
-  const normArea = area.toLowerCase().trim();
+  // A campaign may legitimately list several cities in `location`
+  // ("Toronto, ON, Vancouver, BC, ..."). If that whole string ever reaches
+  // `area`, never send it to the actor as one location: use the first
+  // searchable city instead. Four parts are allowed for GTA-style
+  // "Scarborough, Toronto, ON, Canada" values.
+  const rawParts = area
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean);
+  const effectiveArea =
+    rawParts.length > 4
+      ? rawParts.find((part) => part.length >= 3 && !/^[A-Z]{2}$/i.test(part)) ??
+        rawParts[0] ??
+        area
+      : area;
+
+  const normArea = effectiveArea.toLowerCase().trim();
   const stripped = stripLocationPrefixes(normArea);
 
   // 1. Direct GTA area mapping
   if (GTA_AREAS[stripped] || GTA_AREAS[normArea]) {
     const info = GTA_AREAS[stripped] || GTA_AREAS[normArea];
-    return `${area}, ${info.city}, ${info.state}, ${info.country}`;
+    return `${effectiveArea}, ${info.city}, ${info.state}, ${info.country}`;
   }
 
   // 2. If area already contains commas (e.g. "Vancouver, BC, Canada"), ensure country if missing
-  if (area.includes(",")) {
-    const parts = area.split(",").map((p) => p.trim());
-    if (parts.length >= 3) return area;
-    const resolvedCountry = (countryCode || resolveCountryCode(targetContext || area) || "CA").toUpperCase();
+  if (effectiveArea.includes(",")) {
+    const parts = effectiveArea.split(",").map((p) => p.trim());
+    if (parts.length >= 3) return effectiveArea;
+    const resolvedCountry = (countryCode || resolveCountryCode(targetContext || effectiveArea) || "CA").toUpperCase();
     const countryName = resolvedCountry === "CA" ? "Canada" : resolvedCountry === "US" ? "USA" : resolvedCountry;
-    if (!area.toLowerCase().includes(countryName.toLowerCase())) {
-      return `${area}, ${countryName}`;
+    if (!effectiveArea.toLowerCase().includes(countryName.toLowerCase())) {
+      return `${effectiveArea}, ${countryName}`;
     }
-    return area;
+    return effectiveArea;
   }
 
-  // 3. Fallback: combine area with target context or default country
+  // 3. Fallback: combine area with target context or default country.
+  // Never concatenate two different cities (e.g. "Downtown Vancouver, Toronto").
   const resolvedCountry = (countryCode || resolveCountryCode(targetContext) || "CA").toUpperCase();
   const countryName = resolvedCountry === "CA" ? "Canada" : resolvedCountry === "US" ? "USA" : resolvedCountry;
+  const targetNorm = targetContext?.toLowerCase().trim() ?? "";
+  const targetIsCountryLike =
+    Boolean(targetNorm) &&
+    (targetNorm === "canada" ||
+      targetNorm === "usa" ||
+      targetNorm === "united states" ||
+      targetNorm === "uk" ||
+      targetNorm === "united kingdom" ||
+      targetNorm === "australia");
 
-  if (targetContext && targetContext !== area && !targetContext.toLowerCase().includes(normArea)) {
-    return `${area}, ${targetContext}`;
+  if (
+    targetContext &&
+    targetContext !== effectiveArea &&
+    !targetIsCountryLike &&
+    !targetNorm.includes(normArea) &&
+    !normArea.includes(targetNorm)
+  ) {
+    // Different city/context: keep the target city, add only the country.
+    return `${effectiveArea}, ${countryName}`;
   }
 
-  return `${area}, ${countryName}`;
+  if (
+    targetContext &&
+    targetNorm.includes(normArea) &&
+    targetNorm !== normArea &&
+    targetContext.split(",").length <= 2
+  ) {
+    // targetContext is a single area plus province (e.g. "Toronto" + "Toronto, ON").
+    return buildQualifiedLocationString(targetContext, undefined, countryCode);
+  }
+
+  return `${effectiveArea}, ${countryName}`;
 }
 
 /**

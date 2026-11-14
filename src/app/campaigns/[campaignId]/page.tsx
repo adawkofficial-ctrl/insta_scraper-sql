@@ -18,6 +18,34 @@ function isLeadDryRun(lead: { isDryRun?: boolean | null; source?: string | null;
   return false;
 }
 
+function getLeadInstagramHandle(lead: {
+  username?: string | null;
+  instagramUsername?: string | null;
+}): string | null {
+  return lead.username?.trim() || lead.instagramUsername?.trim() || null;
+}
+
+type LeadCriteriaInfo = {
+  passed?: boolean;
+  reasons?: string[];
+  flags?: string[];
+};
+
+function getLeadCriteriaInfo(lead: { rawProfileData?: unknown }): LeadCriteriaInfo | null {
+  if (!lead.rawProfileData || typeof lead.rawProfileData !== "object") return null;
+  const raw = lead.rawProfileData as { enrichmentCriteria?: LeadCriteriaInfo };
+  return raw.enrichmentCriteria ?? null;
+}
+
+function formatLeadCriteria(info: LeadCriteriaInfo | null): string {
+  if (!info) return "Enrichment criteria not evaluated.";
+  const reasons = info.reasons?.filter(Boolean) ?? [];
+  if (reasons.length > 0) return reasons.join("; ");
+  return info.passed === false
+    ? "Below enrichment criteria."
+    : "Meets enrichment criteria.";
+}
+
 function hasLeadSocials(lead: { socialLink?: string | null; rawProfileData?: unknown }): boolean {
   if (lead.socialLink) return true;
   if (!lead.rawProfileData || typeof lead.rawProfileData !== "object") return false;
@@ -532,9 +560,14 @@ export default function CampaignDetailPage() {
     try {
       const res = await enrichLeads([leadId]);
       const cachedText = res.cachedCount > 0 ? " (from 30-day cache, $0.00)" : "";
+      const enrichedRow = res.leads.find((row) => row.id === leadId);
+      const criteriaText =
+        enrichedRow?.criteriaPassed === false
+          ? ` Below enrichment criteria: ${(enrichedRow.criteriaReasons ?? []).join("; ")}.`
+          : "";
       setEnrichNotice({
-        type: "success",
-        message: `Profile enriched successfully${cachedText}! Real Apify cost: $${res.apifyCostUsd.toFixed(4)}. Remaining budget: $${res.remainingBudgetUsd.toFixed(2)}.`,
+        type: enrichedRow?.criteriaPassed === false ? "info" : "success",
+        message: `Profile enriched${cachedText}!${criteriaText} Real Apify cost: $${res.apifyCostUsd.toFixed(4)}. Remaining budget: $${res.remainingBudgetUsd.toFixed(2)}.`,
       });
       fetchLeads();
       fetchCampaignInfo();
@@ -785,7 +818,7 @@ export default function CampaignDetailPage() {
       }
       const data = await res.json();
       alert(
-        `Website scrape complete!\nChecked: ${data.totalChecked}\nLeads with new data: ${data.found}\nHandles found: ${data.handlesFound}\nEmails found: ${data.emailsFound}\nSocial links found: ${data.socialsFound}\nNot found: ${data.notFound}\nCooldown skipped (last run <7d): ${data.cooldownSkipped}`,
+        `Website scrape complete!\nWebsites scanned: ${data.totalChecked}\nLeads with new data: ${data.found}\nNew Instagram handles: ${data.handlesFound}\nNew emails: ${data.emailsFound}\nNew social links: ${data.socialsFound}\nProfiles enriched: ${data.profilesEnriched ?? 0}\nBelow enrichment criteria: ${data.belowCriteria ?? 0}\nNo new data: ${data.notFound}`,
       );
       await fetchLeads();
     } catch (err) {
@@ -928,7 +961,11 @@ export default function CampaignDetailPage() {
     <div className="min-h-screen bg-zinc-950 text-zinc-100 flex flex-col">
       <Navbar />
 
-      <main className="flex-1 mx-auto w-full max-w-7xl px-4 py-8 sm:px-6 lg:px-8">
+      <main
+        className={`flex-1 mx-auto w-full px-4 py-8 sm:px-6 lg:px-8 ${
+          activeTab === "leads" ? "max-w-none" : "max-w-7xl"
+        }`}
+      >
         {/* Breadcrumb */}
         <div className="flex items-center gap-2 text-xs text-zinc-400">
           <Link href="/" className="hover:text-zinc-200 transition">
@@ -2133,12 +2170,12 @@ export default function CampaignDetailPage() {
 
                               <div className="min-w-0">
                                 <div className="flex items-center gap-1.5 flex-wrap">
-                                  {lead.username ? (
+                                  {getLeadInstagramHandle(lead) ? (
                                     <button
                                       onClick={() => setActiveLeadId(lead.id)}
                                       className="font-semibold text-zinc-100 hover:text-rose-400 transition truncate text-left"
                                     >
-                                      @{lead.username}
+                                      @{getLeadInstagramHandle(lead)}
                                     </button>
                                   ) : (
                                     <button
@@ -2199,6 +2236,18 @@ export default function CampaignDetailPage() {
                                       {lead.handleConfidence ? ` · ${lead.handleConfidence}` : ""}
                                     </span>
                                   )}
+                                  {(() => {
+                                    const criteria = getLeadCriteriaInfo(lead);
+                                    if (!criteria || criteria.passed !== false) return null;
+                                    return (
+                                      <span
+                                        className="shrink-0 rounded bg-orange-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-orange-300 border border-orange-500/30"
+                                        title={formatLeadCriteria(criteria)}
+                                      >
+                                        BELOW CRITERIA
+                                      </span>
+                                    );
+                                  })()}
                                   {lead.duplicateOfLeadId && (
                                     <span
                                       className="shrink-0 rounded bg-rose-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-rose-400 border border-rose-500/20"
@@ -2389,7 +2438,7 @@ export default function CampaignDetailPage() {
                                       .map((b) => `• ${b.displayName}: ${b.skipped ? "Omitted (no IG)" : `${b.points}/${b.maxPoints} pts`}`)
                                       .join("\n");
                                 }
-                                const tooltip = `Lead Quality Score: ${lead.qualityScore}/100 (Tier ${tier})\nFlags: ${flagsList}${lead.isChain ? "\n• Flagged as multi-location chain" : ""}${!lead.username ? "\n• Tier capped at B (no IG handle for Instagram DM)" : ""}${breakdownTooltip}`;
+                                const tooltip = `Lead Quality Score: ${lead.qualityScore}/100 (Tier ${tier})\nFlags: ${flagsList}${lead.isChain ? "\n• Flagged as multi-location chain" : ""}${!getLeadInstagramHandle(lead) ? "\n• Tier capped at B (no IG handle for Instagram DM)" : ""}${breakdownTooltip}`;
 
                                 return (
                                   <div className="flex flex-col gap-1 items-start">
@@ -2981,36 +3030,26 @@ export default function CampaignDetailPage() {
 
                         <div className="flex items-center gap-2">
                           {(() => {
-                            if (!lead.username) {
+                            if (!getLeadInstagramHandle(lead)) {
                               return (
                                 <button
                                   type="button"
                                   onClick={() => handleEnrichHandleSingle(lead.id)}
                                   disabled={enrichingLeadId === lead.id}
                                   className="rounded bg-sky-600/20 px-2 py-1 text-xs font-semibold text-sky-300 border border-sky-500/30 hover:bg-sky-600/30 transition disabled:opacity-50"
+                                  title="Scrape website for an Instagram handle, then fetch its profile"
                                 >
                                   {enrichingLeadId === lead.id ? "..." : "⚡ Find IG"}
                                 </button>
                               );
                             }
-                            const isNotEnriched =
-                              (lead.rawProfileData as { enrichmentStatus?: string } | undefined)?.enrichmentStatus === "NOT_ENRICHED" ||
-                              (!lead.followersCount && !lead.followers && !lead.biography);
-                            if (isNotEnriched) {
-                              return (
-                                <button
-                                  type="button"
-                                  onClick={() => handleEnrichSingle(lead.id)}
-                                  disabled={enrichingLeadId === lead.id}
-                                  className="rounded bg-rose-600/20 px-2 py-1 text-xs font-semibold text-rose-300 border border-rose-500/30 hover:bg-rose-600/30 transition disabled:opacity-50"
-                                >
-                                  {enrichingLeadId === lead.id ? "..." : "Enrich"}
-                                </button>
-                              );
-                            }
+                            // Once a handle exists, the row no longer offers the
+                            // per-lead "Find IG"/"Enrich" buttons. Profile stats are
+                            // fetched automatically after the website finds IG; use
+                            // bulk "Enrich Selected" only for explicit retries.
                             return null;
                           })()}
-                          {lead.username ? (
+                          {getLeadInstagramHandle(lead) ? (
                             <button
                               type="button"
                               onClick={() => {

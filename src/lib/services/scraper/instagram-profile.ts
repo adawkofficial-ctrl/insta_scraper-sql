@@ -10,6 +10,7 @@ import {
   computeAvailableChannels,
 } from "../contact/contact-parser";
 import { getEnrichmentProviderName } from "@/lib/env";
+import { MAX_CAMPAIGN_LEAD_LIMIT } from "@/lib/constants/campaign-limits";
 
 export const INSTAGRAM_PROFILE_ACTOR_ID = "apify/instagram-profile-scraper";
 
@@ -59,14 +60,10 @@ export function getMaxLeadLimit(): number {
   if (process.env.DISCOVERY_STAGE === "pilot_small") {
     return 10;
   }
-  const envVal = process.env.MAX_LEAD_LIMIT;
-  if (envVal) {
-    const parsed = Number.parseInt(envVal, 10);
-    if (!Number.isNaN(parsed) && parsed > 0) {
-      return parsed;
-    }
-  }
-  return 100;
+  // Campaign lead limits have no product cap. The value is only bounded by the
+  // 32-bit database integer. Do not read MAX_LEAD_LIMIT here: the old 100 cap
+  // must stay removed permanently.
+  return MAX_CAMPAIGN_LEAD_LIMIT;
 }
 
 export function getMaxProfileBatchSize(): number {

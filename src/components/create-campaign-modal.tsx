@@ -10,7 +10,7 @@ import {
   type CompanyProfilesListItem,
 } from "@/lib/api/company-profile";
 import { ApiClientError } from "@/lib/api/client";
-import { MAX_MAX_LEADS } from "@/lib/api/scraper";
+import { MAX_CAMPAIGN_LEAD_LIMIT } from "@/lib/constants/campaign-limits";
 
 type CreateCampaignModalProps = {
   isOpen: boolean;
@@ -140,8 +140,8 @@ export function CreateCampaignModal({
     let parsedLeadLimit: number | null = null;
     if (leadLimit.trim()) {
       const parsed = parseInt(leadLimit.trim(), 10);
-      if (isNaN(parsed) || parsed < 1 || parsed > MAX_MAX_LEADS) {
-        setError(`Lead limit must be a number between 1 and ${MAX_MAX_LEADS}.`);
+      if (isNaN(parsed) || parsed < 1 || parsed > MAX_CAMPAIGN_LEAD_LIMIT) {
+        setError("Lead limit must be a positive whole number.");
         return;
       }
       parsedLeadLimit = parsed;
@@ -577,7 +577,7 @@ export function CreateCampaignModal({
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
               <div>
                 <label htmlFor="campaign-location" className="block text-[11px] font-medium text-zinc-400">
-                  Location <span className="text-zinc-500">(e.g. Rawalpindi)</span>
+                  Location <span className="text-zinc-500">(one or more cities, comma-separated)</span>
                 </label>
                 <input
                   id="campaign-location"
@@ -585,7 +585,7 @@ export function CreateCampaignModal({
                   disabled={isSubmitting}
                   value={location}
                   onChange={(e) => setLocation(e.target.value)}
-                  placeholder="e.g. Rawalpindi"
+                  placeholder="e.g. Toronto, ON, Vancouver, BC"
                   className="mt-1 block w-full rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-500 focus:border-rose-500 focus:outline-none focus:ring-1 focus:ring-rose-500 disabled:opacity-50"
                 />
               </div>
@@ -608,13 +608,12 @@ export function CreateCampaignModal({
 
             <div>
               <label htmlFor="campaign-lead-limit" className="block text-[11px] font-medium text-zinc-400">
-                Lead Limit <span className="text-zinc-500">(max leads per run, 1-{MAX_MAX_LEADS})</span>
+                Lead Limit <span className="text-zinc-500">(max leads per run)</span>
               </label>
               <input
                 id="campaign-lead-limit"
                 type="number"
                 min={1}
-                max={MAX_MAX_LEADS}
                 disabled={isSubmitting}
                 value={leadLimit}
                 onChange={(e) => setLeadLimit(e.target.value)}

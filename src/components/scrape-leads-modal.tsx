@@ -16,6 +16,7 @@ import {
   MAX_PROFILE_BATCH,
 } from "@/lib/api/scraper";
 import { ApiClientError } from "@/lib/api/client";
+import { MAX_CAMPAIGN_LEAD_LIMIT } from "@/lib/constants/campaign-limits";
 import { planInstagramQueries } from "@/lib/services/discovery/instagram-all-in-one-query";
 
 type ScrapeMode = "discover" | "profiles";
@@ -162,9 +163,12 @@ export function ScrapeLeadsModal({
     }
   }, [isOpen]);
 
-  // Capacity calculations
+  // Capacity calculations. Campaign-scoped discovery has no 100 cap; ignore a
+  // stale cached budget.maxLeadsCap from before the cap was removed.
   const currentLeads = currentLeadCount;
-  const parsedInputLimit = parseLimitInput(discoverLimitInput);
+  const discoveryMaxLeadLimit =
+    budget?.discoveryStage === "pilot_small" ? 10 : MAX_CAMPAIGN_LEAD_LIMIT;
+  const parsedInputLimit = parseLimitInput(discoverLimitInput, discoveryMaxLeadLimit);
   const configuredLimit = campaignLeadLimit ?? (parsedInputLimit ?? DEFAULT_MAX_LEADS);
   const effectiveLimit = configuredLimit;
   const remainingCapacity = Math.max(0, effectiveLimit - currentLeads);
@@ -211,7 +215,7 @@ export function ScrapeLeadsModal({
     const trimmedIntent = intent.trim();
     const trimmedLocation = location.trim();
     const trimmedCategory = category.trim();
-    const parsedLimit = parseLimitInput(discoverLimitInput);
+    const parsedLimit = parseLimitInput(discoverLimitInput, discoveryMaxLeadLimit);
 
     if (!trimmedIntent) {
       setError("Intent / Search Query is required (e.g. \"fitness gyms and fitness businesses\").");
@@ -225,7 +229,7 @@ export function ScrapeLeadsModal({
       setError("Category is required (e.g. \"Fitness\").");
       return;
     }
-    const maxAllowedLimit = budget?.maxLeadsCap ?? MAX_MAX_LEADS;
+    const maxAllowedLimit = discoveryMaxLeadLimit;
     if (parsedLimit === null || parsedLimit < MIN_MAX_LEADS || parsedLimit > maxAllowedLimit) {
       setError(
         `Lead Limit must be an integer between ${MIN_MAX_LEADS} and ${maxAllowedLimit}${budget?.discoveryStage === "pilot_small" ? " (pilot cap: 10)" : ""}.`,
@@ -867,7 +871,7 @@ export function ScrapeLeadsModal({
             {/* Instagram all-in-one pre-run plan */}
             {(() => {
               if (budget?.activeProviders?.discoveryProvider !== "instagram_all_in_one") return null;
-              const parsedLimit = parseLimitInput(discoverLimitInput, budget?.maxLeadsCap ?? MAX_MAX_LEADS);
+              const parsedLimit = parseLimitInput(discoverLimitInput, discoveryMaxLeadLimit);
               const searchLimit = budget?.igSearchLimit ?? 10;
               const plan = planInstagramQueries({
                 query: intent,
@@ -1005,9 +1009,12 @@ export function ScrapeLeadsModal({
                     setLocation(e.target.value);
                     setConfirmCountryPlan(false);
                   }}
-                  placeholder="e.g. Rawalpindi or Toronto, Vancouver"
+                  placeholder="e.g. Toronto, ON, Vancouver, BC, Montreal, QC"
                   className="mt-1.5 block w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3.5 py-2.5 text-sm text-zinc-100 placeholder-zinc-500 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:opacity-50"
                 />
+                <p className="mt-1 text-[11px] text-zinc-500">
+                  Multiple cities allowed (comma-separated). Each city is searched separately.
+                </p>
               </div>
 
               <div>
@@ -1028,13 +1035,12 @@ export function ScrapeLeadsModal({
 
               <div>
                 <label htmlFor="discover-limit" className="block text-xs font-semibold uppercase tracking-wider text-zinc-300">
-                  Lead Limit (1–{budget?.maxLeadsCap ?? MAX_MAX_LEADS}) <span className="text-rose-400">*</span>
+                  Lead Limit <span className="text-rose-400">*</span>
                 </label>
                 <input
                   id="discover-limit"
                   type="number"
                   min={MIN_MAX_LEADS}
-                  max={budget?.maxLeadsCap ?? MAX_MAX_LEADS}
                   step={1}
                   required
                   disabled={isSubmitting || isLimitReached}
@@ -1043,7 +1049,7 @@ export function ScrapeLeadsModal({
                   className="mt-1.5 block w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3.5 py-2.5 text-sm text-zinc-100 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:opacity-50"
                 />
                 <p className="mt-1 text-[11px] text-zinc-500">
-                  Allowed range: 1–{budget?.maxLeadsCap ?? MAX_MAX_LEADS} leads {budget?.discoveryStage === "pilot_small" && "(pilot cap: 10)"}
+                  Enter 1 or more leads. {budget?.discoveryStage === "pilot_small" && "(pilot cap: 10)"}
                 </p>
               </div>
             </div>
@@ -1054,7 +1060,7 @@ export function ScrapeLeadsModal({
               const recommendedCities = COUNTRY_CITIES[normalizedLoc];
               if (!recommendedCities || recommendedCities.length === 0) return null;
 
-              const parsedLimit = parseLimitInput(discoverLimitInput, budget?.maxLeadsCap ?? MAX_MAX_LEADS);
+              const parsedLimit = parseLimitInput(discoverLimitInput, discoveryMaxLeadLimit);
               const costEstimate = computeDiscoveryCostEstimate(intent, parsedLimit, budget);
               const maxCities = budget?.gmapsMaxCities ?? 5;
               const plannedCities = recommendedCities.slice(0, Math.max(1, maxCities));
@@ -1271,7 +1277,7 @@ export function ScrapeLeadsModal({
 
             {/* Pre-run estimate banner */}
             {(() => {
-              const parsedLimit = parseLimitInput(discoverLimitInput, budget?.maxLeadsCap ?? MAX_MAX_LEADS);
+              const parsedLimit = parseLimitInput(discoverLimitInput, discoveryMaxLeadLimit);
               const costEstimate = computeDiscoveryCostEstimate(intent, parsedLimit, budget);
               const isIgMode = budget?.activeProviders?.discoveryProvider === "instagram_all_in_one";
               const igPlan = isIgMode

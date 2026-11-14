@@ -25,6 +25,7 @@ import {
   isJunkWebsiteEmail,
   runWithConcurrency,
   enrichLeadsFromWebsites,
+  applyWebsiteEnrichmentToLead,
   __resetWebsiteRateLimiterForTesting,
 } from "../src/lib/services/enrichment/website-lead-enricher";
 import {
@@ -33,6 +34,15 @@ import {
 } from "../src/lib/services/discovery/candidate-persistence";
 import { safeFetchHtml } from "../src/lib/services/discovery/handle-discovery-waterfall";
 import { listCampaignLeads } from "../src/lib/services/lead/lead-service";
+import {
+  createCampaign,
+  parseCampaignLeadLimit,
+} from "../src/lib/services/campaign/campaign-service";
+import {
+  getMaxLeadLimit,
+  parseLeadLimit,
+} from "../src/lib/services/scraper/instagram-profile";
+import { MAX_CAMPAIGN_LEAD_LIMIT } from "../src/lib/constants/campaign-limits";
 
 let passed = 0;
 let failed = 0;
@@ -484,6 +494,140 @@ async function runTests() {
       JSON.stringify(afterRaw.handleAlternates),
     );
     check(rehandle.results[0]?.handle === "existing_handle", "bulk result reports existing handle", JSON.stringify(rehandle.results[0]));
+
+    // "Scrape websites for all leads" must include leads that already have a
+    // handle/email/social link and still add newly discovered platforms.
+    const completeLead = await prisma.lead.create({
+      data: {
+        campaignId: campaign.id,
+        userId: user.id,
+        fullName: "Complete Lead Dental",
+        website: "https://fairviewsmiles.ca",
+        username: "complete_handle",
+        instagramUsername: "complete_handle",
+        usernameNormalized: "complete_handle",
+        email: "existing@complete.ca",
+        socialLink: "https://www.facebook.com/existing",
+        socialPlatform: "facebook",
+        status: LeadStatus.ENRICH_PENDING,
+      },
+    });
+    const scanAll = await enrichLeadsFromWebsites({
+      campaignId: campaign.id,
+      leadIds: [completeLead.id],
+      scanAll: true,
+      force: true,
+      concurrency: 2,
+      fetchFn: fixtureFetch().fetchFn,
+    });
+    check(
+      scanAll.totalEligible === 1,
+      "scanAll includes leads that already have IG/email/socials",
+      JSON.stringify(scanAll.results),
+    );
+    check(
+      scanAll.results[0]?.newHandle === false && scanAll.results[0]?.handle === "complete_handle",
+      "scanAll never overwrites an existing handle",
+      JSON.stringify(scanAll.results[0]),
+    );
+    check(
+      (scanAll.results[0]?.newSocialCount ?? 0) > 0,
+      "scanAll adds newly discovered social links",
+      JSON.stringify(scanAll.results[0]),
+    );
+    const completeAfter = await prisma.lead.findUnique({ where: { id: completeLead.id } });
+    const completeRaw = (completeAfter?.rawProfileData ?? {}) as {
+      contacts?: { socialLinks?: Record<string, string> };
+    };
+    check(
+      completeRaw.contacts?.socialLinks?.instagram === "https://www.instagram.com/fairviewsmiles_dental/",
+      "scanAll stores the new Instagram social URL",
+      JSON.stringify(completeRaw.contacts?.socialLinks),
+    );
+
+    // A lead with instagramUsername but no username must be backfilled so the
+    // list treats it as having Instagram and hides the Find IG action.
+    const igOnlyLead = await prisma.lead.create({
+      data: {
+        campaignId: campaign.id,
+        userId: user.id,
+        fullName: "IG Only Dental",
+        instagramUsername: "known_handle",
+        username: null,
+        status: LeadStatus.ENRICH_PENDING,
+      },
+    });
+    const emptyExtraction = {
+      website: "https://existing-ig.ca",
+      domain: "existing-ig.ca",
+      pages: [],
+      handle: null,
+      handleConfidence: null,
+      alternates: [],
+      socialLinks: {},
+      emails: [],
+      phones: [],
+      whatsapp: null,
+      socialOnly: false,
+      fetchedAt: new Date().toISOString(),
+      homepageHtml: null,
+      homepageTitle: null,
+      homepageH1: null,
+      ogSiteName: null,
+    };
+    await applyWebsiteEnrichmentToLead(
+      {
+        id: igOnlyLead.id,
+        username: null,
+        instagramUsername: "known_handle",
+        fullName: "IG Only Dental",
+        website: "https://existing-ig.ca",
+        status: LeadStatus.ENRICH_PENDING,
+        campaign: { location: "Toronto, ON" },
+      },
+      emptyExtraction,
+      { force: true },
+    );
+    const igOnlyAfter = await prisma.lead.findUnique({ where: { id: igOnlyLead.id } });
+    check(
+      igOnlyAfter?.username === "known_handle",
+      "username is backfilled from instagramUsername",
+      String(igOnlyAfter?.username),
+    );
+
+    // Campaign and campaign-scoped discovery limits have no 100 cap.
+    check(
+      getMaxLeadLimit() === MAX_CAMPAIGN_LEAD_LIMIT,
+      "discovery max lead limit has no 100 cap",
+      String(getMaxLeadLimit()),
+    );
+    check(parseLeadLimit(101) === 101, "discovery lead limit accepts 101");
+    check(parseLeadLimit(1000) === 1000, "discovery lead limit accepts 1000");
+    check(parseCampaignLeadLimit(101) === 101, "campaign lead limit accepts 101");
+    check(parseCampaignLeadLimit(1000) === 1000, "campaign lead limit accepts 1000");
+    check(
+      parseCampaignLeadLimit(2_147_483_647) === 2_147_483_647,
+      "campaign lead limit accepts the 32-bit maximum",
+    );
+    for (const invalid of [0, -1, 1.5, 2_147_483_648]) {
+      let rejected = false;
+      try {
+        parseCampaignLeadLimit(invalid);
+      } catch {
+        rejected = true;
+      }
+      check(rejected, `campaign lead limit rejects ${invalid}`);
+    }
+    const bigCampaign = await createCampaign(
+      {
+        name: `${tag} 1000 lead limit`,
+        intent: "Dental clinics",
+        leadLimit: 1000,
+        companyProfileId: profile.id,
+      },
+      user.id,
+    );
+    check(bigCampaign.leadLimit === 1000, "campaign with leadLimit 1000 persists", String(bigCampaign.leadLimit));
 
     // Lead list filter: has IG, website, or email only.
     const noContact = await prisma.lead.create({

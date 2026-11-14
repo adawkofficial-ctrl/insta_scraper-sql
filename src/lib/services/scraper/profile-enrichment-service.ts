@@ -16,10 +16,65 @@ import {
 import { findMatchedNegativeKeyword } from "../discovery/negative-keywords";
 import { resolveCountryCode } from "../discovery/country-cities";
 import {
+  evaluateEnrichmentCriteria,
+  DEFAULT_ENRICHMENT_CRITERIA,
+  type EnrichmentCriteria,
+  type EnrichmentRuleResult,
+} from "../discovery/enrichment-criteria";
+import {
   scrapeLeadWebsite,
   applyWebsiteEnrichmentToLead,
 } from "../enrichment/website-lead-enricher";
 import type { LeadProfile } from "@/lib/types";
+
+async function loadCampaignEnrichmentCriteria(
+  prisma: ReturnType<typeof getPrismaClient>,
+  campaignId: string,
+  cache: Map<string, EnrichmentCriteria>,
+): Promise<EnrichmentCriteria> {
+  const cached = cache.get(campaignId);
+  if (cached) return cached;
+
+  const latestJob = await prisma.scrapeJob.findFirst({
+    where: { campaignId },
+    orderBy: { createdAt: "desc" },
+    select: { usage: true },
+  });
+  const usage =
+    latestJob?.usage && typeof latestJob.usage === "object"
+      ? (latestJob.usage as Record<string, unknown>)
+      : {};
+  const stored = usage.criteria;
+  const criteria =
+    stored && typeof stored === "object"
+      ? ({
+          ...DEFAULT_ENRICHMENT_CRITERIA,
+          ...(stored as EnrichmentCriteria),
+          ruleModes: {
+            ...DEFAULT_ENRICHMENT_CRITERIA.ruleModes,
+            ...(stored as EnrichmentCriteria).ruleModes,
+          },
+        } satisfies EnrichmentCriteria)
+      : DEFAULT_ENRICHMENT_CRITERIA;
+  cache.set(campaignId, criteria);
+  return criteria;
+}
+
+function formatEnrichmentCriteriaReasons(
+  items: EnrichmentRuleResult[],
+): string[] {
+  const labelFor = (rule: string): string => {
+    if (rule === "minFollowers" || rule === "maxFollowers") return "Followers";
+    if (rule === "minPosts" || rule === "minPosts-strict") return "Posts";
+    if (rule === "private" || rule === "excludePrivate") return "Private account";
+    if (rule === "category" || rule === "allowedCategories") return "Category";
+    return rule;
+  };
+  return items.map(
+    (item) =>
+      `${labelFor(item.rule)}: ${String(item.value)} (required ${String(item.required)})`,
+  );
+}
 
 export type EnrichLeadsInput = {
   leadIds: string[];
@@ -44,6 +99,8 @@ export type EnrichLeadsResult = {
     handleSource?: string | null;
     handleConfidence?: string | null;
     message?: string;
+    criteriaPassed?: boolean;
+    criteriaReasons?: string[];
   }>;
 };
 
@@ -329,6 +386,7 @@ export async function enrichLeadsOnDemand(
   let enrichedCount = 0;
   let cachedCount = 0;
   const resultLeads: EnrichLeadsResult["leads"] = [];
+  const criteriaCache = new Map<string, EnrichmentCriteria>();
 
   // 3. Update leads in DB and run post-enrichment checks
   for (const lead of leads) {
@@ -362,6 +420,30 @@ export async function enrichLeadsOnDemand(
         ? findMatchedNegativeKeyword([profile.biography], null, allowedTerms)
         : null;
 
+      const campaignCriteria = await loadCampaignEnrichmentCriteria(
+        prisma,
+        lead.campaignId,
+        criteriaCache,
+      );
+      const criteriaEval = evaluateEnrichmentCriteria(
+        profile,
+        campaignCriteria,
+        {
+          intent: lead.campaign?.intent ?? null,
+          category: lead.campaign?.category ?? null,
+          location: lead.campaign?.location ?? null,
+        },
+      );
+      const postFlags = criteriaEval.flags.filter(
+        (flag) => flag.rule === "minPosts" || flag.rule === "minPosts-strict",
+      );
+      const criteriaReasons = formatEnrichmentCriteriaReasons([
+        ...criteriaEval.reasons,
+        ...postFlags,
+      ]);
+      const criteriaPassed = criteriaEval.passed && postFlags.length === 0;
+      const criteriaScoreFlags = criteriaPassed ? [] : ["BELOW_ENRICHMENT_CRITERIA"];
+
       const existingRaw =
         typeof lead.rawProfileData === "object" && lead.rawProfileData !== null
           ? (lead.rawProfileData as Record<string, unknown>)
@@ -373,6 +455,18 @@ export async function enrichLeadsOnDemand(
         enrichmentStatus: "ENRICHED",
         enrichedAt: new Date().toISOString(),
         bioNegativeKeywordMatched: bioNegativeMatch ?? null,
+        enrichmentCriteria: {
+          passed: criteriaPassed,
+          reasons: criteriaReasons,
+          hardReasons: formatEnrichmentCriteriaReasons(criteriaEval.reasons),
+          flags: formatEnrichmentCriteriaReasons(criteriaEval.flags),
+          thresholds: {
+            minFollowers: campaignCriteria.minFollowers ?? null,
+            maxFollowers: campaignCriteria.maxFollowers ?? null,
+            minPosts: campaignCriteria.minPosts ?? null,
+          },
+          evaluatedAt: new Date().toISOString(),
+        },
       };
 
       await prisma.lead.update({
@@ -391,6 +485,7 @@ export async function enrichLeadsOnDemand(
           category: profile.businessCategoryName || profile.category || lead.category,
           businessCategoryName: profile.businessCategoryName || lead.businessCategoryName,
           rawProfileData: updatedRawData as Prisma.InputJsonValue,
+          scoreFlags: Array.from(new Set([...(lead.scoreFlags ?? []), ...criteriaScoreFlags])),
           scrapedAt: new Date(),
         },
       });
@@ -402,6 +497,8 @@ export async function enrichLeadsOnDemand(
         biography: profile.biography,
         enrichmentStatus: "ENRICHED",
         negativeKeywordMatched: bioNegativeMatch ?? undefined,
+        criteriaPassed,
+        criteriaReasons,
       });
     } else {
       if (!lead.username || lead.username.trim() === "") {

@@ -37,6 +37,7 @@ import {
 } from "../src/lib/services/discovery/google-maps-discovery-provider";
 import { buildDiscoveryNotice } from "../src/lib/services/discovery/discovery-service";
 import {
+  buildQualifiedLocationString,
   resolveTargetCities,
   COUNTRY_TOP_CITIES,
 } from "../src/lib/services/discovery/country-cities";
@@ -218,6 +219,42 @@ async function runTests() {
       res4.isCountryFallback === true && res4.cities.length >= 1 && res4.cities[0] === "New York, NY",
       '"United States" triggers USA top cities fallback',
       JSON.stringify(res4.cities),
+    );
+
+    // Never concatenate two different cities into one actor location.
+    const multiCity = "Downtown Vancouver, Toronto, ON, Vancouver, BC, Montreal, QC, Calgary, AB, Ottawa, ON";
+    const q1 = buildQualifiedLocationString("Downtown Vancouver", multiCity, "CA");
+    check(
+      q1.includes("Downtown Vancouver") && !q1.includes("Toronto") && q1.split(",").length <= 4,
+      "Multi-city target context is not concatenated into one location",
+      q1,
+    );
+    const q2 = buildQualifiedLocationString(multiCity, multiCity, "CA");
+    check(
+      q2.startsWith("Downtown Vancouver") && !q2.includes("Toronto") && q2.split(",").length <= 4,
+      "Full multi-city string is reduced to one valid city",
+      q2,
+    );
+    const q3 = buildQualifiedLocationString("Downtown Vancouver", "Toronto, ON", "CA");
+    check(
+      q3.includes("Downtown Vancouver") && !q3.includes("Toronto"),
+      "Different city context is not appended",
+      q3,
+    );
+
+    const sixCities = resolveTargetCities(
+      "Toronto, ON, Vancouver, BC, Montreal, QC, Calgary, AB, Ottawa, ON, Edmonton, AB",
+    );
+    const searchableCities = sixCities.cities.filter(
+      (city) => city.length >= 3 && !/^[A-Z]{2}$/i.test(city),
+    );
+    check(
+      searchableCities.length === 6 &&
+        ["Toronto", "Vancouver", "Montreal", "Calgary", "Ottawa", "Edmonton"].every((city) =>
+          searchableCities.includes(city),
+        ),
+      "Six-city location resolves all six cities",
+      JSON.stringify(searchableCities),
     );
   }
 
@@ -961,6 +998,56 @@ async function runTests() {
       missingCategoryFailed = String(err).includes("missing required fields") && String(err).includes("category");
     }
     check(missingCategoryFailed, "validateMapsActorOutput fails when category is missing");
+  }
+
+  console.log("\n=== I. MULTI-LOCATION SEARCH PLAN ===");
+  {
+    const prevSearches = process.env.GMAPS_MAX_SEARCHES_PER_JOB;
+    const prevPlaces = process.env.GMAPS_MAX_TOTAL_PLACES;
+    const prevCities = process.env.GMAPS_MAX_CITIES;
+    process.env.GMAPS_MAX_SEARCHES_PER_JOB = "10";
+    process.env.GMAPS_MAX_TOTAL_PLACES = "100";
+    process.env.GMAPS_MAX_CITIES = "20";
+
+    const locationsQueried: string[] = [];
+    setApifyClientForTesting({
+      actor: () => ({
+        call: async (input: Record<string, unknown>) => {
+          locationsQueried.push(String(input.locationQuery));
+          return {
+            id: `run-multi-${locationsQueried.length}`,
+            status: "SUCCEEDED",
+            defaultDatasetId: `dataset-multi-${locationsQueried.length}`,
+            usageTotalUsd: 0.01,
+          };
+        },
+      }),
+      dataset: () => ({ listItems: async () => ({ items: [] }) }),
+    } as never);
+
+    try {
+      const provider = new GoogleMapsDiscoveryProvider();
+      await provider.discover({
+        query: "dental clinic",
+        location: "Toronto, Vancouver, Montreal",
+        limit: 100,
+      });
+      check(
+        locationsQueried.some((q) => q.includes("Toronto")) &&
+          locationsQueried.some((q) => q.includes("Vancouver")) &&
+          locationsQueried.some((q) => q.includes("Montreal")),
+        "Multi-location campaign searches each listed city",
+        JSON.stringify(locationsQueried),
+      );
+    } finally {
+      setApifyClientForTesting(null);
+      if (prevSearches === undefined) delete process.env.GMAPS_MAX_SEARCHES_PER_JOB;
+      else process.env.GMAPS_MAX_SEARCHES_PER_JOB = prevSearches;
+      if (prevPlaces === undefined) delete process.env.GMAPS_MAX_TOTAL_PLACES;
+      else process.env.GMAPS_MAX_TOTAL_PLACES = prevPlaces;
+      if (prevCities === undefined) delete process.env.GMAPS_MAX_CITIES;
+      else process.env.GMAPS_MAX_CITIES = prevCities;
+    }
   }
 
   // Reset test client

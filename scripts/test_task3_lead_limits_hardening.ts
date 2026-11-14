@@ -173,9 +173,9 @@ async function main() {
   console.log("  Users ready.\n");
 
   // -------------------------------------------------------------
-  // 1 & 2. leadLimit 1 and leadLimit 100 via API
+  // 1 & 2. leadLimit 1, 100, 101, and 1000 via API (campaigns have no 100 cap)
   // -------------------------------------------------------------
-  console.log("[Test 1 & 2: leadLimit 1 and 100 boundaries]");
+  console.log("[Test 1 & 2: leadLimit 1, 100, 101, and 1000]");
   const c1Res = await fetch(`${BASE_URL}/api/campaigns`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Cookie: userA.cookie },
@@ -200,6 +200,21 @@ async function main() {
   const c100Data = await c100Res.json();
   assert(c100Res.status === 201 && c100Data.leadLimit === 100, "leadLimit 100 accepted and persisted");
 
+  const c1000Res = await fetch(`${BASE_URL}/api/campaigns`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json", Cookie: userA.cookie },
+    body: JSON.stringify({
+      name: `T3 1000 Campaign ${testRunId}`,
+      intent: "Fitness trainers",
+      leadLimit: 1000,
+    }),
+  });
+  const c1000Data = await c1000Res.json();
+  assert(
+    c1000Res.status === 201 && c1000Data.leadLimit === 1000,
+    "leadLimit 1000 accepted and persisted (campaign cap removed)",
+  );
+
   // Numeric string "50"
   const cStrRes = await fetch(`${BASE_URL}/api/campaigns`, {
     method: "POST",
@@ -214,7 +229,7 @@ async function main() {
   assert(cStrRes.status === 201 && cStrData.leadLimit === 50, "leadLimit '50' numeric string normalized to integer 50");
 
   // -------------------------------------------------------------
-  // 3, 4, 5. Invalid leadLimits: 0, 101, negative, non-integer, strings
+  // 3, 4, 5. Invalid leadLimits: 0, negative, non-integer, strings
   // -------------------------------------------------------------
   console.log("\n[Test 3, 4 & 5: Invalid leadLimits return HTTP 400]");
   const c0Res = await fetch(`${BASE_URL}/api/campaigns`, {
@@ -235,7 +250,11 @@ async function main() {
       leadLimit: 101,
     }),
   });
-  assert(c101Res.status === 400, "leadLimit 101 rejected with HTTP 400");
+  const c101Data = await c101Res.json();
+  assert(
+    c101Res.status === 201 && c101Data.leadLimit === 101,
+    "leadLimit 101 accepted and persisted",
+  );
 
   const cNegRes = await fetch(`${BASE_URL}/api/campaigns`, {
     method: "POST",
@@ -275,18 +294,18 @@ async function main() {
       leadLimit: 200,
     }),
   });
-  assert(cPatchBadRes.status === 400, "PATCH leadLimit 200 rejected with HTTP 400");
+  assert(cPatchBadRes.status === 200, "PATCH leadLimit 200 accepted with HTTP 200");
 
-  // Unit tests on parseLeadLimit
+  // Unit tests on parseLeadLimit (campaign lead limits are no longer capped at 100)
   let unit400Count = 0;
-  for (const bad of [0, -1, 101, 1000, "abc", "10abc", "10.5", NaN, Infinity, -Infinity]) {
+  for (const bad of [0, -1, 2_147_483_648, "abc", "10abc", "10.5", NaN, Infinity, -Infinity]) {
     try {
       parseLeadLimit(bad, false);
     } catch {
       unit400Count++;
     }
   }
-  assert(unit400Count === 10, "Unit tests: parseLeadLimit rejected all 10 invalid variations");
+  assert(unit400Count === 9, "Unit tests: parseLeadLimit rejected all 9 invalid variations");
 
   // -------------------------------------------------------------
   // 6 & 7. Existing leads consume capacity & discovery never exceeds limit

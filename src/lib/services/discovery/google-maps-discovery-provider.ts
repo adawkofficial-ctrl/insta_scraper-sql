@@ -517,7 +517,9 @@ export class GoogleMapsDiscoveryProvider implements DiscoveryProvider {
       console.warn(cityResolution.warning);
     }
 
-    const maxCities = Number(process.env.GMAPS_MAX_CITIES || 5);
+    // Explicit multi-city campaigns should search every listed city (up to a
+    // safety cap). Country-only fallback still uses its own smaller scaled cap.
+    const maxCities = Math.max(1, Number(process.env.GMAPS_MAX_CITIES || 20));
     const resolvedCities = cityResolution.cities
       // Drop province/state abbreviations such as "ON" from "Toronto, ON";
       // they are not searchable cities and waste a paid run.
@@ -531,10 +533,14 @@ export class GoogleMapsDiscoveryProvider implements DiscoveryProvider {
     // and must not stop before any call (0 leads). Search the first planned
     // city by default; operators can opt into more via
     // GMAPS_COUNTRY_FALLBACK_CITIES.
+    // Small country runs use one city (no fanout), but a large campaign (e.g.
+    // 1000 leads) needs the recommended city plan, otherwise it exhausts one
+    // city after a few searches and stops far short of the target.
+    const scaledCountryCityLimit = Math.ceil(Math.max(1, input.limit ?? 10) / 40);
     const countryFallbackCityLimit = Math.max(
       1,
       Math.min(
-        Number(process.env.GMAPS_COUNTRY_FALLBACK_CITIES || 1),
+        Number(process.env.GMAPS_COUNTRY_FALLBACK_CITIES || scaledCountryCityLimit),
         maxCities,
       ),
     );

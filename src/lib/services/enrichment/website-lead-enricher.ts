@@ -1188,6 +1188,10 @@ export type WebsiteApplyResult = {
   emailFound: string | null;
   phoneFound: string | null;
   socialsFound: string[];
+  newSocials: string[];
+  newEmailCount: number;
+  newPhoneCount: number;
+  newSocialCount: number;
   pagesTried: number;
   changed: boolean;
 };
@@ -1211,11 +1215,15 @@ export async function applyWebsiteEnrichmentToLead(
   const existingWhatsapps = Array.isArray(existingContacts.whatsapps) ? existingContacts.whatsapps : [];
   const existingSocials = asRecord(existingContacts.socialLinks);
 
+  const incomingSocials = Object.entries(extraction.socialLinks).filter(
+    ([, value]) => typeof value === "string" && Boolean(value),
+  );
+  const newSocials = incomingSocials
+    .filter(([platform, value]) => existingSocials[platform] !== value)
+    .map(([platform, value]) => `${platform}:${String(value)}`);
   const socialLinks = {
     ...existingSocials,
-    ...Object.fromEntries(
-      Object.entries(extraction.socialLinks).filter(([, value]) => Boolean(value)),
-    ),
+    ...Object.fromEntries(incomingSocials),
   };
   const socialEntries = Object.entries(socialLinks).filter(([, value]) => typeof value === "string" && value);
 
@@ -1379,15 +1387,24 @@ export async function applyWebsiteEnrichmentToLead(
     if (lead.status === LeadStatus.NEW) {
       data.status = LeadStatus.ENRICH_PENDING;
     }
+  } else if (!lead.username && lead.instagramUsername) {
+    // Backfill username from instagramUsername so the list treats the lead as
+    // having Instagram and hides the "Find IG" action.
+    data.username = lead.instagramUsername;
+    data.usernameNormalized = lead.instagramUsername.toLowerCase();
+    data.instagramUsername = lead.instagramUsername;
   }
 
+  const newEmailCount = emails.length - existingEmails.length;
+  const newPhoneCount = phones.length - existingPhones.length;
+  const newSocialCount = newSocials.length;
   const changed =
     Boolean(handleToStore) ||
     (!lead.email && Boolean(primaryEmail)) ||
     (!lead.phone && Boolean(primaryPhone)) ||
-    socialEntries.length > 0 ||
-    emails.length > existingEmails.length ||
-    phones.length > existingPhones.length;
+    newEmailCount > 0 ||
+    newPhoneCount > 0 ||
+    newSocialCount > 0;
 
   if (changed || options?.force) {
     await prisma.lead.update({ where: { id: lead.id }, data });
@@ -1400,6 +1417,10 @@ export async function applyWebsiteEnrichmentToLead(
     emailFound: primaryEmail,
     phoneFound: primaryPhone,
     socialsFound: socialEntries.map(([key, value]) => `${key}:${String(value)}`),
+    newSocials,
+    newEmailCount,
+    newPhoneCount,
+    newSocialCount,
     pagesTried: extraction.pages.length,
     changed,
   };
@@ -1444,6 +1465,9 @@ export type WebsiteBulkEnrichmentResult = {
     handle: string | null;
     email: string | null;
     socials: string[];
+    newHandle: boolean;
+    newEmail: boolean;
+    newSocialCount: number;
     message: string;
   }>;
 };
@@ -1453,6 +1477,8 @@ export async function enrichLeadsFromWebsites(input: {
   leadIds?: string[];
   userId?: string;
   force?: boolean;
+  /** Scan every lead with a website, even if it already has IG/email/socials. */
+  scanAll?: boolean;
   limit?: number;
   concurrency?: number;
   fetchFn?: WebsiteFetchFn;
@@ -1460,9 +1486,11 @@ export async function enrichLeadsFromWebsites(input: {
   const prisma = getPrismaClient();
   const cooldownMs = 7 * 24 * 60 * 60 * 1000;
   const cooldownCutoff = new Date(Date.now() - cooldownMs);
+  const scanAll = input.scanAll === true;
 
-  const andConditions: Prisma.LeadWhereInput[] = [
-    {
+  const andConditions: Prisma.LeadWhereInput[] = [];
+  if (!scanAll) {
+    andConditions.push({
       OR: [
         { username: null },
         { username: "" },
@@ -1470,15 +1498,15 @@ export async function enrichLeadsFromWebsites(input: {
         { email: "" },
         { socialLink: null },
       ],
-    },
-  ];
-  if (!input.force) {
-    andConditions.push({
-      OR: [
-        { lastHandleEnrichmentAt: null },
-        { lastHandleEnrichmentAt: { lt: cooldownCutoff } },
-      ],
     });
+    if (!input.force) {
+      andConditions.push({
+        OR: [
+          { lastHandleEnrichmentAt: null },
+          { lastHandleEnrichmentAt: { lt: cooldownCutoff } },
+        ],
+      });
+    }
   }
 
   const where: Prisma.LeadWhereInput = {
@@ -1494,7 +1522,7 @@ export async function enrichLeadsFromWebsites(input: {
   const leads = await prisma.lead.findMany({
     where,
     include: { campaign: { select: { location: true } } },
-    take: input.limit ?? 500,
+    take: input.limit ?? (scanAll ? 1000 : 500),
     orderBy: { createdAt: "desc" },
   });
 
@@ -1503,7 +1531,12 @@ export async function enrichLeadsFromWebsites(input: {
   await runWithConcurrency(leads, input.concurrency ?? 15, async (lead) => {
     if (!lead.website) return;
     try {
-      if (!input.force && lead.lastHandleEnrichmentAt && lead.lastHandleEnrichmentAt > cooldownCutoff) {
+      if (
+        !scanAll &&
+        !input.force &&
+        lead.lastHandleEnrichmentAt &&
+        lead.lastHandleEnrichmentAt > cooldownCutoff
+      ) {
         results.push({
           id: lead.id,
           name: lead.fullName,
@@ -1512,6 +1545,9 @@ export async function enrichLeadsFromWebsites(input: {
           handle: lead.username,
           email: lead.email,
           socials: [],
+          newHandle: false,
+          newEmail: false,
+          newSocialCount: 0,
           message: "Website enrichment already ran within the last 7 days.",
         });
         return;
@@ -1529,7 +1565,12 @@ export async function enrichLeadsFromWebsites(input: {
       );
       const applied = await applyWebsiteEnrichmentToLead(lead, extraction, { force: input.force });
 
-      const found = Boolean(applied.handleStored || applied.emailFound || applied.socialsFound.length > 0);
+      const found = Boolean(
+        applied.handleStored ||
+          applied.newEmailCount > 0 ||
+          applied.newPhoneCount > 0 ||
+          applied.newSocialCount > 0,
+      );
       results.push({
         id: lead.id,
         name: lead.fullName,
@@ -1537,16 +1578,22 @@ export async function enrichLeadsFromWebsites(input: {
         outcome: found ? "found" : "not_found",
         handle: applied.handleStored ? applied.handleFound : lead.username,
         email: applied.emailFound,
-        socials: applied.socialsFound,
+        socials: applied.newSocials,
+        newHandle: applied.handleStored,
+        newEmail: applied.newEmailCount > 0,
+        newSocialCount: applied.newSocialCount,
         message: found
-          ? `Found ${[
+          ? `Found new ${[
               applied.handleStored ? `IG @${applied.handleFound}` : null,
-              applied.emailFound ? `email ${applied.emailFound}` : null,
-              applied.socialsFound.length ? `${applied.socialsFound.length} social link(s)` : null,
+              applied.newEmailCount > 0 ? `${applied.newEmailCount} email(s)` : null,
+              applied.newPhoneCount > 0 ? `${applied.newPhoneCount} phone(s)` : null,
+              applied.newSocialCount > 0
+                ? `${applied.newSocialCount} social link(s): ${applied.newSocials.join(", ")}`
+                : null,
             ]
               .filter(Boolean)
               .join(", ")} across ${applied.pagesTried} page(s).`
-          : `No handle/email/social found across ${applied.pagesTried} page(s).`,
+          : `No new handle/email/phone/social found across ${applied.pagesTried} page(s).`,
       });
     } catch (err: unknown) {
       results.push({
@@ -1557,14 +1604,17 @@ export async function enrichLeadsFromWebsites(input: {
         handle: null,
         email: null,
         socials: [],
+        newHandle: false,
+        newEmail: false,
+        newSocialCount: 0,
         message: err instanceof Error ? err.message : String(err),
       });
     }
   });
 
-  const handlesFound = results.filter((r) => r.handle).length;
-  const emailsFound = results.filter((r) => r.email).length;
-  const socialsFound = results.reduce((sum, r) => sum + r.socials.length, 0);
+  const handlesFound = results.filter((r) => r.newHandle).length;
+  const emailsFound = results.filter((r) => r.newEmail).length;
+  const socialsFound = results.reduce((sum, r) => sum + r.newSocialCount, 0);
   const notFound = results.filter((r) => r.outcome === "not_found").length;
   const cooldownSkipped = results.filter((r) => r.outcome === "cooldown").length;
 

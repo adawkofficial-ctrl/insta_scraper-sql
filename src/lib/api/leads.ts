@@ -264,6 +264,8 @@ export type EnrichLeadsResponse = {
     biography: string | null;
     enrichmentStatus: "ENRICHED" | "NOT_ENRICHED";
     negativeKeywordMatched?: string | null;
+    criteriaPassed?: boolean;
+    criteriaReasons?: string[];
   }>;
 };
 
@@ -281,6 +283,8 @@ export type EnrichLeadHandleResponse = {
   handleSource: string | null;
   handleConfidence: string | null;
   message: string;
+  criteriaPassed?: boolean;
+  criteriaReasons?: string[];
 };
 
 export async function enrichLeadHandle(leadId: string): Promise<EnrichLeadHandleResponse> {

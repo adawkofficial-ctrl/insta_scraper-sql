@@ -902,6 +902,30 @@ async function executeDiscoveryRun(params: ExecuteDiscoveryRunParams): Promise<D
       ? Math.max(1, Number.parseInt(process.env.DISCOVERY_MAX_ROUNDS, 10))
       : 5;
 
+    // Scale the run/round/budget caps with the requested campaign capacity.
+    // Fixed low caps (4 runs / 5 rounds / $0.30) stop a 1000-lead campaign
+    // after ~60 places. Larger campaigns must be allowed to keep going until
+    // the lead target, the monthly budget, or real query exhaustion stops them.
+    const remainingLeadTarget = Math.max(1, remainingCapacity);
+    const runsNeededForTarget = Math.ceil(remainingLeadTarget / 3) + 10;
+    // Large campaigns need enough zero-result rounds to rotate through all
+    // planned cities/keywords before concluding the query is exhausted.
+    const zeroCandidateStopThreshold = Math.max(
+      2,
+      Math.min(10, Math.ceil(remainingLeadTarget / 100)),
+    );
+    // Zero-lead guard: small jobs stop after ~$0.10, large campaigns need more
+    // runs to rotate cities/keywords before we conclude they are unproductive.
+    const costPerLeadGuardUsd = Math.max(
+      0.10,
+      Math.min(5.00, Number((remainingLeadTarget * 0.01).toFixed(2))),
+    );
+    const isInstagramBudgetMode =
+      activeDiscoveryMode === "instagram_places" ||
+      activeDiscoveryMode === "instagram_search" ||
+      isInstagramAllInOneMode;
+    const targetRounds = isInstagramBudgetMode ? baseMaxRounds : runsNeededForTarget;
+
     const maxRounds =
       activeDiscoveryMode === "instagram_places"
         ? 1
@@ -909,19 +933,25 @@ async function executeDiscoveryRun(params: ExecuteDiscoveryRunParams): Promise<D
           ? 1
           : activeDiscoveryMode === "instagram_search"
             ? Math.min(baseMaxRounds, maxIgRounds)
-            : baseMaxRounds;
+            : Math.max(baseMaxRounds, targetRounds);
 
-    const APIFY_MAX_RUNS_PER_JOB = process.env.APIFY_MAX_RUNS_PER_JOB
+    const configuredMaxRuns = process.env.APIFY_MAX_RUNS_PER_JOB
       ? Math.max(1, Number.parseInt(process.env.APIFY_MAX_RUNS_PER_JOB, 10))
       : 4;
+    const APIFY_MAX_RUNS_PER_JOB = isInstagramBudgetMode
+      ? configuredMaxRuns
+      : Math.max(configuredMaxRuns, runsNeededForTarget);
 
     const IG_PLACES_MAX_JOB_USD = process.env.IG_PLACES_MAX_JOB_USD
       ? Number.parseFloat(process.env.IG_PLACES_MAX_JOB_USD)
       : 0.15;
 
-    const DISCOVERY_MAX_JOB_USD = process.env.DISCOVERY_MAX_JOB_USD
+    const configuredJobBudgetUsd = process.env.DISCOVERY_MAX_JOB_USD
       ? Number.parseFloat(process.env.DISCOVERY_MAX_JOB_USD)
       : 0.30;
+    const DISCOVERY_MAX_JOB_USD = isInstagramBudgetMode
+      ? configuredJobBudgetUsd
+      : Math.max(configuredJobBudgetUsd, Number((remainingLeadTarget * 0.02).toFixed(2)));
 
     const jobBudgetUsd = areApifyCostLimitsEnabled()
       ? activeDiscoveryMode === "instagram_places"
@@ -945,9 +975,12 @@ async function executeDiscoveryRun(params: ExecuteDiscoveryRunParams): Promise<D
       );
     }
 
-    const maxSearchRequests = process.env.APIFY_MAX_REQUESTS_PER_RUN
+    const configuredMaxSearchRequests = process.env.APIFY_MAX_REQUESTS_PER_RUN
       ? Math.max(1, Number.parseInt(process.env.APIFY_MAX_REQUESTS_PER_RUN, 10))
       : 5;
+    const maxSearchRequests = isInstagramBudgetMode
+      ? configuredMaxSearchRequests
+      : Math.max(configuredMaxSearchRequests, runsNeededForTarget);
 
     let consecutiveZeroCandidatesRounds = 0;
     const candidateMetaByUsername = new Map<string, DiscoveredProfile>();
@@ -1026,10 +1059,11 @@ async function executeDiscoveryRun(params: ExecuteDiscoveryRunParams): Promise<D
         break;
       }
 
-      // Cost-per-lead guard: stop when job cost > $0.10 and saved leads == 0
-      if (totalApifyCostUsd > 0.10 && totalPersisted === 0) {
+      // Cost-per-lead guard: scaled with the target; stop only after the
+      // zero-lead allowance is spent.
+      if (totalApifyCostUsd > costPerLeadGuardUsd && totalPersisted === 0) {
         logDiscovery(
-          `[DISCOVERY] Cost per lead guard triggered: totalApifyCostUsd=$${totalApifyCostUsd.toFixed(2)} with 0 leads. Stopping discovery.`,
+          `[DISCOVERY] Cost per lead guard triggered: totalApifyCostUsd=$${totalApifyCostUsd.toFixed(2)} with 0 leads (threshold $${costPerLeadGuardUsd.toFixed(2)}). Stopping discovery.`,
         );
         stopReason = "cost_per_lead_exceeded";
         break;
@@ -1619,9 +1653,9 @@ async function executeDiscoveryRun(params: ExecuteDiscoveryRunParams): Promise<D
         consecutiveZeroCandidatesRounds = 0;
       }
 
-      if (consecutiveZeroCandidatesRounds >= 2) {
+      if (consecutiveZeroCandidatesRounds >= zeroCandidateStopThreshold) {
         logDiscovery(
-          `[DISCOVERY] 2 consecutive rounds yielded 0 new candidates. Stopping discovery.`,
+          `[DISCOVERY] ${zeroCandidateStopThreshold} consecutive rounds yielded 0 new candidates. Stopping discovery.`,
         );
         stopReason = "all_keywords_exhausted";
         break;
@@ -1675,11 +1709,11 @@ async function executeDiscoveryRun(params: ExecuteDiscoveryRunParams): Promise<D
       // Check cost-per-lead guard only when spend limits are enabled.
       if (
         areApifyCostLimitsEnabled() &&
-        totalApifyCostUsd > 0.10 &&
+        totalApifyCostUsd > costPerLeadGuardUsd &&
         totalPersisted === 0
       ) {
         logDiscovery(
-          `[DISCOVERY] Cost per lead guard: cost=$${totalApifyCostUsd.toFixed(2)} with 0 leads. Stopping discovery.`,
+          `[DISCOVERY] Cost per lead guard: cost=$${totalApifyCostUsd.toFixed(2)} with 0 leads (threshold $${costPerLeadGuardUsd.toFixed(2)}). Stopping discovery.`,
         );
         stopReason = "cost_per_lead_exceeded";
         break;
@@ -1738,7 +1772,7 @@ async function executeDiscoveryRun(params: ExecuteDiscoveryRunParams): Promise<D
 
     const passedAiProfiles: LeadProfile[] = [];
 
-    if (canEnrich && totalApifyCostUsd > 0.10 && totalPersisted === 0) {
+    if (canEnrich && totalApifyCostUsd > costPerLeadGuardUsd && totalPersisted === 0) {
       stopReason = "cost_per_lead_exceeded";
     } else if (canEnrich && apifyRunsCount >= APIFY_MAX_RUNS_PER_JOB) {
       stopReason = "max_runs_per_job_reached";
@@ -2364,7 +2398,7 @@ async function executeDiscoveryRun(params: ExecuteDiscoveryRunParams): Promise<D
     }
 
     // Check cost-per-lead guard after enrichment & persistence
-    if (totalApifyCostUsd > 0.10 && totalPersisted === 0) {
+    if (totalApifyCostUsd > costPerLeadGuardUsd && totalPersisted === 0) {
       stopReason = "cost_per_lead_exceeded";
     }
 
@@ -3074,7 +3108,7 @@ export function buildDiscoveryNotice(input: {
           : stopReason === "max_runs_per_job_reached"
             ? " Reason: maximum Apify runs reached."
             : stopReason === "cost_per_lead_exceeded"
-              ? " Reason: cost-per-lead guard triggered ($0.10 exceeded with 0 leads)."
+              ? " Reason: cost-per-lead guard triggered after the allowed zero-lead discovery spend was reached."
               : " Reason: all search options exhausted for this query/location.";
     return `PARTIAL_RESULTS: Saved ${persisted} of ${allowedNew} available slots (campaign limit: ${requested}, existing: ${existingLeads}, remaining capacity: ${remainingCapacity}). Candidates discovered: ${discovered}, already in campaign: ${existingSkipped}, enrichment failures: ${enrichSkipped}, skipped: ${breakdown}.${reasonDetail} ${statsSegment}.${costSuffix}${funnelSummary}`;
   }

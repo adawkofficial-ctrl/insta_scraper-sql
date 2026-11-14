@@ -407,9 +407,9 @@ async function runTests() {
         const items = usernames.map((u) => ({
           username: u,
           fullName: u === notEnrichedLead1.username ? "Dr. Smile One" : "Dr. Smile Two",
-          followersCount: u === notEnrichedLead1.username ? 1200 : 3400,
-          followsCount: u === notEnrichedLead1.username ? 400 : 200,
-          postsCount: u === notEnrichedLead1.username ? 50 : 110,
+          followersCount: u === notEnrichedLead1.username ? 1200 : 50,
+          followsCount: u === notEnrichedLead1.username ? 400 : 20,
+          postsCount: u === notEnrichedLead1.username ? 50 : 1,
           biography: u === notEnrichedLead1.username ? "Gentle dentistry in Toronto" : "Cosmetic dentistry specialist",
           externalUrl: u === notEnrichedLead1.username ? "https://smileone.ca" : "https://smiletwo.ca",
           isBusinessAccount: true,
@@ -451,6 +451,30 @@ async function runTests() {
       check(res1.success === true, "Enrichment request succeeded");
       check(res1.enrichedCount === 2, "Enriched 2 leads", `Got: ${res1.enrichedCount}`);
       check(res1.cachedCount === 0, "Zero cached leads on first run", `Got: ${res1.cachedCount}`);
+      const passingRow = res1.leads.find((row) => row.id === notEnrichedLead1.id);
+      const failingRow = res1.leads.find((row) => row.id === notEnrichedLead2.id);
+      check(
+        passingRow?.criteriaPassed === true,
+        "Profile meeting follower/post criteria is marked passed",
+        JSON.stringify(passingRow?.criteriaReasons),
+      );
+      check(
+        failingRow?.criteriaPassed === false &&
+          (failingRow?.criteriaReasons ?? []).some((reason) => reason.includes("Followers")) &&
+          (failingRow?.criteriaReasons ?? []).some((reason) => reason.includes("Posts")),
+        "Below-criteria profile keeps its account and reports follower/post shortfall",
+        JSON.stringify(failingRow),
+      );
+      const dbFailing = await prisma.lead.findUnique({ where: { id: notEnrichedLead2.id } });
+      const dbFailingRaw = (dbFailing?.rawProfileData ?? {}) as {
+        enrichmentCriteria?: { passed?: boolean; reasons?: string[] };
+      };
+      check(
+        dbFailingRaw.enrichmentCriteria?.passed === false &&
+          (dbFailing?.scoreFlags ?? []).includes("BELOW_ENRICHMENT_CRITERIA"),
+        "Below-criteria status is persisted on the lead for the list UI",
+        JSON.stringify(dbFailingRaw.enrichmentCriteria),
+      );
       check(profileActorCallCount === 1, "Profile actor called exactly ONCE for the batch");
       check(
         Array.isArray((lastProfileActorInput as any)?.usernames) &&

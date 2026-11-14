@@ -30,7 +30,7 @@ import {
   DncChannel,
 } from "../compliance/dnc-service";
 import { notifySystemError } from "../notifications/notification-triggers";
-import { getMaxLeadLimit } from "../scraper";
+import { MAX_CAMPAIGN_LEAD_LIMIT } from "@/lib/constants/campaign-limits";
 
 // Worker lease configuration
 export const LEASE_DURATION_MS = 60 * 1000; // 60 seconds lease
@@ -287,9 +287,10 @@ export async function preflightValidateCampaignExecution(
     );
   }
 
-  // 4. Lead limit validation
+  // 4. Lead limit validation. Campaigns have no product cap; the bound only
+  // prevents overflowing the underlying 32-bit database integer.
   if (campaign.leadLimit !== null && campaign.leadLimit !== undefined) {
-    const maxLimit = getMaxLeadLimit();
+    const maxLimit = MAX_CAMPAIGN_LEAD_LIMIT;
     if (campaign.leadLimit < 1 || campaign.leadLimit > maxLimit) {
       throw new BadRequestError(
         "INVALID_LEAD_LIMIT",

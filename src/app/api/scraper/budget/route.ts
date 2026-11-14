@@ -18,6 +18,7 @@ import {
   getAreaCooldownDays,
   getMinIgYieldPercent,
 } from "@/lib/services/discovery/google-maps-cost-optimizer";
+import { getMaxLeadLimit } from "@/lib/services/scraper/instagram-profile";
 import { getActiveProviderSummary } from "@/lib/services/scraper/provider-switch";
 import {
   getIgSearchLimit,
@@ -66,9 +67,9 @@ export async function GET(request: Request): Promise<Response> {
         ? Number.parseFloat(process.env.DISCOVERY_MAX_JOB_USD || "0.60")
         : null,
       discoveryStage: process.env.DISCOVERY_STAGE || "default",
-      maxLeadsCap: process.env.DISCOVERY_STAGE === "pilot_small" ? 10 : 100,
+      maxLeadsCap: getMaxLeadLimit(),
       gmapsMaxTotalPlaces: Number.parseInt(process.env.GMAPS_MAX_TOTAL_PLACES || "15", 10),
-      gmapsMaxCities: Number.parseInt(process.env.GMAPS_MAX_CITIES || "1", 10),
+      gmapsMaxCities: Math.max(1, Number.parseInt(process.env.GMAPS_MAX_CITIES || "20", 10)),
       contactsEnrichmentEnabled:
         process.env.GMAPS_SOCIAL_ENRICHMENT === "true" ||
         process.env.GMAPS_SCRAPE_CONTACTS === "true",

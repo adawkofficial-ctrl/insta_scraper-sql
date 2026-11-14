@@ -125,11 +125,12 @@ function testLeadLimitParsing() {
   check(parseLeadLimit(undefined) === DEFAULT_LEAD_LIMIT, `default is ${DEFAULT_LEAD_LIMIT}`);
   check(parseLeadLimit(10) === 10, "limit 10 accepted");
   check(parseLeadLimit(MIN_LEAD_LIMIT) === MIN_LEAD_LIMIT, "limit 1 accepted");
-  check(parseLeadLimit(MAX_LEAD_LIMIT) === MAX_LEAD_LIMIT, "limit 100 accepted");
+  check(parseLeadLimit(MAX_LEAD_LIMIT) === MAX_LEAD_LIMIT, "max limit accepted");
+  check(parseLeadLimit(1000) === 1000, "limit 1000 accepted (no campaign cap)");
 
   const invalid: Array<[string, unknown]> = [
     ["0", 0],
-    ["101", 101],
+    ["2147483648", 2_147_483_648],
     ['"abc"', "abc"],
     ["-5", -5],
     ["1.5", 1.5],

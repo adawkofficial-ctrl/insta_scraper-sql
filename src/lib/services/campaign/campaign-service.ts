@@ -16,9 +16,12 @@ import {
   normalizeInstagramUsername,
   parseLeadLimit,
   scrapeInstagramProfiles,
-  getMaxLeadLimit,
   getMaxProfileBatchSize,
 } from "../scraper";
+import {
+  MAX_CAMPAIGN_LEAD_LIMIT,
+  MIN_CAMPAIGN_LEAD_LIMIT,
+} from "@/lib/constants/campaign-limits";
 import {
   applyClassifiedProfiles,
   classifyProfiles,
@@ -36,6 +39,7 @@ export const CAMPAIGN_ID_PATTERN = /^[A-Za-z0-9_-]{1,64}$/;
 
 const MAX_CAMPAIGN_NAME_LENGTH = 200;
 const MAX_CAMPAIGN_DESC_LENGTH = 2000;
+const MAX_CAMPAIGN_LOCATION_LENGTH = 1000;
 const MAX_ERROR_MESSAGE_LENGTH = 1000;
 
 export type CampaignSummary = {
@@ -161,11 +165,11 @@ function logScrape(message: string): void {
 }
 
 export function parseCampaignLeadLimit(value: unknown, fieldName = "leadLimit"): number {
-  const maxLimit = getMaxLeadLimit();
+  const maxLimit = MAX_CAMPAIGN_LEAD_LIMIT;
   if (value === undefined || value === null) {
     throw new BadRequestError(
       "INVALID_LEAD_LIMIT",
-      `"${fieldName}" is required and must be an integer between 1 and ${maxLimit}.`,
+      `"${fieldName}" is required and must be an integer of at least ${MIN_CAMPAIGN_LEAD_LIMIT}.`,
     );
   }
 
@@ -177,28 +181,34 @@ export function parseCampaignLeadLimit(value: unknown, fieldName = "leadLimit"):
     if (!/^-?\d+$/.test(trimmed)) {
       throw new BadRequestError(
         "INVALID_LEAD_LIMIT",
-        `"${fieldName}" must be an integer between 1 and ${maxLimit}.`,
+        `"${fieldName}" must be a whole number of at least ${MIN_CAMPAIGN_LEAD_LIMIT}.`,
       );
     }
     numValue = Number.parseInt(trimmed, 10);
   } else {
     throw new BadRequestError(
       "INVALID_LEAD_LIMIT",
-      `"${fieldName}" must be an integer between 1 and ${maxLimit}.`,
+      `"${fieldName}" must be a whole number of at least ${MIN_CAMPAIGN_LEAD_LIMIT}.`,
     );
   }
 
   if (!Number.isInteger(numValue) || Number.isNaN(numValue)) {
     throw new BadRequestError(
       "INVALID_LEAD_LIMIT",
-      `"${fieldName}" must be an integer between 1 and ${maxLimit}.`,
+      `"${fieldName}" must be a whole number of at least ${MIN_CAMPAIGN_LEAD_LIMIT}.`,
     );
   }
 
-  if (numValue < 1 || numValue > maxLimit) {
+  if (numValue < MIN_CAMPAIGN_LEAD_LIMIT) {
     throw new BadRequestError(
       "LEAD_LIMIT_OUT_OF_RANGE",
-      `"${fieldName}" must be between 1 and ${maxLimit}.`,
+      `"${fieldName}" must be at least ${MIN_CAMPAIGN_LEAD_LIMIT}.`,
+    );
+  }
+  if (numValue > maxLimit) {
+    throw new BadRequestError(
+      "LEAD_LIMIT_OUT_OF_RANGE",
+      `"${fieldName}" must be at most ${maxLimit}.`,
     );
   }
 
@@ -384,8 +394,11 @@ export async function createCampaign(
       throw new BadRequestError("INVALID_LOCATION", '"location" must be a string.');
     }
     const trimmedLocation = record.location.trim();
-    if (trimmedLocation.length > 200) {
-      throw new BadRequestError("LOCATION_TOO_LONG", '"location" cannot exceed 200 characters.');
+    if (trimmedLocation.length > MAX_CAMPAIGN_LOCATION_LENGTH) {
+      throw new BadRequestError(
+        "LOCATION_TOO_LONG",
+        `"location" cannot exceed ${MAX_CAMPAIGN_LOCATION_LENGTH} characters.`,
+      );
     }
     location = trimmedLocation.length > 0 ? trimmedLocation : null;
   }
@@ -928,8 +941,11 @@ export async function updateCampaign(
       data.location = null;
     } else if (typeof record.location === "string") {
       const trimmed = record.location.trim();
-      if (trimmed.length > 200) {
-        throw new BadRequestError("LOCATION_TOO_LONG", '"location" cannot exceed 200 characters.');
+      if (trimmed.length > MAX_CAMPAIGN_LOCATION_LENGTH) {
+        throw new BadRequestError(
+          "LOCATION_TOO_LONG",
+          `"location" cannot exceed ${MAX_CAMPAIGN_LOCATION_LENGTH} characters.`,
+        );
       }
       data.location = trimmed.length > 0 ? trimmed : null;
     } else {

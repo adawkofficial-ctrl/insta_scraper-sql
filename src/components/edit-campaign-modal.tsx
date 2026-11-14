@@ -7,7 +7,7 @@ import {
   type CompanyProfilesListItem,
 } from "@/lib/api/company-profile";
 import { ApiClientError } from "@/lib/api/client";
-import { MAX_MAX_LEADS } from "@/lib/api/scraper";
+import { MAX_CAMPAIGN_LEAD_LIMIT } from "@/lib/constants/campaign-limits";
 
 export type EditCampaignModalProps = {
   isOpen: boolean;
@@ -187,11 +187,9 @@ function EditCampaignDialog({
       if (
         isNaN(parsedLeadLimit) ||
         parsedLeadLimit < 1 ||
-        parsedLeadLimit > MAX_MAX_LEADS
+        parsedLeadLimit > MAX_CAMPAIGN_LEAD_LIMIT
       ) {
-        setError(
-          `Lead limit must be a valid number between 1 and ${MAX_MAX_LEADS}.`,
-        );
+        setError("Lead limit must be a positive whole number.");
         return;
       }
     }
@@ -597,11 +595,10 @@ function EditCampaignDialog({
                 id="edit-campaign-limit"
                 type="number"
                 min={1}
-                max={MAX_MAX_LEADS}
                 disabled={isSubmitting}
                 value={leadLimit}
                 onChange={(e) => setLeadLimit(e.target.value)}
-                placeholder={`e.g. 50 (max ${MAX_MAX_LEADS})`}
+                placeholder="e.g. 1000"
                 className="mt-1 block w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 focus:border-indigo-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 disabled:opacity-50"
               />
               <p className="mt-1 text-[11px] text-zinc-500">

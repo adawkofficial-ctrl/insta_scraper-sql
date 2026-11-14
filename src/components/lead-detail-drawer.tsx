@@ -1031,7 +1031,35 @@ export function LeadDetailDrawer({
                               </span>
                             )
                           ) : null}
+                          {(() => {
+                            const raw = lead.rawProfileData as
+                              | { enrichmentCriteria?: { passed?: boolean; reasons?: string[] } }
+                              | undefined;
+                            const criteria = raw?.enrichmentCriteria;
+                            if (!criteria || criteria.passed !== false) return null;
+                            return (
+                              <span
+                                className="rounded bg-orange-500/10 px-2 py-0.5 text-[10px] font-semibold text-orange-300 border border-orange-500/30"
+                                title={(criteria.reasons ?? []).join("; ")}
+                              >
+                                BELOW CRITERIA
+                              </span>
+                            );
+                          })()}
                         </div>
+
+                        {(() => {
+                          const raw = lead.rawProfileData as
+                            | { enrichmentCriteria?: { passed?: boolean; reasons?: string[] } }
+                            | undefined;
+                          const criteria = raw?.enrichmentCriteria;
+                          if (!criteria || criteria.passed !== false) return null;
+                          return (
+                            <p className="mt-1 text-[11px] text-orange-300">
+                              Below enrichment criteria: {(criteria.reasons ?? []).join("; ") || "thresholds not met"}
+                            </p>
+                          );
+                        })()}
 
                         {lead.fullName && lead.username && (
                           <p className="text-sm font-medium text-zinc-300 truncate">{lead.fullName}</p>
