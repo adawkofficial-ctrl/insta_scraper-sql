@@ -40,12 +40,7 @@ async function upsertAdminUser(
 async function main() {
   const prisma = getPrismaClient();
   try {
-    console.log("Ensuring 'role' column exists in 'User' table...");
-    await prisma.$executeRawUnsafe(`
-      ALTER TABLE "User" ADD COLUMN IF NOT EXISTS "role" TEXT NOT NULL DEFAULT 'USER';
-    `);
-    console.log("Database schema confirmed.");
-
+    // Schema is managed by Prisma migrations; never alter it from a seed script.
     const adminPassword = process.env.ADMIN_PASSWORD || "AdminPass2026!Secure";
     const passwordHash = await bcrypt.hash(adminPassword, 12);
 
@@ -66,9 +61,8 @@ async function main() {
 
     console.log("\n==========================================");
     console.log("DEFAULT ADMIN ACCOUNT(S) READY IN DB:");
-    console.log(`Primary Email:   admin@instascraper.com`);
-    console.log(`Secondary Email: admin@admin.com`);
-    console.log(`Password:        ${adminPassword}`);
+    console.log("Primary admin email configured from ADMIN_EMAIL.");
+    console.log("Secondary admin email: admin@admin.com");
     console.log(`Role:            ADMIN`);
     console.log("==========================================\n");
   } catch (error) {
