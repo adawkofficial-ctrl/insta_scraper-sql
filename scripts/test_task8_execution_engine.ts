@@ -208,20 +208,39 @@ async function main() {
   // 4. Pause execution flow
   // --------------------------------------------------------------------------
   console.log("\n--- 4. Pause execution flow ---");
-  // Ensure campaign is RUNNING before testing pause (worker in background may auto-pause if no IG session)
-  await prisma.campaign.update({
-    where: { id: campaignIdA },
-    data: { status: CampaignStatus.RUNNING },
-  });
-  await prisma.campaignExecution.updateMany({
-    where: { campaignId: campaignIdA, status: CampaignExecutionStatus.PAUSED },
-    data: { status: CampaignExecutionStatus.RUNNING },
-  });
-
-  const pauseRes = await fetch(`${BASE_URL}/api/campaigns/${campaignIdA}/pause`, {
-    method: "POST",
-    headers: authHeaderA,
-  });
+  // The background worker can finish between the PAUSED assertion and this
+  // call. Reset a terminal execution to RUNNING and retry pause; after the
+  // worker has finished the state is stable and pause succeeds.
+  let pauseRes: Response | null = null;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    await prisma.campaign.update({
+      where: { id: campaignIdA },
+      data: { status: CampaignStatus.RUNNING },
+    });
+    await prisma.campaignExecution.updateMany({
+      where: {
+        campaignId: campaignIdA,
+        status: {
+          in: [
+            CampaignExecutionStatus.PAUSED,
+            CampaignExecutionStatus.COMPLETED,
+            CampaignExecutionStatus.PARTIAL,
+            CampaignExecutionStatus.FAILED,
+          ],
+        },
+      },
+      data: { status: CampaignExecutionStatus.RUNNING },
+    });
+    pauseRes = await fetch(`${BASE_URL}/api/campaigns/${campaignIdA}/pause`, {
+      method: "POST",
+      headers: authHeaderA,
+    });
+    if (pauseRes.status === 200) break;
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  }
+  if (!pauseRes) {
+    throw new Error("Pause request was not issued");
+  }
   assert(pauseRes.status === 200, "Pause endpoint returns HTTP 200", `status: ${pauseRes.status}`);
   const pauseData = await pauseRes.json();
   assert(pauseData.status === "PAUSED", "Execution transitioned to PAUSED in response");
