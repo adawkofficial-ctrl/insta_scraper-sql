@@ -562,6 +562,66 @@ Phase 1 schema placeholders: 11 scalar-list fields are temporarily `Json?`/`Json
 | `test_step3_sparior`, `test_task24_sparior_keyword_discovery`, `test_task_intent_and_continuation`, `test_discovery_runaway_guard`, `test_step4_dedup`, `test_discovery_pipeline_stages`, `test_discovery_fixes` | `P2010 ... This command is not supported in the prepared statement protocol yet` from dedup `SAVEPOINT` / `RELEASE SAVEPOINT` |
 | `test_step6_quality_approval`, `test_task18_instagram_sender`, `test_step9_reply_send`, `test_outbound_send_safety`, `test_e2e_full_pipeline`, `test_pre_pilot_safety`, `test_task11_errors` | `P2010 ... syntax ... near '"InstagramSenderAccount" WHERE id = ? FOR UPDATE'` from send-gate raw lock |
 
+## 8.3 Phase 3 status (raw SQL, locking, concurrency, engines)
+
+### Raw SQL rewrites
+
+| Location | Before | After |
+|---|---|---|
+| `src/lib/services/dedup/dedup-service.ts` | `SAVEPOINT` / `ROLLBACK TO SAVEPOINT` / `RELEASE SAVEPOINT` around update/create | Removed. Catch P2002 per statement, re-read/link, fallback update strips `username`, `usernameNormalized`, `emailNormalized`, `instagramUserId`, `profileUrlCanonical`, `previousUsernames`, `scoreFlags`; whole campaign persist transaction uses `withMysqlRetry`. |
+| `src/lib/services/messaging/send-gate.ts` | `SELECT id FROM "InstagramSenderAccount" ... FOR UPDATE` | `tx.$queryRaw(Prisma.sql\`SELECT id FROM \`InstagramSenderAccount\` WHERE id = ${id} FOR UPDATE\`)`; `READ COMMITTED`; `withMysqlRetry`; reuses the transaction client for `canSendNow`/DNC. |
+| `src/app/api/health/route.ts` | `current_database()` | `DATABASE()` |
+| `scripts/test_step8_unipile_webhooks.ts` / `test_step_company_profile_per_campaign.ts` | double-quoted identifiers | backticks |
+| `scripts/test_mysql_guard_keys.ts` / `test_mysql_concurrency.ts` | none | backtick raw SQL only for test corruption/negative control |
+
+`withMysqlRetry` (`src/lib/db/mysql-retry.ts`) retries P2034 / MySQL 1213 / 1205 three times with jitter.
+
+### Concurrency results
+
+`scripts/test_mysql_concurrency.ts` (real DB, no DB mocks): **13 PASS / 0 FAIL**.
+- 50 iterations × 30 workers on daily cap 8 / hourly cap 4: exactly 4 succeed; counters exact.
+- 20 workers same `(campaign, lead, step)`: exactly 1 reservation.
+- Two senders round-robin: neither exceeds cap.
+- Opposite lock order: retry helper resolves; final state consistent.
+- Expired RESERVED slot recovered; counters survive a new client instance.
+- 20 parallel dedup creates: 1 active lead, 19 linked duplicates; guard keys consistent.
+- Negative control: bypassing guard-key maintenance is detected.
+
+### Engine comparison
+
+| Engine | Suites | Assertions | Drift |
+|---|---|---|---|
+| MySQL 8.0.46 | 73 PASS / 0 FAIL / 0 BLOCKED / 6 SKIPPED | 2665 passed / 0 failed | `No difference detected` |
+| MariaDB 10.11 | 73 PASS / 0 FAIL / 0 BLOCKED / 6 SKIPPED | 2674 passed / 0 failed | `migrate diff` reports JSON columns as type-changed because MariaDB stores JSON as LONGTEXT |
+
+MariaDB is green at the application/test level; its JSON=LONGTEXT storage difference is expected and documented (not a data correctness failure).
+
+### Performance sanity (45,000 seeded leads)
+
+`20261114010000_phase3_lead_list_indexes` adds:
+- `Lead(campaignId, createdAt)`
+- `Lead(campaignId, hasInstagram, createdAt)`
+- `Lead(campaignId, hasEmail, createdAt)`
+- `Lead(campaignId, hasWebsite, createdAt)`
+
+EXPLAIN:
+- Lead list: `Lead_campaignId_createdAt_idx`, ~21,894 rows estimated, backward scan; boolean composites are available.
+- Dedup lookup: `Lead_userId_usernameNormalized_idx`, rows=1.
+- Send-gate lock: PRIMARY, const, rows=1.
+- Candidate lookup: const/no-match (unique key).
+
+No additional index is required for the tested filters; the boolean composites remain available for selective filters.
+
+### Test-edit audit
+
+No assertion was removed or skipped. Test edits were:
+- MySQL representation changes (`availableChannels`→booleans, `scoreFlags` relation, Json accessors, backtick raw SQL).
+- Cap tests updated to the confirmed “campaigns have no 100 cap” decision (101/999999 now accepted; invalid cases are 0/negative/decimal/2^31).
+- Fixture fixes: real `userId` for UsageLog FK, isolated user for orchestrator dedup, MySQL URLs in DB-guard tests, real MIME/emoji expectations, stable lazy-enrichment timestamps.
+- `test_task8_execution_engine` commit 658ce3f: adds bounded pause/resume retry because the async worker can finish/auto-pause between the PAUSED assertion and the endpoint call; all endpoint/status assertions remain. If a zero-retry test is required, replace this fixture with a manually created RUNNING execution (no worker).
+- `test_task9_ui_execution_hardening` uses the same bounded pause retry for the same async-worker race.
+- `test_task18_instagram_sender` replaces a fixed 80 ms sleep with a status poll (stronger).
+
 ## 9. Open questions
 
 1. Confirm the exact Hostinger server version and whether it is **MySQL 8** or **MariaDB** (phpMyAdmin “Server version”).
