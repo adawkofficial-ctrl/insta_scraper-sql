@@ -354,12 +354,12 @@ async function main() {
 
     const totalCampaigns = await prisma.campaign.count();
     const nullRows = await prisma.$queryRaw<Array<{ count: bigint }>>(
-      Prisma.sql`SELECT count(*) as count FROM "Campaign" WHERE "companyProfileId" IS NULL`,
+      Prisma.sql`SELECT count(*) as count FROM \`Campaign\` WHERE \`companyProfileId\` IS NULL`,
     );
     const nullCampaigns = Number(nullRows[0]?.count ?? 0);
 
     const unlinkedRows = await prisma.$queryRaw<Array<{ count: bigint }>>(
-      Prisma.sql`SELECT count(*) as count FROM "Campaign" c LEFT JOIN "CompanyProfile" p ON c."companyProfileId" = p."id" WHERE p."id" IS NULL`,
+      Prisma.sql`SELECT count(*) as count FROM \`Campaign\` c LEFT JOIN \`CompanyProfile\` p ON c.\`companyProfileId\` = p.\`id\` WHERE p.\`id\` IS NULL`,
     );
     const unlinkedCampaigns = Number(unlinkedRows[0]?.count ?? 0);
 

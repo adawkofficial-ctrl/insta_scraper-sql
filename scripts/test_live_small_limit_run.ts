@@ -76,7 +76,7 @@ async function main() {
     console.log(`  Phone: ${l.phone ?? "none"} (normalized: ${l.phoneNormalized ?? "none"})`);
     console.log(`  Website: ${l.website ?? "none"}`);
     console.log(`  Contact Source: ${l.contactSource ?? "none"}`);
-    console.log(`  Available Channels: ${JSON.stringify(l.availableChannels)}`);
+    console.log(`  Channels: IG=${l.hasInstagram} email=${l.hasEmail} phone=${l.hasPhone} web=${l.hasWebsite} social=${l.hasOtherSocial}`);
 
     if (l.contactSource === "instagram_bio") bioContactCount++;
     else if (l.contactSource === "website_fallback") websiteFallbackCount++;

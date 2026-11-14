@@ -428,8 +428,8 @@ async function runTests() {
       JSON.stringify(contacts.socialLinks),
     );
     check(Boolean(lead?.qualityTier !== null && lead?.qualityScore !== null), "persist-first computes quality score/tier", `${lead?.qualityTier}/${lead?.qualityScore}`);
-    check(Boolean(lead?.availableChannels?.includes("EMAIL")), "persist-first channel flags include EMAIL", JSON.stringify(lead?.availableChannels));
-    check(Boolean(lead?.availableChannels?.includes("SOCIAL")), "persist-first channel flags include SOCIAL", JSON.stringify(lead?.availableChannels));
+    check(Boolean(lead?.hasEmail), "persist-first channel flags include EMAIL", String(lead?.hasEmail));
+    check(Boolean(lead?.hasOtherSocial), "persist-first channel flags include SOCIAL", String(lead?.hasOtherSocial));
 
     await saveContactOnlyLead({
       campaignId: campaign.id,

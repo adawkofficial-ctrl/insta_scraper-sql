@@ -157,7 +157,7 @@ async function main(): Promise<void> {
       campaignId: campaign.id,
       userId: user.id,
       source: "test",
-      availableChannels: ["PHONE"],
+      hasPhone: true,
     };
     // 20 existing duplicates, with the exact keys the pipeline must match.
     for (const placeId of dup.placeId) {

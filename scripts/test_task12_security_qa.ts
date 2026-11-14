@@ -216,7 +216,7 @@ async function main() {
     }
     check((await status(`/api/campaigns/${campA.id}/leads?page=1&limit=100`, A.cookie)).status === 200, "leads limit=100 accepted (bounded max)");
 
-    for (const [label, limit] of [["0", 0], ["-1", -1], ["101", 101], ["999999", 999999], ['"abc"', "abc"]] as Array<[string, unknown]>) {
+    for (const [label, limit] of [["0", 0], ["-1", -1], ["1.5", 1.5], ["2147483648", 2147483648], ['"abc"', "abc"]] as Array<[string, unknown]>) {
       const res = await status(`/api/campaigns/${campA.id}`, A.cookie, "PATCH", { leadLimit: limit });
       check(res.status === 400, `campaign leadLimit=${label} -> 400 (got ${res.status})`);
     }

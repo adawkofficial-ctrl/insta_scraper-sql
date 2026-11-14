@@ -20,6 +20,7 @@ import {
 import { persistCampaignLeads } from "../src/lib/services/campaign";
 import { previewBulkMessageJob } from "../src/lib/services/messaging/bulk-messaging-service";
 import type { LeadProfile } from "../src/lib/types";
+import { parseLeadPreviousUsernames } from "../src/lib/services/lead/json-lists";
 
 let passed = 0;
 let failed = 0;
@@ -191,7 +192,7 @@ async function main() {
 
   // username change via instagramUserId match
   check(
-    afterEnrich!.username === "renamed_handle" && (afterEnrich!.previousUsernames ?? []).includes(base.username),
+    afterEnrich!.username === "renamed_handle" && parseLeadPreviousUsernames(afterEnrich!.previousUsernames).includes(base.username),
     "instagramUserId match adopts new username and keeps previousUsernames",
     `${afterEnrich!.username} / ${JSON.stringify(afterEnrich!.previousUsernames)}`,
   );

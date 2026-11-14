@@ -17,6 +17,7 @@ import { sendEmailForLead } from "../src/lib/services/email/email-send-service";
 import { sanitizeEmailAccount } from "../src/lib/services/email/email-account-service";
 import { processEmailUnsubscribe } from "../src/lib/services/email/email-unsubscribe-service";
 import { checkEmailAddress } from "../src/lib/services/email/email-address-quality";
+import { scoreFlagCreate, withLeadChannelFlags } from "../src/lib/services/lead/lead-channels";
 
 let passed = 0;
 let failed = 0;
@@ -147,7 +148,7 @@ async function main(): Promise<void> {
         emailSourceUrl: "https://example.test/contact",
         emailFoundAt: new Date(),
         emailConfidence: 0.9,
-        availableChannels: ["EMAIL"],
+        ...withLeadChannelFlags(["EMAIL"]),
         source: "test",
       },
     });

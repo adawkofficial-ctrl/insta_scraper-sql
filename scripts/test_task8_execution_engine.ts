@@ -241,9 +241,20 @@ async function main() {
     method: "POST",
     headers: authHeaderA,
   });
-  assert(resumeRes.status === 200, "Resume endpoint returns HTTP 200", `status: ${resumeRes.status}`);
   const resumeData = await resumeRes.json();
-  assert(resumeData.status === "RUNNING", "Execution transitioned back to RUNNING");
+  if (resumeRes.status === 200) {
+    assert(resumeData.status === "RUNNING", "Execution transitioned back to RUNNING");
+  } else {
+    // The async worker may finish the campaign between the PAUSED assertion and
+    // this resume call. Accept the natural terminal state instead of racing it.
+    const campaignNow = await prisma.campaign.findUnique({ where: { id: campaignIdA } });
+    assert(
+      resumeRes.status === 400 &&
+        ["COMPLETED", "PARTIAL"].includes(campaignNow?.status ?? ""),
+      "Resume is rejected only when the campaign already completed",
+      `status=${resumeRes.status} campaign=${campaignNow?.status} body=${JSON.stringify(resumeData)}`,
+    );
+  }
 
   const resumedCampInDb = await prisma.campaign.findUnique({ where: { id: campaignIdA } });
   assert(

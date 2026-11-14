@@ -32,6 +32,7 @@ import type {
   SendMessageRequest,
   SendMessageResult,
 } from "../src/lib/services/messaging/messaging-provider";
+import { withLeadChannelFlags } from "../src/lib/services/lead/lead-channels";
 
 let passed = 0;
 let failed = 0;
@@ -119,7 +120,7 @@ async function runTests() {
       phone: "+14165550001",
       source: "google_maps",
       status: LeadStatus.NEW,
-      availableChannels: ["EMAIL", "PHONE"],
+      ...withLeadChannelFlags(["EMAIL", "PHONE"]),
     },
   });
 
@@ -214,7 +215,7 @@ async function runTests() {
         email: `${tag}_exec@example.com`,
         source: "google_maps",
         status: LeadStatus.NEW,
-        availableChannels: ["EMAIL", "PHONE"],
+        ...withLeadChannelFlags(["EMAIL", "PHONE"]),
       },
     });
     const execTemplate = await prisma.messageTemplate.create({

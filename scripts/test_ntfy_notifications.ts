@@ -105,7 +105,7 @@ async function main() {
 
     // Schema audit: NotificationLog must not store message bodies or topic names
     const tableColumns = await db.$queryRawUnsafe<Array<{ column_name: string }>>(
-      `SELECT column_name FROM information_schema.columns WHERE table_name = 'NotificationLog'`
+      `SELECT COLUMN_NAME AS column_name FROM information_schema.columns WHERE table_name = 'NotificationLog'`
     );
     const colNames = tableColumns.map((c) => c.column_name.toLowerCase());
     check(!colNames.includes("body"), "NotificationLog table has no 'body' column");

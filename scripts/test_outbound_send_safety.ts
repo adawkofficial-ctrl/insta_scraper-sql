@@ -1,6 +1,7 @@
 import "dotenv/config";
 import fs from "node:fs";
 import path from "node:path";
+import { scoreFlagCreate, withLeadChannelFlags } from "../src/lib/services/lead/lead-channels";
 
 // Test isolation: Ensure tests use test database and test environment
 // eslint-disable-next-line @typescript-eslint/no-require-imports
@@ -685,7 +686,7 @@ async function main() {
         profileUrl: null,
         phone: "+14165559001",
         email: "clinic@nohandle.ca",
-        availableChannels: ["PHONE", "EMAIL"],
+        ...withLeadChannelFlags(["PHONE", "EMAIL"]),
         status: "NEW",
       },
     });

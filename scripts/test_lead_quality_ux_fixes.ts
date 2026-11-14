@@ -17,6 +17,7 @@ import { canSendNow, reserveSendSlot } from "../src/lib/services/messaging/send-
 import { sendSingleMessage } from "../src/lib/services/messaging/messaging-service";
 import { enrichLeadHandleWaterfall, HANDLE_ENRICHMENT_COOLDOWN_DAYS } from "../src/lib/services/scraper/profile-enrichment-service";
 import { MessageStatus, InstagramSenderStatus } from "@/generated/prisma/client";
+import { scoreFlagCreate, withLeadChannelFlags } from "../src/lib/services/lead/lead-channels";
 
 async function main() {
   console.log("=================================================================");
@@ -240,10 +241,10 @@ async function main() {
       phone: "+1 416-754-9696",
       username: null,
       usernameNormalized: null,
-      availableChannels: ["PHONE", "WHATSAPP", "WEBSITE"],
+      ...withLeadChannelFlags(["PHONE", "WHATSAPP", "WEBSITE"]),
       qualityScore: 85,
       qualityTier: "B",
-      scoreFlags: ["IG_UNKNOWN", "NAME_WEBSITE_MISMATCH"],
+      scoreFlags: scoreFlagCreate(["IG_UNKNOWN", "NAME_WEBSITE_MISMATCH"]),
     },
   });
 
@@ -300,7 +301,7 @@ async function main() {
       email: "toronto@bythelakedental.com",
       isGroup: true,
       groupKey: "domain:bythelakedental.com",
-      availableChannels: ["INSTAGRAM", "EMAIL", "PHONE"],
+      ...withLeadChannelFlags(["INSTAGRAM", "EMAIL", "PHONE"]),
       qualityScore: 94,
       qualityTier: "A",
     },
@@ -317,7 +318,7 @@ async function main() {
       email: "ajax@bythelakedental.com",
       isGroup: true,
       groupKey: "domain:bythelakedental.com",
-      availableChannels: ["INSTAGRAM", "EMAIL", "PHONE"],
+      ...withLeadChannelFlags(["INSTAGRAM", "EMAIL", "PHONE"]),
       qualityScore: 94,
       qualityTier: "A",
     },

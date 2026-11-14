@@ -1,5 +1,5 @@
 /**
- * STEP 6 â€” Discovery Fixes Verification Test Suite
+ * STEP 6 — Discovery Fixes Verification Test Suite
  *
  * Verifies:
  * 1. Real-mode run with a mocked Apify client returning 15 realistic places

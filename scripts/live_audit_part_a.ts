@@ -28,6 +28,7 @@ import {
   UsageProvider,
 } from "../src/generated/prisma/client";
 import { DncSuppressedError } from "../src/lib/errors";
+import { parseCompanyForbiddenClaims } from "../src/lib/services/lead/json-lists";
 
 const prisma = getPrismaClient();
 
@@ -261,13 +262,13 @@ async function runPartA() {
 
   // Verify company profile constraints respected
   const textLower = (draftRow?.body || "").toLowerCase();
-  for (const claim of companyProfile.forbiddenClaims) {
+  for (const claim of parseCompanyForbiddenClaims(companyProfile.forbiddenClaims)) {
     assert.ok(
       !textLower.includes(claim.toLowerCase()),
       `Draft must not contain forbidden claim: "${claim}"`,
     );
   }
-  console.log("✓ Verified: Draft respects all forbiddenClaims!");
+  console.log("âœ“ Verified: Draft respects all forbiddenClaims!");
 
   // Check UsageLog records
   const geminiLogs = await prisma.usageLog.findMany({
@@ -580,7 +581,7 @@ async function runPartA() {
 
   assert.equal(caughtDncError, true, "Send must throw error for DNC lead");
   assert.equal(dncErrorCode, "DNC_SUPPRESSED", "Error code must be DNC_SUPPRESSED");
-  console.log("✓ Verified: DNC suppression correctly blocked message dispatch!");
+  console.log("âœ“ Verified: DNC suppression correctly blocked message dispatch!");
 
   separator("ALL 6 FLOWS OF PART A VERIFIED END-TO-END WITH REAL DATA & APIS");
 }

@@ -80,10 +80,10 @@ async function main() {
         },
       });
       await db.$executeRawUnsafe(`
-        UPDATE "InstagramSenderAccount"
-        SET "connectionMethod" = 'UNIPILE',
-            "unipileAccountId" = REPLACE("sessionPath", 'unipile:', '')
-        WHERE "sessionPath" LIKE 'unipile:%' AND "connectionMethod" = 'PLAYWRIGHT'
+        UPDATE \`InstagramSenderAccount\`
+        SET \`connectionMethod\` = 'UNIPILE',
+            \`unipileAccountId\` = REPLACE(\`sessionPath\`, 'unipile:', '')
+        WHERE \`sessionPath\` LIKE 'unipile:%' AND \`connectionMethod\` = 'PLAYWRIGHT'
       `);
       unipileAccounts = await db.instagramSenderAccount.findMany({
         where: { connectionMethod: "UNIPILE" },

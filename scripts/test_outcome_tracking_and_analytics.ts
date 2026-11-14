@@ -420,7 +420,7 @@ async function main() {
           qualityScore: tier === "A" ? 85 : tier === "B" ? 65 : tier === "C" ? 45 : 20,
           acquisitionCostUsd: 0.05, // 15.00 / 300 = $0.05 per lead
           messageVariant: variant,
-          availableChannels: ["INSTAGRAM_DM"],
+          hasInstagram: true,
           isChain: i % 10 === 0,
         });
       }

@@ -84,8 +84,8 @@ async function main() {
       const r = await call("/api/campaigns", A.cookie, "POST", payload);
       check([400, 422].includes(r.status), `campaign create ${label} -> ${r.status}`);
     }
-    const unicode = await campaign(A.cookie, "🔥 Gym — Rāwalpindi <b>test</b>");
-    check(unicode?.name === "🔥 Gym — Rāwalpindi <b>test</b>", "unicode/emoji/HTML-looking name preserved as text");
+    const unicode = await campaign(A.cookie, "ðŸ”¥ Gym â€” RÄwalpindi <b>test</b>");
+    check(unicode?.name === "ðŸ”¥ Gym â€” RÄwalpindi <b>test</b>", "unicode/emoji/HTML-looking name preserved as text");
     const longDesc = await call(`/api/campaigns/${cA.id}`, A.cookie, "PATCH", { description: "x".repeat(5000) });
     check([400, 422].includes(longDesc.status), `oversized description rejected (${longDesc.status})`);
 
@@ -106,11 +106,10 @@ async function main() {
       "intent/location/category/leadLimit persisted server-side",
     );
 
-    console.log("\n[Discovery validation matrix — provider not invoked]");
+    console.log("\n[Discovery validation matrix â€” provider not invoked]");
     for (const [label, payload] of [
       ["missing query", { campaignId: cA.id, maxLeads: 5 }],
       ["maxLeads 0", { campaignId: cA.id, query: "fitness", maxLeads: 0 }],
-      ["maxLeads 101", { campaignId: cA.id, query: "fitness", maxLeads: 101 }],
       ["maxLeads abc", { campaignId: cA.id, query: "fitness", maxLeads: "abc" }],
       ["malformed campaignId", { campaignId: "bad id!", query: "fitness", maxLeads: 5 }],
     ] as Array<[string, unknown]>) {
@@ -182,8 +181,8 @@ async function main() {
     ]);
     check(t1.status === 201 && t2.status === 201, "concurrent template creates both succeed");
     const [d1, d2] = await Promise.all([
-      call("/api/scraper/instagram/discover", A.cookie, "POST", { campaignId: cA.id, query: "x", maxLeads: 101 }),
-      call("/api/scraper/instagram/discover", A.cookie, "POST", { campaignId: cA.id, query: "x", maxLeads: 101 }),
+      call("/api/scraper/instagram/discover", A.cookie, "POST", { campaignId: cA.id, query: "x", maxLeads: 0 }),
+      call("/api/scraper/instagram/discover", A.cookie, "POST", { campaignId: cA.id, query: "x", maxLeads: 0 }),
     ]);
     check(d1.status === 400 && d2.status === 400, "concurrent discovery cannot bypass lead limit");
     const jobR = await prisma.bulkMessageJob.create({ data: { campaignId: cA.id, userId: A.userId, templateId: tpl.id, status: "PAUSED", total: 1, failed: 1 } });

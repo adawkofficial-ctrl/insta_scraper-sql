@@ -33,6 +33,7 @@ import { findMatchedNegativeKeyword } from "../src/lib/services/discovery/negati
 import { setApifyClientForTesting } from "../src/lib/services/scraper/apify-client";
 import { getPrismaClient } from "../src/lib/db/prisma";
 import { setMockActorRunnerForTesting } from "../src/lib/services/scraper/apify-cost-guard";
+import { scoreFlagsFromRows } from "../src/lib/services/lead/lead-channels";
 
 let passed = 0;
 let failed = 0;
@@ -364,12 +365,13 @@ async function runTests() {
       } as any,
     });
 
+    const lazyStamp = Date.now();
     const notEnrichedLead1 = await prisma.lead.create({
       data: {
         campaignId: testCampaign.id,
         userId: testUser.id,
-        username: "testlazy1_" + Date.now(),
-        usernameNormalized: ("testlazy1_" + Date.now()).toLowerCase(),
+        username: "testlazy1_" + lazyStamp,
+        usernameNormalized: ("testlazy1_" + lazyStamp).toLowerCase(),
         profileUrl: "https://instagram.com/testlazy1",
         source: "google_maps",
         rawProfileData: {
@@ -384,8 +386,8 @@ async function runTests() {
       data: {
         campaignId: testCampaign.id,
         userId: testUser.id,
-        username: "testlazy2_" + Date.now(),
-        usernameNormalized: ("testlazy2_" + Date.now()).toLowerCase(),
+        username: "testlazy2_" + lazyStamp,
+        usernameNormalized: ("testlazy2_" + lazyStamp).toLowerCase(),
         profileUrl: "https://instagram.com/testlazy2",
         source: "google_maps",
         rawProfileData: {
@@ -465,13 +467,13 @@ async function runTests() {
         "Below-criteria profile keeps its account and reports follower/post shortfall",
         JSON.stringify(failingRow),
       );
-      const dbFailing = await prisma.lead.findUnique({ where: { id: notEnrichedLead2.id } });
+      const dbFailing = await prisma.lead.findUnique({ where: { id: notEnrichedLead2.id }, include: { scoreFlags: { select: { flag: true } } } });
       const dbFailingRaw = (dbFailing?.rawProfileData ?? {}) as {
         enrichmentCriteria?: { passed?: boolean; reasons?: string[] };
       };
       check(
         dbFailingRaw.enrichmentCriteria?.passed === false &&
-          (dbFailing?.scoreFlags ?? []).includes("BELOW_ENRICHMENT_CRITERIA"),
+          scoreFlagsFromRows(dbFailing?.scoreFlags).includes("BELOW_ENRICHMENT_CRITERIA"),
         "Below-criteria status is persisted on the lead for the list UI",
         JSON.stringify(dbFailingRaw.enrichmentCriteria),
       );

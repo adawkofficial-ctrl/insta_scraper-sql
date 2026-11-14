@@ -28,6 +28,7 @@ import {
 import { sendSingleMessage } from "../src/lib/services/messaging/messaging-service";
 import { previewBulkMessageJob } from "../src/lib/services/messaging/bulk-messaging-service";
 import { getPrismaClient } from "../src/lib/db/prisma";
+import { scoreFlagCreate, withLeadChannelFlags } from "../src/lib/services/lead/lead-channels";
 
 let passed = 0;
 let failed = 0;
@@ -363,7 +364,7 @@ async function runTests() {
         phone: testPhone,
         source: "google_maps",
         status: "NEW",
-        availableChannels: ["EMAIL", "PHONE", "WEBSITE"],
+        ...withLeadChannelFlags(["EMAIL", "PHONE", "WEBSITE"]),
       },
     });
 
@@ -429,7 +430,7 @@ async function runTests() {
           phoneNormalized: "+15125559999",
           source: "google_maps",
           status: "NEW",
-          availableChannels: ["EMAIL", "PHONE", "WHATSAPP"],
+          ...withLeadChannelFlags(["EMAIL", "PHONE", "WHATSAPP"]),
         },
       });
 

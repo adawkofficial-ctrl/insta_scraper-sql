@@ -108,6 +108,7 @@ function runSuite(suite: Suite, baseUrl: string): { result: Result; passed: numb
     DATABASE_URL: testDatabaseUrl,
     DATABASE_URL_MYSQL_LOCAL: testDatabaseUrl,
     NODE_ENV: "test" as const,
+    MYSQL_TEST_WATCHDOG: "1",
     TEST_BASE_URL: baseUrl,
     DISABLE_AUTH_RATE_LIMIT: "1",
     APIFY_DRY_RUN: "true",
@@ -132,7 +133,7 @@ function runSuite(suite: Suite, baseUrl: string): { result: Result; passed: numb
   const { passed, failed } = parseCounts(output);
   const blocked = /ECONNREFUSED|fetch failed/i.test(output) && proc.status !== 0 && !failed;
   const result: Result = blocked ? "BLOCKED" : proc.status === 0 && (failed === null || failed === 0) ? "PASS" : "FAIL";
-  const tail = result === "FAIL" ? output.trim().split("\n").slice(-3).join(" | ").slice(0, 300) : "";
+  const tail = result === "FAIL" ? output.trim().split("\n").slice(-20).join(" | ").slice(0, 1800) : "";
   return {
     result,
     passed,
@@ -156,6 +157,9 @@ const SUITES: Suite[] = [
   { file: "test_post_maps_pipeline.ts", category: "unit", kind: "deterministic", needsServer: false },
   { file: "test_gmaps_handle_waterfall.ts", category: "unit", kind: "deterministic", needsServer: false },
   { file: "test_dm_no_handle_block.ts", category: "unit", kind: "deterministic", needsServer: false },
+  { file: "test_mysql_guard_keys.ts", category: "unit", kind: "deterministic", needsServer: false },
+  { file: "test_mysql_strictness.ts", category: "unit", kind: "deterministic", needsServer: false },
+  { file: "test_mysql_dnc_variants.ts", category: "unit", kind: "deterministic", needsServer: false },
   { file: "test_handle_waterfall_fixes.ts", category: "unit", kind: "deterministic", needsServer: false },
   { file: "test_enrichment_persistence_resume.ts", category: "unit", kind: "deterministic", needsServer: false },
   { file: "test_website_enrichment.ts", category: "unit", kind: "deterministic", needsServer: false },
