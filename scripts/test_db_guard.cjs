@@ -1,6 +1,6 @@
 /* eslint-disable */
 /**
- * Test Database Isolation Guard
+ * Test Database Isolation Guard (MySQL port)
  * Ensures tests never connect to a production or live database.
  */
 
@@ -19,13 +19,16 @@ function getTestDatabaseUrl() {
   if (process.env.DATABASE_URL_TEST && process.env.DATABASE_URL_TEST.trim()) {
     return process.env.DATABASE_URL_TEST.trim();
   }
-  const defaultBase = process.env.DATABASE_URL || "postgresql://postgres:123456789@localhost:5432/insta_scraper_prod";
+  const defaultBase =
+    process.env.DATABASE_URL_MYSQL_LOCAL ||
+    process.env.DATABASE_URL ||
+    "mysql://root:root@127.0.0.1:3306/insta_scraper_mysql_dev";
   try {
     const u = new URL(defaultBase);
-    u.pathname = "/insta_scraper_test";
+    u.pathname = "/insta_scraper_mysql_test";
     return u.toString();
   } catch {
-    return "postgresql://postgres:123456789@localhost:5432/insta_scraper_test";
+    return "mysql://root:root@127.0.0.1:3306/insta_scraper_mysql_test";
   }
 }
 
@@ -33,7 +36,14 @@ function assertSafeTestDatabase(testDbUrl, options) {
   const dbUrl = testDbUrl || process.env.DATABASE_URL_TEST || process.env.DATABASE_URL || "";
   const dbName = extractDatabaseName(dbUrl);
   if (!dbName) {
-    const msg = `FATAL: Could not determine database name from URL: "${dbUrl}"`;
+    const msg = `FATAL: Could not determine database name from URL.`;
+    if (options && options.throwOnError) throw new Error(msg);
+    console.error(msg);
+    process.exit(1);
+  }
+
+  if (!/^(mysql|mariadb):\/\//i.test(dbUrl)) {
+    const msg = `FATAL: mysql-port tests require a mysql:// or mariadb:// DATABASE_URL_TEST.`;
     if (options && options.throwOnError) throw new Error(msg);
     console.error(msg);
     process.exit(1);
@@ -42,6 +52,13 @@ function assertSafeTestDatabase(testDbUrl, options) {
   // Refuse if name matches /prod|live/i
   if (/prod|live/i.test(dbName)) {
     const msg = `FATAL: Refusing to run tests against production/live database: "${dbName}". Tests must run against a dedicated test database (DATABASE_URL_TEST).`;
+    if (options && options.throwOnError) throw new Error(msg);
+    console.error(msg);
+    process.exit(1);
+  }
+
+  if (!/test/i.test(dbName)) {
+    const msg = `FATAL: Refusing to run tests against non-test database: "${dbName}". Use insta_scraper_mysql_test.`;
     if (options && options.throwOnError) throw new Error(msg);
     console.error(msg);
     process.exit(1);

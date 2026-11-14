@@ -10,7 +10,7 @@ export async function GET(): Promise<Response> {
   try {
     const prisma = getPrismaClient();
     // Lightweight database ping plus the connected database name (non-secret).
-    const rows = await prisma.$queryRaw<Array<{ name: string }>>`SELECT current_database() AS name`;
+    const rows = await prisma.$queryRaw<Array<{ name: string }>>`SELECT DATABASE() AS name`;
     databaseName = rows[0]?.name ?? null;
   } catch {
     dbStatus = "disconnected";

@@ -1,48 +1,80 @@
 /* eslint-disable */
 /**
- * Creates the test database if it does not exist, and applies all Prisma migrations to it.
+ * Creates the MySQL test database if it does not exist, and applies the Prisma
+ * MySQL baseline migration to it.
+ *
+ * Local development only: Hostinger managed MySQL does not allow CREATE DATABASE,
+ * so on the target the test database must be pre-created by the host and this
+ * script should be run with that existing database.
+ *
  * Usage: npm run test:db:setup
  */
 const { execSync } = require("node:child_process");
-const { Client } = require("pg");
-const { getTestDatabaseUrl, extractDatabaseName, assertSafeTestDatabase } = require("./test_db_guard.cjs");
+const mariadb = require("mariadb");
+const {
+  getTestDatabaseUrl,
+  extractDatabaseName,
+  assertSafeTestDatabase,
+} = require("./test_db_guard.cjs");
+
+function parseMysqlUrl(connectionUrl) {
+  const u = new URL(connectionUrl);
+  return {
+    host: u.hostname,
+    port: u.port ? Number.parseInt(u.port, 10) : 3306,
+    user: decodeURIComponent(u.username),
+    password: decodeURIComponent(u.password),
+    database: u.pathname.replace(/^\//, ""),
+  };
+}
 
 async function setupTestDb() {
   const testDbUrl = getTestDatabaseUrl();
   assertSafeTestDatabase(testDbUrl);
 
   const dbName = extractDatabaseName(testDbUrl);
-  console.log(`Setting up test database: ${dbName}...`);
+  const connection = parseMysqlUrl(testDbUrl);
+  console.log(
+    `Setting up MySQL test database "${dbName}" on ${connection.host}:${connection.port}...`,
+  );
 
-  // Connect to postgres maintenance DB to check/create test DB
-  const maintenanceUrl = new URL(testDbUrl);
-  maintenanceUrl.pathname = "/postgres";
-
-  const client = new Client({ connectionString: maintenanceUrl.toString() });
-  await client.connect();
+  const admin = await mariadb.createConnection({
+    host: connection.host,
+    port: connection.port,
+    user: connection.user,
+    password: connection.password,
+    connectTimeout: 10_000,
+    multipleStatements: false,
+  });
 
   try {
-    const res = await client.query("SELECT 1 FROM pg_database WHERE datname = $1", [dbName]);
-    if (res.rowCount === 0) {
-      console.log(`Creating database "${dbName}"...`);
-      // Database names cannot be parameterized in CREATE DATABASE
-      const safeIdentifier = dbName.replace(/"/g, '""');
-      await client.query(`CREATE DATABASE "${safeIdentifier}";`);
-      console.log(`Database "${dbName}" created.`);
-    } else {
-      console.log(`Database "${dbName}" already exists.`);
+    try {
+      const safeIdentifier = dbName.replace(/`/g, "``");
+      await admin.query(
+        `CREATE DATABASE IF NOT EXISTS \`${safeIdentifier}\` CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci`,
+      );
+      console.log(`Database "${dbName}" exists or was created.`);
+    } catch (err) {
+      const errno = err && err.errno;
+      if (errno === 1044 || errno === 1045 || errno === 1142) {
+        console.warn(
+          `CREATE DATABASE is not permitted (MySQL error ${errno}); assuming "${dbName}" already exists.`,
+        );
+      } else {
+        throw err;
+      }
     }
   } finally {
-    await client.end();
+    await admin.end();
   }
 
-  // Run prisma migrate deploy targeting test database
   console.log(`Applying migrations to "${dbName}"...`);
   execSync("npx prisma migrate deploy", {
     stdio: "inherit",
     env: {
       ...process.env,
       DATABASE_URL: testDbUrl,
+      DATABASE_URL_MYSQL_LOCAL: testDbUrl,
     },
   });
 
@@ -50,7 +82,6 @@ async function setupTestDb() {
 }
 
 setupTestDb().catch((err) => {
-  console.error("Test DB setup failed:", err);
+  console.error("Test DB setup failed:", err instanceof Error ? err.message : String(err));
   process.exit(1);
 });
-

@@ -19,7 +19,7 @@ import net from "node:net";
 const { getTestDatabaseUrl, assertSafeTestDatabase, extractDatabaseName } = require("./test_db_guard.cjs");
 
 // Enforce test database isolation. Tests must always target the dedicated test DB.
-const REQUIRED_TEST_DB_NAME = "insta_scraper_test";
+const REQUIRED_TEST_DB_NAME = "insta_scraper_mysql_test";
 const testDatabaseUrl = getTestDatabaseUrl();
 assertSafeTestDatabase(testDatabaseUrl, { prodDbUrl: process.env.DATABASE_URL, nodeEnv: process.env.NODE_ENV });
 const testDbName = extractDatabaseName(testDatabaseUrl);
@@ -31,6 +31,9 @@ if (testDbName !== REQUIRED_TEST_DB_NAME) {
 }
 process.env.ORIGINAL_DATABASE_URL = process.env.DATABASE_URL;
 process.env.DATABASE_URL = testDatabaseUrl;
+// The central factory prefers this local override; keep every suite pinned to
+// the test DB rather than a developer's dev DB.
+process.env.DATABASE_URL_MYSQL_LOCAL = testDatabaseUrl;
 
 
 type Category = "unit" | "api" | "security" | "e2e";
@@ -103,6 +106,7 @@ function runSuite(suite: Suite, baseUrl: string): { result: Result; passed: numb
   const env = {
     ...process.env,
     DATABASE_URL: testDatabaseUrl,
+    DATABASE_URL_MYSQL_LOCAL: testDatabaseUrl,
     NODE_ENV: "test" as const,
     TEST_BASE_URL: baseUrl,
     DISABLE_AUTH_RATE_LIMIT: "1",
@@ -236,6 +240,7 @@ async function main() {
     ...process.env,
     PORT: String(port),
     DATABASE_URL: testDatabaseUrl,
+    DATABASE_URL_MYSQL_LOCAL: testDatabaseUrl,
     NODE_ENV: "test" as const,
     APIFY_DRY_RUN: "true",
     APIFY_ALLOW_LIVE_SCRIPTS: "false",
