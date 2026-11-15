@@ -179,7 +179,30 @@ export async function resumeScrapeJob(
     (c) => (c.status === "ENRICH_PENDING" || c.status === "HANDLE_FOUND") && Boolean(c.handle),
   );
 
-  if (enrichCandidates.length > 0 && !options?.skipEnrichment) {
+  // On startup recovery we must not make paid profile calls. Persist the
+  // already-discovered handle as an ENRICH_PENDING lead so work is not lost.
+  if (options?.skipEnrichment) {
+    for (const cand of enrichCandidates) {
+      await saveLeadAsEnrichPending({
+        campaignId,
+        scrapeJobId: jobId,
+        userId,
+        placeId: cand.placeId,
+        name: cand.name,
+        handle: cand.handle!.replace(/^@/, "").trim().toLowerCase(),
+        website: cand.website,
+        phone: cand.phone,
+        city: cand.city,
+        rating: cand.rating,
+        reviewsCount: cand.reviewsCount,
+        handleSource: cand.handleSource ?? "resume",
+        handleConfidence: cand.handleConfidence ?? "medium",
+        isDryRun: job.isDryRun,
+      });
+      cand.status = "ENRICH_PENDING";
+      leadsCreatedOrUpdated++;
+    }
+  } else if (enrichCandidates.length > 0) {
     const usernamesToEnrich = Array.from(new Set(enrichCandidates.map((c) => c.handle!.replace(/^@/, "").trim().toLowerCase())));
     try {
       const enrichment = await scrapeInstagramProfiles(

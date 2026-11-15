@@ -1,0 +1,204 @@
+{
+  "database": "insta_scraper_mysql_staging",
+  "generatedAt": "2026-11-15T03:27:13.361Z",
+  "tables": {
+    "User": {
+      "row_count": 3,
+      "id_checksum": "d530c3ff800cc246a0c23294b8259bbb",
+      "business_checksum": "d530c3ff800cc246a0c23294b8259bbb"
+    },
+    "CompanyProfile": {
+      "row_count": 3,
+      "id_checksum": "c7e9a1d0de78d95f1c45a85915d96dec",
+      "business_checksum": "c7e9a1d0de78d95f1c45a85915d96dec"
+    },
+    "Campaign": {
+      "row_count": 1,
+      "id_checksum": "b006ac01300709dc11303eac9e81ed02",
+      "business_checksum": "1adf5e695caac2181e0b341b327d7b9f"
+    },
+    "ScrapeJob": {
+      "row_count": 18,
+      "id_checksum": "76c067c59996c8a376d960310e009374",
+      "business_checksum": "76c067c59996c8a376d960310e009374"
+    },
+    "Candidate": {
+      "row_count": 341,
+      "id_checksum": "d762a742ef0f25944db7cd414e6c3fb8",
+      "business_checksum": "13912c77d24a0aab037ab2952a5d9b57"
+    },
+    "Lead": {
+      "row_count": 223,
+      "id_checksum": "46ba453cfe8296123603a507a44b8b24",
+      "business_checksum": "14e14685a32f66412cc8cf579bc25364"
+    },
+    "LeadScoreFlag": {
+      "row_count": 27,
+      "id_checksum": "738ceeef76d1de804fe63fb8c2629c4e",
+      "business_checksum": "738ceeef76d1de804fe63fb8c2629c4e"
+    },
+    "LeadSighting": {
+      "row_count": 45,
+      "id_checksum": "de2942c2acbf71cbacc1796a84d11d5e",
+      "business_checksum": "de2942c2acbf71cbacc1796a84d11d5e"
+    },
+    "LeadStatusHistory": {
+      "row_count": 7,
+      "id_checksum": "3727a70a6a6f34ab3438f49dbffff09d",
+      "business_checksum": "3727a70a6a6f34ab3438f49dbffff09d"
+    },
+    "LeadEvent": {
+      "row_count": 0,
+      "id_checksum": "",
+      "business_checksum": ""
+    },
+    "DiscoveryCoverage": {
+      "row_count": 43,
+      "id_checksum": "00eb36c80a8af0f42fbf3499084b7402",
+      "business_checksum": "00eb36c80a8af0f42fbf3499084b7402"
+    },
+    "DiscoveryPlaceOutcome": {
+      "row_count": 356,
+      "id_checksum": "8c8f8fdf5e4a0ec139f4cd53ff429fc1",
+      "business_checksum": "8c8f8fdf5e4a0ec139f4cd53ff429fc1"
+    },
+    "InstagramSenderAccount": {
+      "row_count": 0,
+      "id_checksum": "",
+      "business_checksum": ""
+    },
+    "EmailSenderAccount": {
+      "row_count": 0,
+      "id_checksum": "",
+      "business_checksum": ""
+    },
+    "EmailCampaignSettings": {
+      "row_count": 0,
+      "id_checksum": "",
+      "business_checksum": ""
+    },
+    "EmailSend": {
+      "row_count": 0,
+      "id_checksum": "",
+      "business_checksum": ""
+    },
+    "EmailUnsubscribeToken": {
+      "row_count": 0,
+      "id_checksum": "",
+      "business_checksum": ""
+    },
+    "MessageTemplate": {
+      "row_count": 0,
+      "id_checksum": "",
+      "business_checksum": ""
+    },
+    "Conversation": {
+      "row_count": 0,
+      "id_checksum": "",
+      "business_checksum": ""
+    },
+    "Message": {
+      "row_count": 0,
+      "id_checksum": "",
+      "business_checksum": ""
+    },
+    "MessageAttempt": {
+      "row_count": 0,
+      "id_checksum": "",
+      "business_checksum": ""
+    },
+    "CampaignExecution": {
+      "row_count": 0,
+      "id_checksum": "",
+      "business_checksum": ""
+    },
+    "CampaignExecutionItem": {
+      "row_count": 0,
+      "id_checksum": "",
+      "business_checksum": ""
+    },
+    "BulkMessageJob": {
+      "row_count": 0,
+      "id_checksum": "",
+      "business_checksum": ""
+    },
+    "BulkMessageItem": {
+      "row_count": 0,
+      "id_checksum": "",
+      "business_checksum": ""
+    },
+    "OutboundSendIdempotency": {
+      "row_count": 0,
+      "id_checksum": "",
+      "business_checksum": ""
+    },
+    "DoNotContact": {
+      "row_count": 0,
+      "id_checksum": "",
+      "business_checksum": ""
+    },
+    "UsageLog": {
+      "row_count": 174,
+      "id_checksum": "a157a76a5ba057513c6bf793a70bea12",
+      "business_checksum": "a157a76a5ba057513c6bf793a70bea12"
+    },
+    "NotificationConfig": {
+      "row_count": 0,
+      "id_checksum": "",
+      "business_checksum": ""
+    },
+    "NotificationLog": {
+      "row_count": 0,
+      "id_checksum": "",
+      "business_checksum": ""
+    },
+    "MessageDraft": {
+      "row_count": 0,
+      "id_checksum": "",
+      "business_checksum": ""
+    },
+    "DraftReview": {
+      "row_count": 0,
+      "id_checksum": "",
+      "business_checksum": ""
+    },
+    "AiAnalysisJob": {
+      "row_count": 0,
+      "id_checksum": "",
+      "business_checksum": ""
+    },
+    "FollowUpMessage": {
+      "row_count": 0,
+      "id_checksum": "",
+      "business_checksum": ""
+    },
+    "UnipileWebhookEvent": {
+      "row_count": 14,
+      "id_checksum": "1359f87b07faa86d3be72acedd5027c1",
+      "business_checksum": "1359f87b07faa86d3be72acedd5027c1"
+    },
+    "UnmatchedInboundMessage": {
+      "row_count": 10,
+      "id_checksum": "7b1a5105298980b802f0b3b786a47e27",
+      "business_checksum": "7b1a5105298980b802f0b3b786a47e27"
+    },
+    "_prisma_migrations": {
+      "row_count": 4,
+      "id_checksum": "d83db04c1e95b11709fe957d81bfa18b",
+      "business_checksum": "d83db04c1e95b11709fe957d81bfa18b"
+    }
+  },
+  "invariants": {
+    "DNC_COUNT": 0,
+    "MESSAGE_COUNT": 0,
+    "MESSAGE_ATTEMPT_COUNT": 0,
+    "IDEMPOTENCY_COUNT": 0,
+    "IDEMPOTENCY_ALREADY_SENT": 0,
+    "IDEMPOTENCY_RESERVED": 0,
+    "GUARD_INSTAGRAM_NONNULL": 2,
+    "GUARD_USERNAME_NONNULL": 89,
+    "GUARD_EMAIL_NONNULL": 17,
+    "LEADS_STATUS_NEW": 142,
+    "LEADS_STATUS_ENRICH_PENDING": 81
+  }
+}

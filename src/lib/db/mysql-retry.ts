@@ -9,7 +9,7 @@ export function isMysqlRetryableError(error: unknown): boolean {
   const record = error as { code?: string; message?: string; meta?: unknown };
   if (record?.code === "P2034") return true;
   const text = `${record?.code ?? ""} ${record?.message ?? ""} ${JSON.stringify(record?.meta ?? "")}`;
-  return /1213|1205|deadlock|lock wait timeout|try restarting transaction/i.test(text);
+  return /1040|1213|1205|deadlock|lock wait timeout|too many connections|try restarting transaction/i.test(text);
 }
 
 function jitterMs(attempt: number): number {

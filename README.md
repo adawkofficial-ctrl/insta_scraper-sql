@@ -33,6 +33,8 @@ npx prisma format
 npx prisma validate
 ```
 
+Production build/start uses `npm run build` and `npm start` (startup job recovery, then Next.js on `PORT`). Hostinger cutover, dump/checksum, and rollback steps are in `docs/CUTOVER_RUNBOOK.md`.
+
 ### Database Separation: Real Data vs. Tests
 To protect production and user data, test suites never run against the application's real database:
 - **Application Database (`DATABASE_URL`)**: Used by the application in development and production (e.g., `insta_scraper_prod`).

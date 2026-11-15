@@ -113,6 +113,30 @@ export async function GET(): Promise<Response> {
     await getPrismaClient().$queryRaw`SELECT 1`;
     checks.database = "connected";
 
+    try {
+      const info = await getPrismaClient().$queryRaw<
+        Array<{ version: string; comment: string; maxConnections: bigint }>
+      >`SELECT VERSION() AS version, @@version_comment AS comment, @@max_connections AS maxConnections`;
+      const row = info[0];
+      checks.database_engine = String(row?.comment ?? "").toLowerCase().includes("mariadb") ? "mariadb" : "mysql";
+      checks.database_version = String(row?.version ?? "unknown");
+      let threadsConnected: number | null = null;
+      try {
+        const status = await getPrismaClient().$queryRawUnsafe<Array<{ Value: string }>>(
+          "SHOW STATUS LIKE 'Threads_connected'",
+        );
+        const raw = status[0]?.Value;
+        threadsConnected = raw !== undefined ? Number(raw) : null;
+      } catch {
+        threadsConnected = null;
+      }
+      checks.database_pool = `${threadsConnected ?? "?"}/${Number(row?.maxConnections ?? 0) || "?"}`;
+    } catch {
+      checks.database_engine = "unverified";
+      checks.database_version = "unverified";
+      checks.database_pool = "unverified";
+    }
+
     // Check database migration table status
     try {
       const migrations = await getPrismaClient().$queryRaw<Array<{ migration_name: string; rolled_back_at: Date | null }>>`

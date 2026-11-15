@@ -64,6 +64,20 @@ function buildMariaDbPoolConfig(connectionString: string) {
     DEFAULT_CONNECTION_LIMIT,
   );
 
+  const sslMode = (
+    parsed.searchParams.get("ssl") ||
+    parsed.searchParams.get("sslaccept") ||
+    parsed.searchParams.get("ssl-mode") ||
+    ""
+  ).toLowerCase();
+  const ssl = sslMode
+    ? {
+        rejectUnauthorized: ["strict", "required", "verify-full", "verify-ca", "true", "1"].includes(
+          sslMode,
+        ),
+      }
+    : undefined;
+
   return {
     host: parsed.hostname,
     port: parsed.port ? Number.parseInt(parsed.port, 10) : 3306,
@@ -85,7 +99,8 @@ function buildMariaDbPoolConfig(connectionString: string) {
     ),
     charset: "utf8mb4",
     // Prisma/MySQL DATETIME has no timezone; keep the driver in UTC.
-    timezone: "Z",
+    timezone: "+00:00",
+    ...(ssl ? { ssl } : {}),
     multipleStatements: false,
     // Strictness per connection: fail instead of silently truncating. These
     // modes are supported by both MySQL 8 and MariaDB 10.6+.

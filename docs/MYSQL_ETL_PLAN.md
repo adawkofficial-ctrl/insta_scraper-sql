@@ -107,9 +107,20 @@ Copied exactly as stored; never decrypted or printed:
 
 Result: **11 PASS / 0 FAIL**. The staging-only smoke admin owns the copied campaign; source was not modified.
 
-## Cutover TODOs (Phase 5)
+## Phase 5 rehearsal (final)
+
+- **TEXT widening** (migration `20261115000000_phase5_widen_external_text`): 27 external/long columns are `@db.Text`; no `DEFAULT` on TEXT/LONGTEXT. Strictness suite: **5 PASS / 0 FAIL** (3,000-char writes across text classes).
+- **Production build/start**: `npm run build` PASS (webpack; `prisma generate` in `prebuild`). `npm start` runs startup recovery then `next start` on `PORT`; `/api/health/ready` returned `ready`, `mysql`, `8.0.46`, `database_migrations: up_to_date`. Required production overrides: `COOKIE_SECURE=true`, no `DISABLE_AUTH_RATE_LIMIT`.
+- **Dump**: `etl:export-dump` produced `artifacts/mysql-dump/insta_scraper_staging.sql` (`parts=1`, 2.95 MB); import into MySQL and MariaDB then verify **82 PASS / 0 FAIL** on both.
+- **Checksums**: `etl:checksums-sql` generates 37 table checks + 11 invariants; comparison against the imported dump **48 PASS / 0 FAIL**.
+- **Startup recovery**: after a process restart with a persisted `RUNNING` job and `ENRICH_PENDING` candidate, recovery resumed the job, persisted the lead without paid actor calls, and completed the job (`PASS`; see `scripts/etl/recovery-smoke.ts`).
+- **Preflight**: local MySQL 8.0.46 PASS (`utf8mb4_0900_ai_ci`, `innodb=yes`, `json=yes`, `max_connections=151`).
+- **Runbook**: `docs/CUTOVER_RUNBOOK.md`.
+
+## Cutover TODOs
 
 - Re-register Unipile accounts/webhooks; re-login or re-create Playwright sessions on the new host.
 - Preserve the encryption key env or re-enter SMTP/ntfy secrets.
+- Fill Hostinger facts (engine/version, plan, Remote MySQL/SSH, Node versions, limits) and run preflight against the hosted DB.
 - Freeze writes, run final delta ETL + verify, switch connection string, keep PostgreSQL read-only rollback.
-- Confirm 50k-row EXPLAIN/ANALYZE on the production-sized target and `max_connections`.
+- Confirm 50k-row EXPLAIN/ANALYZE on the production-sized target and `max_connections`; lower `DATABASE_CONNECTION_LIMIT` if the plan caps user connections.

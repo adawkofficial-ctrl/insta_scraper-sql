@@ -236,8 +236,8 @@ model User {
   id           String   @id @default(cuid())
   email        String   @unique @db.VarChar(254)
   passwordHash String @db.VarChar(191)
-  name         String?
-  image        String?
+  name         String? @db.Text
+  image        String? @db.Text
   role         String   @default("USER")
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
@@ -275,7 +275,7 @@ model Campaign {
   // Discovery intent (remember what the user searched for)
   intent                  String? @db.Text
   location                String? @db.VarChar(1000)
-  category                String? @db.VarChar(191)
+  category                String? @db.Text
   leadLimit               Int?
   // Follow-up Configuration
   followUpEnabled         Boolean             @default(false)
@@ -347,9 +347,9 @@ model Lead {
   followers            Int? // DEPRECATED: use followersCount
   following            Int?
   postsCount           Int?
-  profilePictureUrl    String?
-  profilePicUrl        String?
-  profilePicUrlHD      String?
+  profilePictureUrl    String? @db.Text
+  profilePicUrl        String? @db.Text
+  profilePicUrlHD      String? @db.Text
   isVerified           Boolean? // DEPRECATED: use verified
   verified             Boolean?
   isBusiness           Boolean? // DEPRECATED: use isBusinessAccount
@@ -413,7 +413,7 @@ model Lead {
   dedupMatchedBy            String?
   dedupFlaggedAt            DateTime?
   possibleDuplicateOfLeadId String?
-  possibleDuplicateReason   String?
+  possibleDuplicateReason   String? @db.Text
   // App-maintained guard keys for the three former Postgres partial unique
   // indexes. NULL means "not guarded"; Prisma extension keeps them in sync.
   activeInstagramGuard String?
@@ -480,7 +480,7 @@ model Lead {
   //   UNIQUE (userId, emailNormalized)    WHERE key NOT NULL AND duplicateOfLeadId IS NULL
   // `prisma migrate diff --from-config-datasource --to-schema` currently reports
   // NO drift (Prisma ignores unmodelled partial indexes). If a future version
-  // reports them as DROP INDEX, do NOT accept it — they are the concurrency guard.
+  // reports them as DROP INDEX, do NOT accept it Ã¢â‚¬â€ they are the concurrency guard.
 
   @@unique([campaignId, username])
   @@unique([userId, activeInstagramGuard])
@@ -570,9 +570,9 @@ model ScrapeJob {
   completedAt          DateTime?
   createdAt            DateTime        @default(now())
   // Discovery metadata (nullable for plain profile-scrape jobs)
-  query                String?  @db.VarChar(255)
-  location             String?
-  category             String?
+  query                String? @db.Text
+  location             String? @db.Text
+  category             String? @db.Text
   discoveryActor       String?
   enrichmentActor      String?
   requestedLimit       Int?
@@ -637,7 +637,7 @@ model Candidate {
   costUsd          Decimal?  @db.Decimal(10, 4)
   placeId          String
   name             String @db.VarChar(255)
-  category         String?
+  category         String? @db.Text
   address          String? @db.Text
   city             String?
   state            String?
@@ -646,10 +646,10 @@ model Candidate {
   website          String? @db.Text
   rating           Float?
   reviewsCount     Int?
-  mapsUrl          String?
+  mapsUrl          String? @db.Text
   status           String    @default("DISCOVERED")
-  rejectionReason  String?
-  lastError        String?
+  rejectionReason  String? @db.Text
+  lastError        String? @db.Text
   handle           String?
   handleSource     String?
   handleConfidence String?
@@ -672,7 +672,7 @@ model EmailSenderAccount {
   userId                String
   fromName              String
   fromAddress           String
-  postalAddress         String
+  postalAddress         String @db.Text
   smtpHost              String @db.VarChar(191)
   smtpPort              Int
   smtpUser              String
@@ -724,7 +724,7 @@ model EmailSend {
   recipient         String @db.VarChar(254)
   recipientDomain   String? @db.VarChar(191)
   status            String    @default("QUEUED") // QUEUED | SENT | UNKNOWN | FAILED | SUPPRESSED
-  subject           String @db.VarChar(255)
+  subject           String @db.Text
   body              String @db.LongText
   messageId         String?
   templateVersion   Int       @default(1)
@@ -830,7 +830,7 @@ model Message {
 model MessageTemplate {
   id         String   @id @default(cuid())
   campaignId String?
-  name       String @db.VarChar(191)
+  name       String @db.Text
   body       String @db.LongText
   variants   Json?    // Optional A/B variants: [{ id: "A", body: "..." }, { id: "B", body: "..." }]
   createdAt  DateTime @default(now())
@@ -847,7 +847,7 @@ model InstagramSenderAccount {
   id               String                     @id @default(cuid())
   userId           String
   username         String
-  displayName      String?
+  displayName      String? @db.Text
   connectionMethod ConnectionMethod           @default(PLAYWRIGHT)
   unipileAccountId String?                    @unique @db.VarChar(191)
   sessionType      InstagramSenderSessionType @default(PERSISTENT_PROFILE)
@@ -903,7 +903,7 @@ model OutboundSendIdempotency {
   status          String    @default("RESERVED") // RESERVED | SENT | FAILED | UNKNOWN
   messageId       String?
   errorCode       String?
-  errorMessage    String?
+  errorMessage    String? @db.Text
   contentHash     String?
   reservedAt      DateTime  @default(now())
   completedAt     DateTime?
@@ -964,8 +964,8 @@ model CampaignExecutionItem {
   executionId  String
   leadId       String
   status       ExecutionItemStatus @default(PENDING)
-  messageText  String
-  errorMessage String?
+  messageText  String @db.Text
+  errorMessage String? @db.Text
   processedAt  DateTime?
   createdAt    DateTime            @default(now())
   updatedAt    DateTime            @updatedAt
@@ -1212,7 +1212,7 @@ model UsageLog {
 model CompanyProfile {
   id                   String   @id @default(cuid())
   userId               String
-  name                 String @db.VarChar(191)
+  name                 String @db.Text
   isDefault            Boolean  @default(false)
   description          String?  @db.Text
   services             Json? // JSON string[]; default [] applied in code
@@ -1243,7 +1243,7 @@ model MessageDraft {
   leadId                    String
   campaignId                String
   body                      String @db.LongText
-  subject                   String? @db.VarChar(255)
+  subject                   String? @db.Text
   channel                   MessageChannel @default(INSTAGRAM)
   kind                      DraftKind      @default(OUTREACH)
   replyToMessageId          String?
@@ -1297,7 +1297,7 @@ model DraftReview {
   actorType      String // "user" | "system"
   action         DraftReviewAction
   reasonCode     String?
-  notes          String?
+  notes          String? @db.Text
   meta           Json?
   bodyHashBefore String?
   bodyHashAfter  String?
@@ -1325,7 +1325,7 @@ model AiAnalysisJob {
   options         Json?
   startedAt       DateTime?
   finishedAt      DateTime?
-  lastError       String?
+  lastError       String? @db.Text
   createdAt       DateTime            @default(now())
 
   user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -1394,8 +1394,8 @@ enum NotificationLogStatus {
 model NotificationConfig {
   id              String                  @id @default(cuid())
   userId          String                  @unique
-  ntfyTopic       String @db.VarChar(191)
-  ntfyServerUrl   String                  @default("https://ntfy.sh") @db.VarChar(191)
+  ntfyTopic       String @db.Text
+  ntfyServerUrl   String @db.Text
   ntfyAccessToken String? @db.LongText
   enabled         Boolean                 @default(true)
   eventTypes      Json? // JSON NotificationEventType[]; app-side filtering

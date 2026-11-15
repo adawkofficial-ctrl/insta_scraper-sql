@@ -97,6 +97,65 @@ async function main() {
       "LONGTEXT accepts a 70,000-character body without truncation",
       String(template.body.length),
     );
+
+    const long = "x".repeat(3000);
+    await prisma.user.update({ where: { id: user.id }, data: { name: long, image: long } });
+    await prisma.companyProfile.update({ where: { id: profile.id }, data: { name: long } });
+    await prisma.campaign.update({ where: { id: campaign.id }, data: { category: long } });
+    await prisma.lead.update({
+      where: { id: lead.id },
+      data: {
+        profilePictureUrl: long,
+        profilePicUrl: long,
+        profilePicUrlHD: long,
+        possibleDuplicateReason: long,
+      },
+    });
+    const candidate = await prisma.candidate.create({
+      data: { campaignId: campaign.id, placeId: `${tag}_cand`, name: long.slice(0, 255) },
+    });
+    await prisma.candidate.update({
+      where: { id: candidate.id },
+      data: { category: long, mapsUrl: long, lastError: long, rejectionReason: long },
+    });
+    const job = await prisma.scrapeJob.create({
+      data: { campaignId: campaign.id, provider: "google_maps", status: "COMPLETED" },
+    });
+    await prisma.scrapeJob.update({
+      where: { id: job.id },
+      data: { query: long, location: long, category: long },
+    });
+    await prisma.messageTemplate.update({ where: { id: template.id }, data: { name: long } });
+    const sender = await prisma.instagramSenderAccount.create({
+      data: { userId: user.id, username: `${tag}_widen_sender`, status: "ACTIVE", sessionPath: "/tmp/widen" },
+    });
+    await prisma.instagramSenderAccount.update({ where: { id: sender.id }, data: { displayName: long } });
+    const notif = await prisma.notificationConfig.create({
+      data: { userId: user.id, ntfyTopic: long, ntfyServerUrl: long },
+    });
+    await prisma.notificationConfig.update({ where: { id: notif.id }, data: { ntfyTopic: long, ntfyServerUrl: long } });
+
+    const widened = [
+      ["User", "name"], ["User", "image"], ["CompanyProfile", "name"], ["Campaign", "category"],
+      ["Candidate", "category"], ["Candidate", "mapsUrl"], ["Candidate", "lastError"], ["Candidate", "rejectionReason"],
+      ["ScrapeJob", "query"], ["ScrapeJob", "location"], ["ScrapeJob", "category"],
+      ["Lead", "profilePictureUrl"], ["Lead", "profilePicUrl"], ["Lead", "profilePicUrlHD"], ["Lead", "possibleDuplicateReason"],
+      ["MessageTemplate", "name"], ["InstagramSenderAccount", "displayName"],
+      ["NotificationConfig", "ntfyTopic"], ["NotificationConfig", "ntfyServerUrl"],
+      ["CampaignExecutionItem", "messageText"], ["CampaignExecutionItem", "errorMessage"],
+      ["DraftReview", "notes"], ["EmailSend", "subject"], ["EmailSenderAccount", "postalAddress"],
+      ["OutboundSendIdempotency", "errorMessage"], ["AiAnalysisJob", "lastError"], ["MessageDraft", "subject"],
+    ] as const;
+    const conditions = widened.map(([table, col]) => `(TABLE_NAME='${table}' AND COLUMN_NAME='${col}')`).join(" OR ");
+    const rows = await prisma.$queryRawUnsafe<Array<{ TABLE_NAME: string; COLUMN_NAME: string; DATA_TYPE: string }>>(
+      `SELECT TABLE_NAME, COLUMN_NAME, DATA_TYPE FROM information_schema.COLUMNS WHERE TABLE_SCHEMA=DATABASE() AND (${conditions})`,
+    );
+    check(
+      rows.length === widened.length && rows.every((r) => ["text", "mediumtext", "longtext"].includes(String(r.DATA_TYPE).toLowerCase())),
+      "all widened external columns are TEXT classes",
+      `${rows.length}/${widened.length} ${rows.filter((r) => !["text","mediumtext","longtext"].includes(String(r.DATA_TYPE).toLowerCase())).map((r) => `${r.TABLE_NAME}.${r.COLUMN_NAME}:${r.DATA_TYPE}`).join(",")}`,
+    );
+    check(long.length === 3000, "3000-character writes to widened columns succeed");
   } finally {
     await prisma.user.delete({ where: { id: user.id } }).catch(() => undefined);
   }

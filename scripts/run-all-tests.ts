@@ -261,6 +261,7 @@ async function main() {
     DISABLE_AUTH_RATE_LIMIT: "1",
     SKIP_SEND_DELAYS: "1",
     OUTBOUND_SENDING_ENABLED: "true",
+    DISABLE_STARTUP_RECOVERY: "1",
     NEXT_DIST_DIR: ".next/test-runner",
     NODE_OPTIONS: "--max-old-space-size=4096",
   };

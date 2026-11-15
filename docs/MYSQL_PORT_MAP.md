@@ -622,6 +622,16 @@ No assertion was removed or skipped. Test edits were:
 - `test_task9_ui_execution_hardening` uses the same bounded pause retry for the same async-worker race.
 - `test_task18_instagram_sender` replaces a fixed 80 ms sleep with a status poll (stronger).
 
+## 8.4 Phase 5 status (deploy readiness on `mysql-port`)
+
+- **Schema widening**: migration `20261115000000_phase5_widen_external_text` widens 27 columns to `@db.Text` (names, subjects, URLs, errors, messages, bio, address, category, query, handle, notes, prompt) and removes the `NotificationConfig.ntfyServerUrl` default (TEXT cannot have a literal default on MySQL). Strictness suite: **5 PASS / 0 FAIL**; 3,000-char writes succeed across all text classes, over-length VARCHAR still fails.
+- **Driver hardening**: `DATABASE_URL` accepts `ssl`/`sslaccept`/`ssl-mode` (`strict`/`required`/`verify-full`/`verify-ca`/`true`/`1` → certificate verification; anything else → encrypted without verification). Driver timezone is `+00:00`; strict per-connection `sql_mode`; `1040` (too many connections) is retried with the deadlock retry helper.
+- **Build/start**: `next build --webpack` PASS with `COOKIE_SECURE=true` and without `DISABLE_AUTH_RATE_LIMIT`; `prebuild` runs `prisma generate`. `npm start` now runs `scripts/start-production.ts` (startup recovery, then `next start` on `PORT`). `src/instrumentation.ts` was removed because its Node-only import graph broke the edge build.
+- **Startup recovery**: resumes `PENDING`/`RUNNING` jobs after a process restart, with `skipEnrichment: true`; `ENRICH_PENDING`/`HANDLE_FOUND` candidates with a known handle are persisted as `ENRICH_PENDING` leads without paid actor calls. Restart test: **PASS** (`scripts/etl/recovery-smoke.ts`).
+- **Dump/import/checksums**: `etl:export-dump` (250-row extended inserts, FK checks off/on, 40 MB parts + `IMPORT_ORDER.txt`), `etl:checksums-sql` (37 table checks + 11 invariants), `etl:compare-checksums` (JSON/CSV). Dump → import → verify was **82 PASS / 0 FAIL** on MySQL 8.0.46 and MariaDB 10.11; checksum comparison **48 PASS / 0 FAIL**.
+- **Health**: `/api/health/ready` exposes `database_engine`, `database_version`, `database_pool`, `database_migrations`, `client_schema_sync`; production start returned `ready` against MySQL staging.
+- **Cutover docs**: `docs/CUTOVER_RUNBOOK.md` (preflight, freeze, ETL, dump/import/checksums, owner assignment, deploy, smoke job, external re-registration, rollback). Hosting facts remain to be filled in.
+
 ## 9. Open questions
 
 1. Confirm the exact Hostinger server version and whether it is **MySQL 8** or **MariaDB** (phpMyAdmin “Server version”).
