@@ -631,6 +631,12 @@ No assertion was removed or skipped. Test edits were:
 - **Dump/import/checksums**: `etl:export-dump` (250-row extended inserts, FK checks off/on, 40 MB parts + `IMPORT_ORDER.txt`), `etl:checksums-sql` (37 table checks + 11 invariants), `etl:compare-checksums` (JSON/CSV). Dump → import → verify was **82 PASS / 0 FAIL** on MySQL 8.0.46 and MariaDB 10.11; checksum comparison **48 PASS / 0 FAIL**.
 - **Health**: `/api/health/ready` exposes `database_engine`, `database_version`, `database_pool`, `database_migrations`, `client_schema_sync`; production start returned `ready` against MySQL staging.
 - **Cutover docs**: `docs/CUTOVER_RUNBOOK.md` (preflight, freeze, ETL, dump/import/checksums, owner assignment, deploy, smoke job, external re-registration, rollback). Hosting facts remain to be filled in.
+- **Final validation on commit `e071ce7`**:
+  - MySQL 8.0.46: **73 PASS / 0 FAIL / 0 BLOCKED / 6 SKIPPED**, **2681 assertions passed / 0 failed**.
+  - MariaDB 10.11: **73 PASS / 0 FAIL / 0 BLOCKED / 6 SKIPPED**, **2672 assertions passed / 0 failed**.
+  - `prisma migrate diff` (MySQL shadow): `No difference detected`.
+  - `npm run typecheck`: 0 errors. `npm run lint`: 0 errors, 6 pre-existing warnings. `npm run build`: PASS.
+  - `npm start` (startup recovery + `next start`) and `/api/health/ready`: `ready`, MySQL 8.0.46, migrations `up_to_date`; restart recovery test PASS.
 
 ## 9. Open questions
 

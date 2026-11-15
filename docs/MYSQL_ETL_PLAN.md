@@ -115,6 +115,7 @@ Result: **11 PASS / 0 FAIL**. The staging-only smoke admin owns the copied campa
 - **Checksums**: `etl:checksums-sql` generates 37 table checks + 11 invariants; comparison against the imported dump **48 PASS / 0 FAIL**.
 - **Startup recovery**: after a process restart with a persisted `RUNNING` job and `ENRICH_PENDING` candidate, recovery resumed the job, persisted the lead without paid actor calls, and completed the job (`PASS`; see `scripts/etl/recovery-smoke.ts`).
 - **Preflight**: local MySQL 8.0.46 PASS (`utf8mb4_0900_ai_ci`, `innodb=yes`, `json=yes`, `max_connections=151`).
+- **Final suites (commit `e071ce7`)**: MySQL 8.0.46 **73 PASS / 0 FAIL / 6 SKIPPED, 2681 assertions**; MariaDB 10.11 **73 PASS / 0 FAIL / 6 SKIPPED, 2672 assertions**; drift `No difference detected`; typecheck 0; lint 0 errors/6 pre-existing warnings.
 - **Runbook**: `docs/CUTOVER_RUNBOOK.md`.
 
 ## Cutover TODOs
