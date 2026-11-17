@@ -8,11 +8,11 @@ Hosting facts (fill in before cutover): server engine/version `__________`, plan
 
 | Step | Estimate |
 |---|---:|
-| Backup + tag + host DB creation | 10–15 min |
-| Freeze + final ETL/verify | 5–10 min |
-| Dump export + import + checksums | 10–20 min |
-| Owner assignment + deploy + smoke login | 10–15 min |
-| Total cutover window | **35–60 min** |
+| Backup + tag + host DB creation | 10ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“15 min |
+| Freeze + final ETL/verify | 5ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“10 min |
+| Dump export + import + checksums | 10ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“20 min |
+| Owner assignment + deploy + smoke login | 10ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“15 min |
+| Total cutover window | **35ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“60 min** |
 
 ## 1. Pre-cutover checklist
 
@@ -78,7 +78,7 @@ npm run cutover:assign-owner -- --target HOSTED_DATABASE_URL_ENV --email "$ADMIN
 
 Expected: `campaigns_to_assign=N`; apply prints `assigned_campaigns=N`. Re-run is idempotent (0 to assign).
 
-Deploy from GitHub (only after steps 1–4): merge `mysql-port` into `main`, let Hostinger build/deploy. Then:
+Deploy from GitHub (only after steps 1ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Å“4): merge `mysql-port` into `main`, let Hostinger build/deploy. Then:
 
 ```bash
 curl -fsS "$APP_PUBLIC_URL/api/health/ready" | jq '.status, .checks.database_engine, .checks.database_version, .checks.database_migrations'
@@ -116,3 +116,19 @@ Decision point: immediately after step 5. If any check fails, roll back; do not 
 - Monitor: connection errors/too many connections, strict-mode length errors, deadlock retries (1213/1205), startup-recovery log lines, scrape-job completion.
 - Future schema changes: generate a new migration locally, apply with `prisma migrate deploy` where remote access exists, or apply the generated SQL in phpMyAdmin when it does not. **Never edit the baseline or applied migrations.**
 - Keep `prisma/migrations-postgres/` for the tag; it is not used at runtime.
+
+## 10. Multi-account sending migration
+
+Migrations `20261116000000_multi_account_contact_ledger`, `20261116010000_backfill_sender_stagger`, and `20261117000000_ledger_instagram_unique` add:
+
+- `LeadContactLedger` (unique `(userId, handleNormalized, step, channel)`), `LeadContactEvent`, `SenderSettingsAudit`.
+- `Lead`: `assignedSenderAccountId`, `firstContactedAt`, `firstContactedBySenderId`, `contactedByUsernameSnapshot`, `outreachCount`.
+- `InstagramSenderAccount`: `warmupEnabled`, `scheduleOffsetSeconds`, `settingsUpdatedAt`.
+- `Campaign`: `requireNameInFirstMessage`, `allowNeutralGreeting`, `followUpAllowSenderSwitch`, `reContactCooldownDays`.
+- Attribution/template fields on `Message`, `MessageAttempt`, `BulkMessageItem`, `FollowUpMessage`.
+- Deterministic stagger offsets for pre-existing sender accounts (new accounts receive sequential offsets on creation).
+- A second unique key on `(userId, instagramUserId, step, channel)` so a renamed handle is still found.
+
+**Rule:** deploy code and the dump from the **same commit**. Do not export the dump from a later commit than the code you deploy, or vice versa.
+
+Apply with `prisma migrate deploy` (or the SQL via phpMyAdmin). This migration is ordered after the baseline and must not be folded into or edited in place. `LeadContactLedger` is the cross-campaign first-contact guard; do not delete or truncate it during a cutover. Export/dump/checksum scripts include the new tables.

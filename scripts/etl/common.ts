@@ -37,6 +37,9 @@ export const TABLE_ORDER = [
   "DraftReview",
   "AiAnalysisJob",
   "FollowUpMessage",
+  "LeadContactLedger",
+  "LeadContactEvent",
+  "SenderSettingsAudit",
   "UnipileWebhookEvent",
   "UnmatchedInboundMessage",
 ] as const;
@@ -214,6 +217,10 @@ export function isExcluded(table: string, row: Row, ex: Exclusions): boolean {
     case "Conversation": return ex.conversations.has(String(row.id)) || ex.leads.has(String(row.leadId));
     case "Message": return ex.messages.has(String(row.id));
     case "MessageAttempt": return ex.messages.has(String(row.messageId));
+    case "LeadContactLedger":
+    case "LeadContactEvent":
+      return ex.campaigns.has(String(row.campaignId)) || ex.leads.has(String(row.leadId)) || ex.senders.has(String(row.senderAccountId));
+    case "SenderSettingsAudit": return ex.users.has(String(row.userId)) || ex.senders.has(String(row.senderAccountId));
     case "CampaignExecution": return ex.executions.has(String(row.id)) || ex.campaigns.has(String(row.campaignId));
     case "CampaignExecutionItem": return ex.executions.has(String(row.executionId)) || ex.leads.has(String(row.leadId));
     case "BulkMessageJob": return ex.bulkJobs.has(String(row.id)) || ex.campaigns.has(String(row.campaignId));
@@ -257,6 +264,9 @@ const PARENT_REFS: Record<string, Array<[string, keyof Exclusions]>> = {
   BulkMessageJob: [["campaignId", "migratedCampaigns"]],
   BulkMessageItem: [["jobId", "migratedBulkJobs"], ["leadId", "migratedLeads"]],
   OutboundSendIdempotency: [["campaignId", "migratedCampaigns"], ["leadId", "migratedLeads"], ["senderAccountId", "migratedSenders"]],
+  LeadContactLedger: [["campaignId", "migratedCampaigns"], ["leadId", "migratedLeads"], ["senderAccountId", "migratedSenders"]],
+  LeadContactEvent: [["campaignId", "migratedCampaigns"], ["leadId", "migratedLeads"], ["senderAccountId", "migratedSenders"]],
+  SenderSettingsAudit: [["userId", "migratedUsers"], ["senderAccountId", "migratedSenders"]],
   DoNotContact: [["userId", "migratedUsers"]],
   UsageLog: [["userId", "migratedUsers"], ["campaignId", "migratedCampaigns"]],
   NotificationConfig: [["userId", "migratedUsers"]],

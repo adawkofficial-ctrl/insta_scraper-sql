@@ -35,6 +35,9 @@ export type EditCampaignModalProps = {
     followUpCount?: number;
     followUpDelayDays?: number[];
     followUpTemplates?: string[];
+    requireNameInFirstMessage?: boolean;
+    allowNeutralGreeting?: boolean;
+    reContactCooldownDays?: number | null;
     status?: string;
   } | null;
   onUpdated?: (updated: CampaignSummary) => void;
@@ -102,6 +105,17 @@ function EditCampaignDialog({
     campaign.qualityMaxRegenerations != null
       ? String(campaign.qualityMaxRegenerations)
       : "2",
+  );
+
+  // First-message / re-contact settings
+  const [requireNameInFirstMessage, setRequireNameInFirstMessage] = useState(
+    campaign.requireNameInFirstMessage ?? true,
+  );
+  const [allowNeutralGreeting, setAllowNeutralGreeting] = useState(
+    campaign.allowNeutralGreeting ?? false,
+  );
+  const [reContactCooldownDays, setReContactCooldownDays] = useState(
+    campaign.reContactCooldownDays != null ? String(campaign.reContactCooldownDays) : "",
   );
 
   // Follow-up state
@@ -215,6 +229,12 @@ function EditCampaignDialog({
         followUpCount: followUpEnabled ? followUpCount : 0,
         followUpDelayDays: [parseInt(delayDay1, 10) || 3, parseInt(delayDay2, 10) || 5],
         followUpTemplates: followUpCount === 2 ? [template1, template2] : [template1],
+        requireNameInFirstMessage,
+        allowNeutralGreeting,
+        reContactCooldownDays:
+          reContactCooldownDays.trim() === ""
+            ? null
+            : Math.max(1, Math.min(365, parseInt(reContactCooldownDays, 10) || 1)),
       });
 
       onUpdated?.(updated);
@@ -379,6 +399,62 @@ function EditCampaignDialog({
                 )}
               </div>
             )}
+
+            {/* First-message + re-contact policy */}
+            <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-4 space-y-3">
+              <div>
+                <label className="text-xs font-semibold text-zinc-200">
+                  First-message personalization
+                </label>
+                <p className="text-[11px] text-zinc-400">
+                  Require a verified person or business name before the first DM can be sent.
+                </p>
+              </div>
+              <label className="flex items-center gap-2 text-xs text-zinc-300">
+                <input
+                  type="checkbox"
+                  checked={requireNameInFirstMessage}
+                  onChange={(e) => setRequireNameInFirstMessage(e.target.checked)}
+                  className="h-4 w-4 rounded border-zinc-700 bg-zinc-900 text-indigo-600"
+                />
+                Require name in first message
+              </label>
+              <label className="flex items-center gap-2 text-xs text-zinc-300">
+                <input
+                  type="checkbox"
+                  checked={allowNeutralGreeting}
+                  onChange={(e) => setAllowNeutralGreeting(e.target.checked)}
+                  className="h-4 w-4 rounded border-zinc-700 bg-zinc-900 text-indigo-600"
+                />
+                Allow neutral “Hello [business] team” when only a business name exists
+              </label>
+              <div>
+                <label className="block text-[11px] font-semibold text-zinc-300 mb-1.5">
+                  Re-contact policy
+                </label>
+                <select
+                  value={reContactCooldownDays === "" ? "never" : "cooldown"}
+                  onChange={(e) =>
+                    setReContactCooldownDays(e.target.value === "never" ? "" : "30")
+                  }
+                  className="w-full rounded-lg border border-zinc-700 bg-zinc-900 px-2.5 py-1.5 text-xs text-zinc-100"
+                >
+                  <option value="never">Never contact the same handle again</option>
+                  <option value="cooldown">Allow after a cooldown</option>
+                </select>
+                {reContactCooldownDays !== "" && (
+                  <input
+                    type="number"
+                    min={1}
+                    max={365}
+                    value={reContactCooldownDays}
+                    onChange={(e) => setReContactCooldownDays(e.target.value)}
+                    placeholder="Days"
+                    className="mt-2 w-full rounded-lg border border-zinc-700 bg-zinc-900 px-2.5 py-1.5 text-xs text-zinc-100"
+                  />
+                )}
+              </div>
+            </div>
 
             {/* Follow-up Message Settings */}
             <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-4 space-y-3">

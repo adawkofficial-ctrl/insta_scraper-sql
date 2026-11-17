@@ -14,8 +14,8 @@ function parseRows(content: string): Row[] {
     return (list as Array<Record<string, unknown>>).map((r) => ({
       table_name: String(r.table_name ?? r.TABLE_NAME ?? r["Table"] ?? ""),
       row_count: Number(r.row_count ?? r.ROW_COUNT ?? r["row_count"] ?? 0),
-      id_checksum: String(r.id_checksum ?? r.ID_CHECKSUM ?? ""),
-      business_checksum: String(r.business_checksum ?? r.BUSINESS_CHECKSUM ?? ""),
+      id_checksum: String(r.id_checksum ?? r.ID_CHECKSUM ?? "").replace(/^NULL$/, ""),
+      business_checksum: String(r.business_checksum ?? r.BUSINESS_CHECKSUM ?? "").replace(/^NULL$/, ""),
     }));
   }
   const lines = content.split(/\r?\n/).filter((l) => l.trim().length > 0);
@@ -33,8 +33,8 @@ function parseRows(content: string): Row[] {
     return {
       table_name: String(c[tableIdx] ?? ""),
       row_count: Number(c[countIdx] ?? 0),
-      id_checksum: String(c[idIdx] ?? ""),
-      business_checksum: String(c[bizIdx] ?? ""),
+      id_checksum: String(c[idIdx] ?? "").replace(/^NULL$/, ""),
+      business_checksum: String(c[bizIdx] ?? "").replace(/^NULL$/, ""),
     };
   });
 }

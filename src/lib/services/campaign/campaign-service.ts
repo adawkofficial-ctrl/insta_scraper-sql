@@ -64,6 +64,10 @@ export type CampaignSummary = {
   followUpCount?: number;
   followUpDelayDays?: number[];
   followUpTemplates?: string[];
+  requireNameInFirstMessage?: boolean;
+  allowNeutralGreeting?: boolean;
+  followUpAllowSenderSwitch?: boolean;
+  reContactCooldownDays?: number | null;
   companyProfileId: string;
   companyProfile?: {
     id: string;
@@ -143,6 +147,10 @@ export type UpdateCampaignInput = {
   location?: string | null;
   category?: string | null;
   leadLimit?: number | null;
+  requireNameInFirstMessage?: boolean;
+  allowNeutralGreeting?: boolean;
+  followUpAllowSenderSwitch?: boolean;
+  reContactCooldownDays?: number | null;
 };
 
 export type CampaignScrapeInput = {
@@ -241,6 +249,10 @@ export async function createCampaign(
   followUpCount?: number;
   followUpDelayDays?: number[];
   followUpTemplates?: string[];
+  requireNameInFirstMessage?: boolean;
+  allowNeutralGreeting?: boolean;
+  followUpAllowSenderSwitch?: boolean;
+  reContactCooldownDays?: number | null;
   companyProfileId: string;
   companyProfile?: {
     id: string;
@@ -512,6 +524,10 @@ export async function createCampaign(
       followUpCount: true,
       followUpDelayDays: true,
       followUpTemplates: true,
+      requireNameInFirstMessage: true,
+      allowNeutralGreeting: true,
+      followUpAllowSenderSwitch: true,
+      reContactCooldownDays: true,
       companyProfileId: true,
       companyProfile: {
         select: {
@@ -530,6 +546,10 @@ export async function createCampaign(
     ...campaign,
     followUpDelayDays: parseCampaignFollowUpDelayDays(campaign.followUpDelayDays),
     followUpTemplates: parseCampaignFollowUpTemplates(campaign.followUpTemplates),
+    requireNameInFirstMessage: campaign.requireNameInFirstMessage,
+    allowNeutralGreeting: campaign.allowNeutralGreeting,
+    followUpAllowSenderSwitch: campaign.followUpAllowSenderSwitch,
+    reContactCooldownDays: campaign.reContactCooldownDays,
   };
 }
 
@@ -561,6 +581,10 @@ export async function listCampaigns(userId?: string): Promise<CampaignSummary[]>
       followUpCount: true,
       followUpDelayDays: true,
       followUpTemplates: true,
+      requireNameInFirstMessage: true,
+      allowNeutralGreeting: true,
+      followUpAllowSenderSwitch: true,
+      reContactCooldownDays: true,
       companyProfileId: true,
       companyProfile: {
         select: {
@@ -639,6 +663,10 @@ export async function getCampaignById(
       followUpCount: true,
       followUpDelayDays: true,
       followUpTemplates: true,
+      requireNameInFirstMessage: true,
+      allowNeutralGreeting: true,
+      followUpAllowSenderSwitch: true,
+      reContactCooldownDays: true,
       companyProfileId: true,
       companyProfile: {
         select: {
@@ -710,6 +738,10 @@ export async function getCampaignById(
     followUpCount: campaign.followUpCount,
     followUpDelayDays: parseCampaignFollowUpDelayDays(campaign.followUpDelayDays),
     followUpTemplates: parseCampaignFollowUpTemplates(campaign.followUpTemplates),
+    requireNameInFirstMessage: campaign.requireNameInFirstMessage,
+    allowNeutralGreeting: campaign.allowNeutralGreeting,
+    followUpAllowSenderSwitch: campaign.followUpAllowSenderSwitch,
+    reContactCooldownDays: campaign.reContactCooldownDays,
     followUpSummary,
     companyProfileId: campaign.companyProfileId,
     companyProfile: campaign.companyProfile,
@@ -752,6 +784,10 @@ export async function updateCampaign(
   followUpCount?: number;
   followUpDelayDays?: number[];
   followUpTemplates?: string[];
+  requireNameInFirstMessage?: boolean;
+  allowNeutralGreeting?: boolean;
+  followUpAllowSenderSwitch?: boolean;
+  reContactCooldownDays?: number | null;
   companyProfileId: string;
   companyProfile?: {
     id: string;
@@ -793,6 +829,10 @@ export async function updateCampaign(
     followUpCount?: number;
     followUpDelayDays?: number[];
     followUpTemplates?: string[];
+    requireNameInFirstMessage?: boolean;
+    allowNeutralGreeting?: boolean;
+    followUpAllowSenderSwitch?: boolean;
+    reContactCooldownDays?: number | null;
   } = {};
 
   // Verify campaign exists and belongs to user if specified
@@ -1123,6 +1163,40 @@ export async function updateCampaign(
     data.followUpTemplates = record.followUpTemplates.map((t) => (t as string).trim());
   }
 
+  if (record.requireNameInFirstMessage !== undefined) {
+    if (typeof record.requireNameInFirstMessage !== "boolean") {
+      throw new BadRequestError("INVALID_REQUIRE_NAME", '"requireNameInFirstMessage" must be a boolean.');
+    }
+    data.requireNameInFirstMessage = record.requireNameInFirstMessage;
+  }
+
+  if (record.allowNeutralGreeting !== undefined) {
+    if (typeof record.allowNeutralGreeting !== "boolean") {
+      throw new BadRequestError("INVALID_NEUTRAL_GREETING", '"allowNeutralGreeting" must be a boolean.');
+    }
+    data.allowNeutralGreeting = record.allowNeutralGreeting;
+  }
+
+  if (record.followUpAllowSenderSwitch !== undefined) {
+    if (typeof record.followUpAllowSenderSwitch !== "boolean") {
+      throw new BadRequestError("INVALID_SENDER_SWITCH", '"followUpAllowSenderSwitch" must be a boolean.');
+    }
+    data.followUpAllowSenderSwitch = record.followUpAllowSenderSwitch;
+  }
+
+  if (record.reContactCooldownDays !== undefined) {
+    if (
+      record.reContactCooldownDays !== null &&
+      (typeof record.reContactCooldownDays !== "number" ||
+        !Number.isInteger(record.reContactCooldownDays) ||
+        record.reContactCooldownDays < 1 ||
+        record.reContactCooldownDays > 365)
+    ) {
+      throw new BadRequestError("INVALID_RECONTACT_COOLDOWN", '"reContactCooldownDays" must be null or an integer between 1 and 365.');
+    }
+    data.reContactCooldownDays = record.reContactCooldownDays;
+  }
+
   // Cross-validation when followUpEnabled is true
   const effectiveFollowUpEnabled =
     data.followUpEnabled !== undefined ? data.followUpEnabled : (existing.followUpEnabled ?? false);
@@ -1175,6 +1249,10 @@ export async function updateCampaign(
     "followUpCount",
     "followUpDelayDays",
     "followUpTemplates",
+    "requireNameInFirstMessage",
+    "allowNeutralGreeting",
+    "followUpAllowSenderSwitch",
+    "reContactCooldownDays",
   ]);
   const unexpectedKeys = Object.keys(record).filter((k) => !allowedKeys.has(k));
   if (unexpectedKeys.length > 0) {
@@ -1366,7 +1444,7 @@ export function parseCampaignScrapeRequest(body: unknown): CampaignScrapeInput {
     campaignName = rawCampaignName.trim().slice(0, MAX_CAMPAIGN_NAME_LENGTH);
   }
 
-  // "Maximum Leads" — validated server-side and never trusted from the client.
+  // "Maximum Leads" Ã¢â‚¬â€ validated server-side and never trusted from the client.
   // The Actor input schema has no results limit, so this caps what we persist.
   const maxLeads = parseLeadLimit(record.maxLeads ?? record.limit);
 

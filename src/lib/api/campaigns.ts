@@ -154,6 +154,10 @@ export type UpdateCampaignInput = {
   followUpCount?: number;
   followUpDelayDays?: number[];
   followUpTemplates?: string[];
+  requireNameInFirstMessage?: boolean;
+  allowNeutralGreeting?: boolean;
+  followUpAllowSenderSwitch?: boolean;
+  reContactCooldownDays?: number | null;
   followUpSummary?: {
     scheduled: number;
     sent: number;
