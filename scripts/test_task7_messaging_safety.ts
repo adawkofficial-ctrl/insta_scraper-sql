@@ -26,10 +26,10 @@ let failed = 0;
 
 function assert(condition: boolean, name: string, detail?: string) {
   if (condition) {
-    console.log(`  ✅ PASS: ${name}`);
+    console.log(`  ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã¢â‚¬Å“ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¦ PASS: ${name}`);
     passed++;
   } else {
-    console.error(`  ❌ FAIL: ${name} ${detail ? `(${detail})` : ""}`);
+    console.error(`  ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â‚¬Å¾Ã‚Â¢ FAIL: ${name} ${detail ? `(${detail})` : ""}`);
     failed++;
   }
 }
@@ -112,7 +112,7 @@ async function main() {
     data: {
       campaignId: campaignA.id,
       username: `safe_lead_1_${Date.now()}`,
-      fullName: "Safe Lead 1",
+      fullName: "Safe Alpha",
       category: "E-commerce",
       profileUrl: "https://www.instagram.com/safe_lead_1/",
     },
@@ -122,7 +122,7 @@ async function main() {
     data: {
       campaignId: campaignA.id,
       username: `safe_lead_2_${Date.now()}`,
-      fullName: "Safe Lead 2",
+      fullName: "Safe Bravo",
       category: "E-commerce",
       profileUrl: "https://www.instagram.com/safe_lead_2/",
     },
@@ -132,7 +132,7 @@ async function main() {
     data: {
       campaignId: campaignA.id,
       username: `safe_lead_3_${Date.now()}`,
-      fullName: "Safe Lead 3",
+      fullName: "Safe Charlie",
       category: "E-commerce",
       profileUrl: "https://www.instagram.com/safe_lead_3/",
     },
@@ -144,11 +144,13 @@ async function main() {
     headers: { "Content-Type": "application/json", Cookie: tenantA.cookie },
     body: JSON.stringify({
       leadId: lead1.id,
-      message: "Duplicate test message payload 1",
+      message: "Hi Safe Alpha, duplicate test message payload 1",
       campaignId: campaignA.id,
     }),
   });
   const httpData1 = (await httpSend1.json()) as any;
+  if (httpSend1.status !== 200)
+    console.log("DEBUG HTTP1", httpSend1.status, JSON.stringify(httpData1));
   assert(httpSend1.status === 200, "First HTTP message request dispatched successfully (200 OK)");
 
   // Immediate second identical send is detected by duplicate fingerprint check
@@ -157,7 +159,7 @@ async function main() {
     headers: { "Content-Type": "application/json", Cookie: tenantA.cookie },
     body: JSON.stringify({
       leadId: lead1.id,
-      message: "Duplicate test message payload 1",
+      message: "Hi Safe Alpha, duplicate test message payload 1",
       campaignId: campaignA.id,
     }),
   });
@@ -176,7 +178,7 @@ async function main() {
     headers: { "Content-Type": "application/json", Cookie: tenantA.cookie },
     body: JSON.stringify({
       leadId: lead2.id,
-      message: "Idempotent transaction message A",
+      message: "Hi Safe Bravo, idempotent transaction message A",
       campaignId: campaignA.id,
       idempotencyKey: testIdempotencyKey,
     }),
@@ -194,7 +196,7 @@ async function main() {
     headers: { "Content-Type": "application/json", Cookie: tenantA.cookie },
     body: JSON.stringify({
       leadId: lead2.id,
-      message: "Idempotent transaction message A",
+      message: "Hi Safe Bravo, idempotent transaction message A",
       campaignId: campaignA.id,
       idempotencyKey: testIdempotencyKey,
     }),
@@ -643,7 +645,7 @@ async function main() {
     headers: { "Content-Type": "application/json", Cookie: tenantA.cookie },
     body: JSON.stringify({
       leadId: leadSingle.id,
-      message: "Final verified single message outreach",
+      message: "Hi Lead Single Safe, final verified single message outreach",
       campaignId: campaignA.id,
     }),
   });
