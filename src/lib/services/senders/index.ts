@@ -13,11 +13,13 @@ export {
   toSenderAccountDto,
   verifySenderAccount,
   updateSenderSettings,
+  applySenderSettingsToAll,
   pauseSenderAccount,
   resumeSenderAccount,
   type ConnectSenderResult,
   type SenderAccountDto,
   type SenderDispatchResolution,
+  type SenderSettingsUpdateInput,
   type SenderDmDiagnostics,
 } from "./instagram-sender-service";
 

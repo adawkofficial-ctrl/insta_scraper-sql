@@ -17,7 +17,11 @@ export async function POST(request: Request): Promise<Response> {
       return apiError(400, "INVALID_JSON", "Request body must be valid JSON.");
     }
 
-    const result = await sendSingleMessage(body, user.id);
+    const payload =
+      body && typeof body === "object"
+        ? { ...(body as Record<string, unknown>), enforceFirstMessageName: true }
+        : body;
+    const result = await sendSingleMessage(payload, user.id);
     return NextResponse.json(result, { status: 200 });
   } catch (error) {
     return handleRouteError(request, error);

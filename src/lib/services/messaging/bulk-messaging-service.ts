@@ -1,4 +1,4 @@
-﻿import { getPrismaClient } from "@/lib/db/prisma";
+import { getPrismaClient } from "@/lib/db/prisma";
 import {
   BulkMessageJobStatus,
   BulkMessageItemStatus,

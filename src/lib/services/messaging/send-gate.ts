@@ -539,7 +539,7 @@ export function formatSenderHourString(date: Date, timezone = "UTC"): string {
 }
 
 // ---------------------------------------------------------------------------
-// STEP 1 â€” SHARED SEND GATE: canSendNow
+// STEP 1 ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â SHARED SEND GATE: canSendNow
 // ---------------------------------------------------------------------------
 
 export type CanSendNowInput = {
@@ -571,6 +571,8 @@ export type CanSendNowInput = {
     sentThisHour: number;
     sentThisHourWindow: string | null;
     warmupStartedAt: Date | null;
+    warmupEnabled?: boolean;
+    scheduleOffsetSeconds?: number;
     dailyCap: number | null;
     hourlyCap: number | null;
     customMinGapSeconds: number | null;
@@ -602,7 +604,7 @@ export type CanSendNowResult = {
 };
 
 /**
- * STEP 1 â€” The single shared send gate.
+ * STEP 1 ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â The single shared send gate.
  * Checks, strictly in order:
  * 1. Sender status healthy (not paused, connected/active/warming)
  * 2. DNC / suppression
@@ -750,6 +752,8 @@ export async function canSendNow(
         sentThisHour: true,
         sentThisHourWindow: true,
         warmupStartedAt: true,
+        warmupEnabled: true,
+        scheduleOffsetSeconds: true,
         dailyCap: true,
         hourlyCap: true,
         customMinGapSeconds: true,
@@ -850,7 +854,15 @@ export async function canSendNow(
   const effectiveSentToday =
     sender.sentTodayDate === todayStr ? sender.sentToday : 0;
 
-  const warmup = getWarmupLimit(sender.warmupStartedAt, sender.dailyCap, now);
+  const warmup =
+    sender.warmupEnabled === false
+      ? {
+          dailyCap: sender.dailyCap && sender.dailyCap > 0 ? sender.dailyCap : 25,
+          stage: "Warm-up disabled",
+          daysActive: 0,
+          isWarming: false,
+        }
+      : getWarmupLimit(sender.warmupStartedAt, sender.dailyCap, now);
   const hardMax = getSenderDailyHardMax();
   const effectiveDailyCap = Math.min(
     sender.dailyCap && sender.dailyCap > 0 ? sender.dailyCap : warmup.dailyCap,
@@ -940,6 +952,28 @@ export async function canSendNow(
     };
   }
 
+  // 5b. Per-account stagger on the first send of the day.
+  const offsetSeconds = sender.scheduleOffsetSeconds ?? 0;
+  if (effectiveSentToday === 0 && offsetSeconds > 0) {
+    const minuteOfDay = workingHours.localHour * 60 + workingHours.localMinute;
+    const staggerReadyAt = effectiveStart * 60 + Math.floor(offsetSeconds / 60);
+    if (minuteOfDay < staggerReadyAt) {
+      return {
+        allowed: false,
+        reason: "STAGGER_OFFSET",
+        retryAt: new Date(now.getTime() + (staggerReadyAt - minuteOfDay) * 60000),
+        details: {
+          dailyCap: effectiveDailyCap,
+          sentToday: effectiveSentToday,
+          hourlyCap,
+          sentThisHour: effectiveSentThisHour,
+          warmupStage: warmup.stage,
+          daysActive: warmup.daysActive,
+        },
+      };
+    }
+  }
+
   // 6. Minimum gap since last send (with jitter: random between 6-15 min, re-rolled)
   if (!input.bypassGapCheck && sender.lastSentAt) {
     const minSec = sender.customMinGapSeconds ?? getSenderMinGapSeconds();
@@ -983,7 +1017,7 @@ export async function canSendNow(
 }
 
 // ---------------------------------------------------------------------------
-// STEP 2 â€” PERSISTENT COUNTERS: Atomic Reservation & Release
+// STEP 2 ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â PERSISTENT COUNTERS: Atomic Reservation & Release
 // ---------------------------------------------------------------------------
 
 export type ReserveSendSlotInput = {
@@ -1200,6 +1234,8 @@ export async function reserveSendSlot(
         sentThisHour: true,
         sentThisHourWindow: true,
         warmupStartedAt: true,
+        warmupEnabled: true,
+        scheduleOffsetSeconds: true,
         dailyCap: true,
         hourlyCap: true,
         customMinGapSeconds: true,
@@ -1506,7 +1542,7 @@ export async function reconcileUnknownSendSlot(
 
 
 // ---------------------------------------------------------------------------
-// STEP 3 â€” SPREAD SENDS ACROSS HEALTHY SENDERS (ROUND-ROBIN BY REMAINING QUOTA)
+// STEP 3 ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â SPREAD SENDS ACROSS HEALTHY SENDERS (ROUND-ROBIN BY REMAINING QUOTA)
 // ---------------------------------------------------------------------------
 
 export type SenderWithQuota = {
@@ -1591,7 +1627,7 @@ export function chooseHealthySender(
 }
 
 // ---------------------------------------------------------------------------
-// STEP 5 â€” MESSAGE VARIATION & SPAM SIGNAL REDUCTION GUARD
+// STEP 5 ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€šÃ‚Â MESSAGE VARIATION & SPAM SIGNAL REDUCTION GUARD
 // ---------------------------------------------------------------------------
 
 export type MessageVariationValidationResult =

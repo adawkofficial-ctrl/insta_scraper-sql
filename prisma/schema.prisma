@@ -235,9 +235,9 @@ enum AiAnalysisJobStatus {
 model User {
   id           String   @id @default(cuid())
   email        String   @unique @db.VarChar(254)
-  passwordHash String @db.VarChar(191)
-  name         String? @db.Text
-  image        String? @db.Text
+  passwordHash String   @db.VarChar(191)
+  name         String?  @db.Text
+  image        String?  @db.Text
   role         String   @default("USER")
   createdAt    DateTime @default(now())
   updatedAt    DateTime @updatedAt
@@ -258,6 +258,9 @@ model User {
   notificationConfig      NotificationConfig?
   notificationLogs        NotificationLog[]
   emailSenderAccounts     EmailSenderAccount[]
+  contactLedgerEntries    LeadContactLedger[]
+  contactEvents           LeadContactEvent[]
+  senderSettingsAudits    SenderSettingsAudit[]
 
   @@index([email])
   @@index([createdAt])
@@ -266,26 +269,26 @@ model User {
 model Campaign {
   id                      String         @id @default(cuid())
   userId                  String
-  name                    String @db.VarChar(200)
-  description             String? @db.Text
+  name                    String         @db.VarChar(200)
+  description             String?        @db.Text
   status                  CampaignStatus @default(DRAFT)
   executionMode           ExecutionMode  @default(MANUAL)
   messageApprovalRequired Boolean        @default(true)
   scheduledAt             DateTime?
   // Discovery intent (remember what the user searched for)
-  intent                  String? @db.Text
-  location                String? @db.VarChar(1000)
-  category                String? @db.Text
+  intent                  String?        @db.Text
+  location                String?        @db.VarChar(1000)
+  category                String?        @db.Text
   leadLimit               Int?
   // Follow-up Configuration
-  followUpEnabled         Boolean             @default(false)
-  followUpCount           Int                 @default(1)
-  followUpDelayDays       Json?               // JSON number[]; use parseFollowUpDelayDays()
-  followUpTemplates       Json?               // JSON string[]; use parseStringArray()
-  createdAt               DateTime            @default(now())
-  updatedAt               DateTime            @updatedAt
+  followUpEnabled         Boolean        @default(false)
+  followUpCount           Int            @default(1)
+  followUpDelayDays       Json? // JSON number[]; use parseFollowUpDelayDays()
+  followUpTemplates       Json? // JSON string[]; use parseStringArray()
+  createdAt               DateTime       @default(now())
+  updatedAt               DateTime       @updatedAt
 
-  user             User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user             User                   @relation(fields: [userId], references: [id], onDelete: Cascade)
   leads            Lead[]
   scrapeJobs       ScrapeJob[]
   messages         Message[]
@@ -299,7 +302,7 @@ model Campaign {
   usageLogs        UsageLog[]
   leadSightings    LeadSighting[]
   companyProfileId String
-  companyProfile   CompanyProfile      @relation(fields: [companyProfileId], references: [id], onDelete: Restrict)
+  companyProfile   CompanyProfile         @relation(fields: [companyProfileId], references: [id], onDelete: Restrict)
   messageDrafts    MessageDraft[]
   aiAnalysisJobs   AiAnalysisJob[]
   followUpMessages FollowUpMessage[]
@@ -322,13 +325,21 @@ model Campaign {
   customPositiveKeywords Json? // JSON string[]; use parseStringArray()
   minRating              Float?
   minReviews             Int?
-  excludeChains          Boolean  @default(true)
+  excludeChains          Boolean @default(true)
+
+  // First-message personalization / re-contact policy (multi-account task)
+  requireNameInFirstMessage Boolean @default(true)
+  allowNeutralGreeting      Boolean @default(false)
+  followUpAllowSenderSwitch Boolean @default(false)
+  reContactCooldownDays     Int?
 
   // Outcome optimization & feedback loop (Step 4)
-  autoOptimize           Boolean     @default(false)
-  explorationBudgetShare Float       @default(0.15)
+  autoOptimize           Boolean             @default(false)
+  explorationBudgetShare Float               @default(0.15)
   leadEvents             LeadEvent[]
   candidates             Candidate[]
+  contactLedger          LeadContactLedger[]
+  contactEvents          LeadContactEvent[]
 
   @@index([userId])
   @@index([status])
@@ -339,26 +350,26 @@ model Campaign {
 model Lead {
   id                   String    @id @default(cuid())
   campaignId           String
-  username             String? @db.VarChar(191)
-  instagramUsername    String? @db.VarChar(191)
-  profileUrl           String? @db.VarChar(512)
-  fullName             String? @db.VarChar(255)
-  biography            String? @db.LongText
+  username             String?   @db.VarChar(191)
+  instagramUsername    String?   @db.VarChar(191)
+  profileUrl           String?   @db.VarChar(512)
+  fullName             String?   @db.VarChar(255)
+  biography            String?   @db.LongText
   followers            Int? // DEPRECATED: use followersCount
   following            Int?
   postsCount           Int?
-  profilePictureUrl    String? @db.Text
-  profilePicUrl        String? @db.Text
-  profilePicUrlHD      String? @db.Text
+  profilePictureUrl    String?   @db.Text
+  profilePicUrl        String?   @db.Text
+  profilePicUrlHD      String?   @db.Text
   isVerified           Boolean? // DEPRECATED: use verified
   verified             Boolean?
   isBusiness           Boolean? // DEPRECATED: use isBusinessAccount
   isBusinessAccount    Boolean?
-  category             String? @db.VarChar(191)
-  businessCategoryName String? @db.VarChar(191)
-  externalUrl          String? @db.Text
+  category             String?   @db.VarChar(191)
+  businessCategoryName String?   @db.VarChar(191)
+  externalUrl          String?   @db.Text
   instagramId          String?
-  location             String? @db.Text
+  location             String?   @db.Text
   followersCount       Int?
   followsCount         Int?
   relatedProfiles      Json?
@@ -370,95 +381,105 @@ model Lead {
   updatedAt            DateTime  @updatedAt
 
   // Foundation fields for Lead-Gen Platform
-  status            LeadStatus @default(NEW)
-  statusUpdatedAt   DateTime   @default(now())
-  instagramUserId   String?
-  email             String? @db.VarChar(254)
-  emailNormalized   String? @db.VarChar(191)
-  phone             String?
-  phoneNormalized   String? @db.VarChar(191)
-  website           String? @db.Text
-  websiteDomain     String? @db.VarChar(191)
-  socialLink        String?  @db.VarChar(512)
-  socialPlatform    String?
-  contactSource     String?
-  emailSourceUrl    String? @db.Text
-  emailFoundAt      DateTime?
-  emailConfidence   Float?
-  emailRole         String? // "generic" | "named" | null
-  emailInvalid      Boolean  @default(false)
-  emailOptOutAt     DateTime?
+  status                      LeadStatus @default(NEW)
+  statusUpdatedAt             DateTime   @default(now())
+  instagramUserId             String?
+  email                       String?    @db.VarChar(254)
+  emailNormalized             String?    @db.VarChar(191)
+  phone                       String?
+  phoneNormalized             String?    @db.VarChar(191)
+  website                     String?    @db.Text
+  websiteDomain               String?    @db.VarChar(191)
+  socialLink                  String?    @db.VarChar(512)
+  socialPlatform              String?
+  contactSource               String?
+  emailSourceUrl              String?    @db.Text
+  emailFoundAt                DateTime?
+  emailConfidence             Float?
+  emailRole                   String? // "generic" | "named" | null
+  emailInvalid                Boolean    @default(false)
+  emailOptOutAt               DateTime?
   // Canonical channel flags. Keep in sync via syncLeadChannelFlags().
-  hasInstagram   Boolean @default(false)
-  hasEmail       Boolean @default(false)
-  hasPhone       Boolean @default(false)
-  hasWebsite     Boolean @default(false)
-  hasOtherSocial Boolean @default(false)
-  leadScore         Int?
-  leadQuality       String? // "high" | "medium" | "low"
-  aiStatus          AiStatus   @default(PENDING)
-  aiAnalysis        Json?
-  aiAnalyzedAt      DateTime?
-  aiFailedReason    String? @db.Text
-  promptVersion     String?
-  lastContactedAt   DateTime?
+  hasInstagram                Boolean    @default(false)
+  hasEmail                    Boolean    @default(false)
+  hasPhone                    Boolean    @default(false)
+  hasWebsite                  Boolean    @default(false)
+  hasOtherSocial              Boolean    @default(false)
+  leadScore                   Int?
+  leadQuality                 String? // "high" | "medium" | "low"
+  aiStatus                    AiStatus   @default(PENDING)
+  aiAnalysis                  Json?
+  aiAnalyzedAt                DateTime?
+  aiFailedReason              String?    @db.Text
+  promptVersion               String?
+  lastContactedAt             DateTime?
+  // Sticky multi-account contact attribution (first reservation wins).
+  assignedSenderAccountId     String?
+  firstContactedAt            DateTime?
+  firstContactedBySenderId    String?
+  contactedByUsernameSnapshot String?    @db.VarChar(191)
+  outreachCount               Int        @default(0)
 
   // Multi-attribute deduplication (per-user identity)
   userId                    String?
-  usernameNormalized        String? @db.VarChar(191)
-  profileUrlCanonical       String? @db.Text
-  websiteKey                String? @db.VarChar(191)
+  usernameNormalized        String?   @db.VarChar(191)
+  profileUrlCanonical       String?   @db.Text
+  websiteKey                String?   @db.VarChar(191)
   previousUsernames         Json? // JSON string[]; use parsePreviousUsernames()
   duplicateOfLeadId         String?
   dedupMatchedBy            String?
   dedupFlaggedAt            DateTime?
   possibleDuplicateOfLeadId String?
-  possibleDuplicateReason   String? @db.Text
+  possibleDuplicateReason   String?   @db.Text
   // App-maintained guard keys for the three former Postgres partial unique
   // indexes. NULL means "not guarded"; Prisma extension keeps them in sync.
-  activeInstagramGuard String?
-  activeUsernameGuard  String?
-  activeEmailGuard     String?
+  activeInstagramGuard      String?
+  activeUsernameGuard       String?
+  activeEmailGuard          String?
 
   // Google Maps / Multi-channel discovery fields
-  gmapsPlaceId              String? @db.VarChar(191)
-  rating                    Float?
-  reviewCount               Int?
-  city                      String? @db.VarChar(191)
-  handleSource              String?
-  handleConfidence          String?
+  gmapsPlaceId     String? @db.VarChar(191)
+  rating           Float?
+  reviewCount      Int?
+  city             String? @db.VarChar(191)
+  handleSource     String?
+  handleConfidence String?
 
   // Lead Quality Scoring & Chain Detection
-  qualityScore              Int?
-  qualityTier               String? // "A" | "B" | "C" | "D"
-  scoreBreakdown            Json?
-  scoreFlags                LeadScoreFlag[]
-  isChain                   Boolean   @default(false)
-  isClaimed                 Boolean?
-  lastPostAt                DateTime?
-  scoreVersion              Int       @default(1)
+  qualityScore   Int?
+  qualityTier    String? // "A" | "B" | "C" | "D"
+  scoreBreakdown Json?
+  scoreFlags     LeadScoreFlag[]
+  isChain        Boolean         @default(false)
+  isClaimed      Boolean?
+  lastPostAt     DateTime?
+  scoreVersion   Int             @default(1)
 
   // Attribution & Cost Tracking (Step 1)
-  scrapeJobId               String?
-  discoveryKeyword          String? @db.VarChar(191)
-  discoveryCity             String? @db.VarChar(191)
-  acquisitionCostUsd        Decimal?  @db.Decimal(10, 4)
-  emailSends                EmailSend[]
-  emailUnsubscribeTokens    EmailUnsubscribeToken[]
-  acquisitionCostBreakdown   Json?
-  messageVariant            String?   // A/B test variant: "A" | "B" | "C" @db.VarChar(64)
+  scrapeJobId              String?
+  discoveryKeyword         String?                 @db.VarChar(191)
+  discoveryCity            String?                 @db.VarChar(191)
+  acquisitionCostUsd       Decimal?                @db.Decimal(10, 4)
+  emailSends               EmailSend[]
+  emailUnsubscribeTokens   EmailUnsubscribeToken[]
+  acquisitionCostBreakdown Json?
+  messageVariant           String? // A/B test variant: "A" | "B" | "C" @db.VarChar(64)
 
   // Pilot and dry-run isolation
-  isDryRun                  Boolean   @default(false)
+  isDryRun Boolean @default(false)
 
   // Multi-location group detection & deduplication
-  isGroup                   Boolean   @default(false)
-  groupKey                  String? @db.VarChar(191)
-  lastHandleEnrichmentAt    DateTime?
+  isGroup                Boolean   @default(false)
+  groupKey               String?   @db.VarChar(191)
+  lastHandleEnrichmentAt DateTime?
 
   campaign            Campaign                @relation(fields: [campaignId], references: [id], onDelete: Cascade)
   user                User?                   @relation(fields: [userId], references: [id], onDelete: Cascade)
   scrapeJob           ScrapeJob?              @relation(fields: [scrapeJobId], references: [id], onDelete: SetNull)
+  assignedSender      InstagramSenderAccount? @relation("LeadAssignedSender", fields: [assignedSenderAccountId], references: [id], onDelete: SetNull)
+  firstContactedBy    InstagramSenderAccount? @relation("LeadFirstContactSender", fields: [firstContactedBySenderId], references: [id], onDelete: SetNull)
+  contactLedger       LeadContactLedger[]
+  contactEvents       LeadContactEvent[]
   events              LeadEvent[]
   messages            Message[]
   executionItems      CampaignExecutionItem[]
@@ -480,7 +501,7 @@ model Lead {
   //   UNIQUE (userId, emailNormalized)    WHERE key NOT NULL AND duplicateOfLeadId IS NULL
   // `prisma migrate diff --from-config-datasource --to-schema` currently reports
   // NO drift (Prisma ignores unmodelled partial indexes). If a future version
-  // reports them as DROP INDEX, do NOT accept it Ã¢â‚¬â€ they are the concurrency guard.
+  // reports them as DROP INDEX, do NOT accept it ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â they are the concurrency guard.
 
   @@unique([campaignId, username])
   @@unique([userId, activeInstagramGuard])
@@ -527,6 +548,11 @@ model Lead {
   @@index([groupKey])
   @@index([campaignId, groupKey])
   @@index([messageVariant])
+  @@index([assignedSenderAccountId])
+  @@index([firstContactedBySenderId])
+  @@index([firstContactedAt])
+  @@index([lastContactedAt])
+  @@index([contactedByUsernameSnapshot])
 }
 
 model LeadScoreFlag {
@@ -565,14 +591,14 @@ model ScrapeJob {
   provider             String
   inputCount           Int             @default(0)
   processedCount       Int             @default(0)
-  errorMessage         String? @db.Text
+  errorMessage         String?         @db.Text
   startedAt            DateTime?
   completedAt          DateTime?
   createdAt            DateTime        @default(now())
   // Discovery metadata (nullable for plain profile-scrape jobs)
-  query                String? @db.Text
-  location             String? @db.Text
-  category             String? @db.Text
+  query                String?         @db.Text
+  location             String?         @db.Text
+  category             String?         @db.Text
   discoveryActor       String?
   enrichmentActor      String?
   requestedLimit       Int?
@@ -581,7 +607,7 @@ model ScrapeJob {
   candidatesSkipped    Int?
   usage                Json?
   stopReason           String?
-  costUsd              Decimal? @db.Decimal(10, 4)
+  costUsd              Decimal?        @db.Decimal(10, 4)
   costBreakdown        Json?
   isDryRun             Boolean         @default(false)
 
@@ -629,37 +655,37 @@ model DiscoveryPlaceOutcome {
 }
 
 model Candidate {
-  id               String    @id @default(cuid())
+  id               String   @id @default(cuid())
   campaignId       String
   scrapeJobId      String?
   runId            String?
   datasetId        String?
-  costUsd          Decimal?  @db.Decimal(10, 4)
+  costUsd          Decimal? @db.Decimal(10, 4)
   placeId          String
-  name             String @db.VarChar(255)
-  category         String? @db.Text
-  address          String? @db.Text
+  name             String   @db.VarChar(255)
+  category         String?  @db.Text
+  address          String?  @db.Text
   city             String?
   state            String?
   countryCode      String?
   phone            String?
-  website          String? @db.Text
+  website          String?  @db.Text
   rating           Float?
   reviewsCount     Int?
-  mapsUrl          String? @db.Text
-  status           String    @default("DISCOVERED")
-  rejectionReason  String? @db.Text
-  lastError        String? @db.Text
+  mapsUrl          String?  @db.Text
+  status           String   @default("DISCOVERED")
+  rejectionReason  String?  @db.Text
+  lastError        String?  @db.Text
   handle           String?
   handleSource     String?
   handleConfidence String?
   socialLinks      Json?
   rawPlaceData     Json?
-  createdAt        DateTime  @default(now())
-  updatedAt        DateTime  @updatedAt
+  createdAt        DateTime @default(now())
+  updatedAt        DateTime @updatedAt
 
-  campaign         Campaign  @relation(fields: [campaignId], references: [id], onDelete: Cascade)
-  scrapeJob        ScrapeJob? @relation(fields: [scrapeJobId], references: [id], onDelete: SetNull)
+  campaign  Campaign   @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  scrapeJob ScrapeJob? @relation(fields: [scrapeJobId], references: [id], onDelete: SetNull)
 
   @@unique([campaignId, placeId])
   @@index([campaignId, status])
@@ -672,11 +698,11 @@ model EmailSenderAccount {
   userId                String
   fromName              String
   fromAddress           String
-  postalAddress         String @db.Text
-  smtpHost              String @db.VarChar(191)
+  postalAddress         String    @db.Text
+  smtpHost              String    @db.VarChar(191)
   smtpPort              Int
   smtpUser              String
-  smtpPasswordEncrypted String @db.LongText
+  smtpPasswordEncrypted String    @db.LongText
   secure                Boolean   @default(true)
   status                String    @default("PENDING") // PENDING | ACTIVE | PAUSED | DISABLED
   dailyCap              Int       @default(15)
@@ -685,7 +711,7 @@ model EmailSenderAccount {
   lastSentAt            DateTime?
   consecutiveErrors     Int       @default(0)
   pausedUntil           DateTime?
-  lastError             String? @db.Text
+  lastError             String?   @db.Text
   verifiedAt            DateTime?
   dnsCheckedAt          DateTime?
   spfStatus             String?
@@ -721,11 +747,11 @@ model EmailSend {
   campaignId        String?
   leadId            String?
   senderAccountId   String
-  recipient         String @db.VarChar(254)
-  recipientDomain   String? @db.VarChar(191)
+  recipient         String    @db.VarChar(254)
+  recipientDomain   String?   @db.VarChar(191)
   status            String    @default("QUEUED") // QUEUED | SENT | UNKNOWN | FAILED | SUPPRESSED
-  subject           String @db.Text
-  body              String @db.LongText
+  subject           String    @db.Text
+  body              String    @db.LongText
   messageId         String?
   templateVersion   Int       @default(1)
   senderIdentity    String
@@ -733,7 +759,7 @@ model EmailSend {
   addressFoundAt    DateTime?
   addressConfidence Float?
   errorCode         String?
-  errorMessage      String? @db.Text
+  errorMessage      String?   @db.Text
   groupKey          String?
   isTest            Boolean   @default(false)
   reservedAt        DateTime  @default(now())
@@ -741,8 +767,8 @@ model EmailSend {
   createdAt         DateTime  @default(now())
   updatedAt         DateTime  @updatedAt
 
-  campaign      Campaign?            @relation(fields: [campaignId], references: [id], onDelete: Cascade)
-  lead          Lead?               @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  campaign      Campaign?          @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  lead          Lead?              @relation(fields: [leadId], references: [id], onDelete: Cascade)
   senderAccount EmailSenderAccount @relation(fields: [senderAccountId], references: [id], onDelete: Restrict)
 
   @@unique([leadId])
@@ -766,23 +792,30 @@ model EmailUnsubscribeToken {
 }
 
 model Message {
-  id                String        @id @default(cuid())
-  campaignId        String
-  leadId            String
-  provider          String        @default("playwright")
-  providerMessageId String? @db.VarChar(191)
-  status            MessageStatus @default(DRAFT)
-  messageText       String @db.LongText
-  errorCode         String?
-  errorMessage      String? @db.Text
-  idempotencyKey    String? @db.VarChar(191)
-  contentHash       String? @db.VarChar(64)
-  sentAt            DateTime?
-  createdAt         DateTime      @default(now())
-  updatedAt         DateTime      @updatedAt
-  senderAccountId   String?
+  id                     String        @id @default(cuid())
+  campaignId             String
+  leadId                 String
+  provider               String        @default("playwright")
+  providerMessageId      String?       @db.VarChar(191)
+  status                 MessageStatus @default(DRAFT)
+  messageText            String        @db.LongText
+  errorCode              String?
+  errorMessage           String?       @db.Text
+  idempotencyKey         String?       @db.VarChar(191)
+  contentHash            String?       @db.VarChar(64)
+  sentAt                 DateTime?
+  createdAt              DateTime      @default(now())
+  updatedAt              DateTime      @updatedAt
+  senderAccountId        String?
+  senderUsernameSnapshot String?       @db.VarChar(191)
+  step                   String?       @db.VarChar(32)
+  templateId             String?       @db.VarChar(191)
+  variant                String?       @db.VarChar(64)
+  renderedTextHash       String?       @db.VarChar(64)
+  threadId               String?       @db.VarChar(191)
+  scheduledAt            DateTime?
   // Step 6: every draft-based message links back to its approved draft.
-  draftId           String?
+  draftId                String?
 
   // Step 8: Unipile message & chat correlation
   unipileMessageId String? @unique @db.VarChar(191)
@@ -803,14 +836,14 @@ model Message {
   classificationPromptVersion String?
   replyCategory               String? // "positive" | "question" | "not_now" | "negative" | "unsubscribe" | "spam" | "unknown"
 
-  campaign      Campaign                @relation(fields: [campaignId], references: [id], onDelete: Cascade)
-  lead          Lead                    @relation(fields: [leadId], references: [id], onDelete: Cascade)
-  leadEvents    LeadEvent[]
-  attempts      MessageAttempt[]
-  senderAccount InstagramSenderAccount? @relation(fields: [senderAccountId], references: [id], onDelete: SetNull)
-  conversation  Conversation?           @relation(fields: [conversationId], references: [id], onDelete: SetNull)
-  draft         MessageDraft?           @relation(fields: [draftId], references: [id], onDelete: SetNull)
-  replyDrafts   MessageDraft[]          @relation("MessageDraftReplyTo")
+  campaign         Campaign                @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  lead             Lead                    @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  leadEvents       LeadEvent[]
+  attempts         MessageAttempt[]
+  senderAccount    InstagramSenderAccount? @relation(fields: [senderAccountId], references: [id], onDelete: SetNull)
+  conversation     Conversation?           @relation(fields: [conversationId], references: [id], onDelete: SetNull)
+  draft            MessageDraft?           @relation(fields: [draftId], references: [id], onDelete: SetNull)
+  replyDrafts      MessageDraft[]          @relation("MessageDraftReplyTo")
   followUpMessages FollowUpMessage[]
 
   @@index([leadId])
@@ -830,9 +863,9 @@ model Message {
 model MessageTemplate {
   id         String   @id @default(cuid())
   campaignId String?
-  name       String @db.Text
-  body       String @db.LongText
-  variants   Json?    // Optional A/B variants: [{ id: "A", body: "..." }, { id: "B", body: "..." }]
+  name       String   @db.Text
+  body       String   @db.LongText
+  variants   Json? // Optional A/B variants: [{ id: "A", body: "..." }, { id: "B", body: "..." }]
   createdAt  DateTime @default(now())
   updatedAt  DateTime @updatedAt
 
@@ -847,42 +880,52 @@ model InstagramSenderAccount {
   id               String                     @id @default(cuid())
   userId           String
   username         String
-  displayName      String? @db.Text
+  displayName      String?                    @db.Text
   connectionMethod ConnectionMethod           @default(PLAYWRIGHT)
   unipileAccountId String?                    @unique @db.VarChar(191)
   sessionType      InstagramSenderSessionType @default(PERSISTENT_PROFILE)
-  sessionPath      String @db.Text
+  sessionPath      String                     @db.Text
   status           InstagramSenderStatus      @default(CONNECTING)
   lastVerifiedAt   DateTime?
-  lastError        String? @db.Text
+  lastError        String?                    @db.Text
   createdAt        DateTime                   @default(now())
   updatedAt        DateTime                   @updatedAt
 
   // Persistent send-gate safety counters & settings (Step 2 & 3)
-  lastSentAt         DateTime?
-  sentToday          Int       @default(0)
-  sentTodayDate      String?
-  sentThisHour       Int       @default(0)
-  sentThisHourWindow String?
-  totalSent          Int       @default(0)
-  warmupStartedAt    DateTime?
-  pausedUntil        DateTime?
-  lastErrorCode      String?
-  consecutiveErrors  Int       @default(0)
-  dailyCap           Int?
-  hourlyCap          Int?
-  customMinGapSeconds Int?
-  customMaxGapSeconds Int?
-  timezone           String    @default("UTC")
-  workingHoursStart  Int       @default(9)
-  workingHoursEnd    Int       @default(18)
+  lastSentAt            DateTime?
+  sentToday             Int       @default(0)
+  sentTodayDate         String?
+  sentThisHour          Int       @default(0)
+  sentThisHourWindow    String?
+  totalSent             Int       @default(0)
+  warmupStartedAt       DateTime?
+  pausedUntil           DateTime?
+  lastErrorCode         String?
+  consecutiveErrors     Int       @default(0)
+  dailyCap              Int?
+  hourlyCap             Int?
+  customMinGapSeconds   Int?
+  customMaxGapSeconds   Int?
+  timezone              String    @default("UTC")
+  workingHoursStart     Int       @default(9)
+  workingHoursEnd       Int       @default(18)
+  warmupEnabled         Boolean   @default(true)
+  // Stable per-account offset so many accounts do not start the same minute.
+  scheduleOffsetSeconds Int       @default(0)
+  settingsUpdatedAt     DateTime?
 
   user                  User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
   messages              Message[]
   messageAttempts       MessageAttempt[]
   bulkMessageJobs       BulkMessageJob[]
+  bulkMessageItems      BulkMessageItem[]
   conversations         Conversation[]
   outboundIdempotencies OutboundSendIdempotency[]
+  assignedLeads         Lead[]                    @relation("LeadAssignedSender")
+  firstContactedLeads   Lead[]                    @relation("LeadFirstContactSender")
+  contactLedgerEntries  LeadContactLedger[]
+  contactEvents         LeadContactEvent[]
+  settingsAudits        SenderSettingsAudit[]
 
   @@unique([userId, username])
   @@index([userId])
@@ -903,7 +946,7 @@ model OutboundSendIdempotency {
   status          String    @default("RESERVED") // RESERVED | SENT | FAILED | UNKNOWN
   messageId       String?
   errorCode       String?
-  errorMessage    String? @db.Text
+  errorMessage    String?   @db.Text
   contentHash     String?
   reservedAt      DateTime  @default(now())
   completedAt     DateTime?
@@ -934,7 +977,7 @@ model CampaignExecution {
   successfulItems  Int                     @default(0)
   failedItems      Int                     @default(0)
   errorCode        String?
-  errorMessage     String? @db.Text
+  errorMessage     String?                 @db.Text
   scrapeJobId      String?
   bulkMessageJobId String?
   startedAt        DateTime?
@@ -964,8 +1007,8 @@ model CampaignExecutionItem {
   executionId  String
   leadId       String
   status       ExecutionItemStatus @default(PENDING)
-  messageText  String @db.Text
-  errorMessage String? @db.Text
+  messageText  String              @db.Text
+  errorMessage String?             @db.Text
   processedAt  DateTime?
   createdAt    DateTime            @default(now())
   updatedAt    DateTime            @updatedAt
@@ -1017,7 +1060,7 @@ model BulkMessageJob {
   skipped         Int                  @default(0)
   cancelled       Int                  @default(0)
   unknown         Int                  @default(0)
-  errorMessage    String? @db.Text
+  errorMessage    String?              @db.Text
   senderAccountId String?
   createdAt       DateTime             @default(now())
   startedAt       DateTime?
@@ -1044,26 +1087,30 @@ model BulkMessageItem {
   id                String                @id @default(cuid())
   jobId             String
   leadId            String
-  renderedMessage   String @db.LongText
+  renderedMessage   String                @db.LongText
   status            BulkMessageItemStatus @default(QUEUED)
   attempts          Int                   @default(0)
   startedAt         DateTime?
   completedAt       DateTime?
   errorCode         String?
-  errorMessage      String? @db.Text
-  providerMessageId String? @db.VarChar(191)
-  idempotencyKey    String? @db.VarChar(191)
-  contentHash       String? @db.VarChar(64)
+  errorMessage      String?               @db.Text
+  providerMessageId String?               @db.VarChar(191)
+  senderAccountId   String?
+  templateId        String?               @db.VarChar(191)
+  variant           String?               @db.VarChar(64)
+  idempotencyKey    String?               @db.VarChar(191)
+  contentHash       String?               @db.VarChar(64)
   // Step 6: draft-based items carry the approved draft and its exact body/hash.
   // Unique: a draft can be attached to at most one item (no double-send).
   draftId           String?               @unique
-  renderedBody      String? @db.LongText
-  bodyHash          String? @db.VarChar(64)
+  renderedBody      String?               @db.LongText
+  bodyHash          String?               @db.VarChar(64)
   createdAt         DateTime              @default(now())
   updatedAt         DateTime              @updatedAt
 
-  job             BulkMessageJob   @relation(fields: [jobId], references: [id], onDelete: Cascade)
-  lead            Lead             @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  job             BulkMessageJob          @relation(fields: [jobId], references: [id], onDelete: Cascade)
+  lead            Lead                    @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  senderAccount   InstagramSenderAccount? @relation(fields: [senderAccountId], references: [id], onDelete: SetNull)
   messageAttempts MessageAttempt[]
 
   @@unique([jobId, leadId])
@@ -1076,28 +1123,36 @@ model BulkMessageItem {
 }
 
 model MessageAttempt {
-  id                String        @id @default(cuid())
-  userId            String
-  campaignId        String
-  leadId            String
-  jobId             String?
-  itemId            String?
-  messageId         String?
-  direction         String        @default("OUTBOUND")
-  status            MessageStatus @default(SENDING)
-  messageText       String @db.LongText
-  provider          String        @default("playwright")
-  providerMessageId String? @db.VarChar(191)
-  attemptNumber     Int           @default(1)
-  idempotencyKey    String? @db.VarChar(191)
-  contentHash       String? @db.VarChar(64)
-  errorCode         String?
-  errorMessage      String? @db.Text
-  startedAt         DateTime      @default(now())
-  completedAt       DateTime?
-  createdAt         DateTime      @default(now())
-  updatedAt         DateTime      @updatedAt
-  senderAccountId   String?
+  id                     String         @id @default(cuid())
+  userId                 String
+  campaignId             String
+  leadId                 String
+  jobId                  String?
+  itemId                 String?
+  messageId              String?
+  direction              String         @default("OUTBOUND")
+  status                 MessageStatus  @default(SENDING)
+  messageText            String         @db.LongText
+  provider               String         @default("playwright")
+  providerMessageId      String?        @db.VarChar(191)
+  attemptNumber          Int            @default(1)
+  idempotencyKey         String?        @db.VarChar(191)
+  contentHash            String?        @db.VarChar(64)
+  errorCode              String?
+  errorMessage           String?        @db.Text
+  startedAt              DateTime       @default(now())
+  completedAt            DateTime?
+  createdAt              DateTime       @default(now())
+  updatedAt              DateTime       @updatedAt
+  senderAccountId        String?
+  senderUsernameSnapshot String?        @db.VarChar(191)
+  step                   String?        @db.VarChar(32)
+  channel                MessageChannel @default(INSTAGRAM)
+  templateId             String?        @db.VarChar(191)
+  variant                String?        @db.VarChar(64)
+  renderedTextHash       String?        @db.VarChar(64)
+  threadId               String?        @db.VarChar(191)
+  scheduledAt            DateTime?
 
   user          User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
   campaign      Campaign                @relation(fields: [campaignId], references: [id], onDelete: Cascade)
@@ -1139,7 +1194,7 @@ model DoNotContact {
   userId               String
   channel              DncChannel
   identifierType       DncIdentifierType
-  identifierNormalized String @db.VarChar(320)
+  identifierNormalized String            @db.VarChar(320)
   reason               String?
   source               DncSource
   createdAt            DateTime          @default(now())
@@ -1212,21 +1267,21 @@ model UsageLog {
 model CompanyProfile {
   id                   String   @id @default(cuid())
   userId               String
-  name                 String @db.Text
+  name                 String   @db.Text
   isDefault            Boolean  @default(false)
   description          String?  @db.Text
   services             Json? // JSON string[]; default [] applied in code
   targetIndustries     Json? // JSON string[]; use parseStringArray()
   targetCountries      Json? // JSON string[]; use parseStringArray()
-  idealCustomerProfile String? @db.Text
+  idealCustomerProfile String?  @db.Text
   brandTone            String?
   messageLanguage      String   @default("en")
   preferredLength      Json?
   ctaStyle             String?
   forbiddenClaims      Json? // JSON string[]; use parseStringArray()
-  pricingPolicy        String? @db.Text
+  pricingPolicy        String?  @db.Text
   exampleMessages      Json?
-  objectionNotes       String? @db.Text
+  objectionNotes       String?  @db.Text
   createdAt            DateTime @default(now())
   updatedAt            DateTime @updatedAt
 
@@ -1242,8 +1297,8 @@ model MessageDraft {
   userId                    String
   leadId                    String
   campaignId                String
-  body                      String @db.LongText
-  subject                   String? @db.Text
+  body                      String         @db.LongText
+  subject                   String?        @db.Text
   channel                   MessageChannel @default(INSTAGRAM)
   kind                      DraftKind      @default(OUTREACH)
   replyToMessageId          String?
@@ -1260,15 +1315,15 @@ model MessageDraft {
   qualityResult             Json?
   qualityCheckedAt          DateTime?
   regenerationCount         Int            @default(0)
-  editedBody                String? @db.LongText
-  bodyHash                  String? @db.VarChar(64)
-  approvedBodyHash          String? @db.VarChar(64)
+  editedBody                String?        @db.LongText
+  bodyHash                  String?        @db.VarChar(64)
+  approvedBodyHash          String?        @db.VarChar(64)
   approvedAt                DateTime?
   approvedByType            String?
   approvedById              String?
   rejectedAt                DateTime?
   rejectReasonCode          String?
-  rejectNotes               String? @db.Text
+  rejectNotes               String?        @db.Text
   editDistance              Int?
   warningOverrides          Json?
   createdAt                 DateTime       @default(now())
@@ -1297,7 +1352,7 @@ model DraftReview {
   actorType      String // "user" | "system"
   action         DraftReviewAction
   reasonCode     String?
-  notes          String? @db.Text
+  notes          String?           @db.Text
   meta           Json?
   bodyHashBefore String?
   bodyHashAfter  String?
@@ -1325,7 +1380,7 @@ model AiAnalysisJob {
   options         Json?
   startedAt       DateTime?
   finishedAt      DateTime?
-  lastError       String? @db.Text
+  lastError       String?             @db.Text
   createdAt       DateTime            @default(now())
 
   user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
@@ -1346,10 +1401,10 @@ model UnipileWebhookEvent {
   id             String               @id @default(cuid())
   eventType      String
   unipileEventId String?              @unique
-  rawPayloadHash String @db.VarChar(64)
+  rawPayloadHash String               @db.VarChar(64)
   processedAt    DateTime?
   status         UnipileWebhookStatus @default(RECEIVED)
-  failReason     String? @db.Text
+  failReason     String?              @db.Text
   createdAt      DateTime             @default(now())
 
   @@index([rawPayloadHash])
@@ -1364,7 +1419,7 @@ model UnmatchedInboundMessage {
   unipileChatId    String?
   providerSenderId String
   username         String?
-  text             String @db.LongText
+  text             String   @db.LongText
   receivedAt       DateTime @default(now())
   linkedLeadId     String?
   createdAt        DateTime @default(now())
@@ -1392,15 +1447,15 @@ enum NotificationLogStatus {
 }
 
 model NotificationConfig {
-  id              String                  @id @default(cuid())
-  userId          String                  @unique
-  ntfyTopic       String @db.Text
-  ntfyServerUrl   String @db.Text
-  ntfyAccessToken String? @db.LongText
-  enabled         Boolean                 @default(true)
+  id              String   @id @default(cuid())
+  userId          String   @unique
+  ntfyTopic       String   @db.Text
+  ntfyServerUrl   String   @db.Text
+  ntfyAccessToken String?  @db.LongText
+  enabled         Boolean  @default(true)
   eventTypes      Json? // JSON NotificationEventType[]; app-side filtering
-  createdAt       DateTime                @default(now())
-  updatedAt       DateTime                @updatedAt
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
 
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 }
@@ -1411,7 +1466,7 @@ model NotificationLog {
   eventType   NotificationEventType
   leadId      String?
   status      NotificationLogStatus
-  errorReason String? @db.Text
+  errorReason String?               @db.Text
   latencyMs   Int?
   createdAt   DateTime              @default(now())
 
@@ -1434,9 +1489,9 @@ model LeadEvent {
   actor      String         @default("system")
   createdAt  DateTime       @default(now())
 
-  lead     Lead      @relation(fields: [leadId], references: [id], onDelete: Cascade)
-  campaign Campaign  @relation(fields: [campaignId], references: [id], onDelete: Cascade)
-  message  Message?  @relation(fields: [messageId], references: [id], onDelete: SetNull)
+  lead     Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  message  Message? @relation(fields: [messageId], references: [id], onDelete: SetNull)
 
   @@index([leadId, createdAt])
   @@index([campaignId, eventType])
@@ -1457,29 +1512,33 @@ enum FollowUpStatus {
 }
 
 model FollowUpMessage {
-  id              String         @id @default(cuid())
-  campaignId      String
-  leadId          String
-  step            Int
-  status          FollowUpStatus @default(SCHEDULED)
-  templateText    String @db.Text
-  renderedBody    String? @db.LongText
-  dueAt           DateTime
-  sentAt          DateTime?
-  retryAt         DateTime?
-  cancelReason    String?
-  errorCode       String?
-  errorMessage    String? @db.Text
-  idempotencyKey  String         @unique @db.VarChar(191)
-  threadId        String?
-  messageId       String?
-  senderAccountId String?
-  createdAt       DateTime       @default(now())
-  updatedAt       DateTime       @updatedAt
+  id                     String         @id @default(cuid())
+  campaignId             String
+  leadId                 String
+  step                   Int
+  status                 FollowUpStatus @default(SCHEDULED)
+  templateText           String         @db.Text
+  renderedBody           String?        @db.LongText
+  dueAt                  DateTime
+  sentAt                 DateTime?
+  retryAt                DateTime?
+  cancelReason           String?
+  errorCode              String?
+  errorMessage           String?        @db.Text
+  idempotencyKey         String         @unique @db.VarChar(191)
+  threadId               String?
+  messageId              String?
+  senderAccountId        String?
+  senderUsernameSnapshot String?        @db.VarChar(191)
+  templateId             String?        @db.VarChar(191)
+  variant                String?        @db.VarChar(64)
+  renderedTextHash       String?        @db.VarChar(64)
+  createdAt              DateTime       @default(now())
+  updatedAt              DateTime       @updatedAt
 
-  campaign        Campaign       @relation(fields: [campaignId], references: [id], onDelete: Cascade)
-  lead            Lead           @relation(fields: [leadId], references: [id], onDelete: Cascade)
-  message         Message?       @relation(fields: [messageId], references: [id], onDelete: SetNull)
+  campaign Campaign @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  lead     Lead     @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  message  Message? @relation(fields: [messageId], references: [id], onDelete: SetNull)
 
   @@unique([campaignId, leadId, step])
   @@index([status, dueAt])
@@ -1487,3 +1546,99 @@ model FollowUpMessage {
   @@index([leadId])
 }
 
+/// Single source of truth for first contact across ALL campaigns of a user.
+/// The unique key makes exactly one first-message reservation possible.
+model LeadContactLedger {
+  id                     String         @id @default(cuid())
+  userId                 String
+  leadId                 String
+  campaignId             String
+  senderAccountId        String?
+  handle                 String         @db.VarChar(191)
+  handleNormalized       String         @db.VarChar(191)
+  instagramUserId        String?        @db.VarChar(191)
+  step                   String         @default("1") @db.VarChar(32)
+  channel                MessageChannel @default(INSTAGRAM)
+  status                 String         @default("RESERVED") @db.VarChar(32)
+  reason                 String?        @db.VarChar(64)
+  templateId             String?        @db.VarChar(191)
+  variant                String?        @db.VarChar(64)
+  renderedTextHash       String?        @db.VarChar(64)
+  providerMessageId      String?        @db.VarChar(191)
+  threadId               String?        @db.VarChar(191)
+  senderUsernameSnapshot String?        @db.VarChar(191)
+  reservedAt             DateTime       @default(now())
+  sentAt                 DateTime?
+  completedAt            DateTime?
+  errorCode              String?        @db.VarChar(64)
+  metadata               Json?
+  createdAt              DateTime       @default(now())
+  updatedAt              DateTime       @updatedAt
+
+  user          User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  campaign      Campaign                @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  lead          Lead                    @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  senderAccount InstagramSenderAccount? @relation(fields: [senderAccountId], references: [id], onDelete: SetNull)
+  events        LeadContactEvent[]
+
+  @@unique([userId, handleNormalized, step, channel])
+  @@unique([userId, instagramUserId, step, channel])
+  @@index([leadId])
+  @@index([campaignId])
+  @@index([senderAccountId])
+  @@index([status])
+  @@index([reservedAt])
+}
+
+/// Append-only record of every contact attempt, including blocked attempts.
+model LeadContactEvent {
+  id                     String         @id @default(cuid())
+  ledgerId               String?
+  userId                 String
+  leadId                 String
+  campaignId             String
+  senderAccountId        String?
+  senderUsernameSnapshot String?        @db.VarChar(191)
+  step                   String         @db.VarChar(32)
+  channel                MessageChannel @default(INSTAGRAM)
+  status                 String         @db.VarChar(32)
+  reason                 String?        @db.VarChar(64)
+  templateId             String?        @db.VarChar(191)
+  variant                String?        @db.VarChar(64)
+  renderedTextHash       String?        @db.VarChar(64)
+  providerMessageId      String?        @db.VarChar(191)
+  threadId               String?        @db.VarChar(191)
+  scheduledAt            DateTime?
+  sentAt                 DateTime?
+  errorCode              String?        @db.VarChar(64)
+  createdAt              DateTime       @default(now())
+
+  ledger        LeadContactLedger?      @relation(fields: [ledgerId], references: [id], onDelete: SetNull)
+  user          User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  campaign      Campaign                @relation(fields: [campaignId], references: [id], onDelete: Cascade)
+  lead          Lead                    @relation(fields: [leadId], references: [id], onDelete: Cascade)
+  senderAccount InstagramSenderAccount? @relation(fields: [senderAccountId], references: [id], onDelete: SetNull)
+
+  @@index([leadId, createdAt])
+  @@index([campaignId, createdAt])
+  @@index([senderAccountId, createdAt])
+  @@index([status])
+}
+
+/// Immutable audit for per-account sending setting changes.
+model SenderSettingsAudit {
+  id              String   @id @default(cuid())
+  userId          String
+  senderAccountId String?
+  actorUserId     String
+  action          String   @db.VarChar(32)
+  oldValues       Json?
+  newValues       Json?
+  createdAt       DateTime @default(now())
+
+  user          User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  senderAccount InstagramSenderAccount? @relation(fields: [senderAccountId], references: [id], onDelete: SetNull)
+
+  @@index([senderAccountId, createdAt])
+  @@index([userId, createdAt])
+}

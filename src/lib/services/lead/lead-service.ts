@@ -344,6 +344,11 @@ export async function listCampaignLeads(
     }
   }
 
+  const rawSender = getParam("senderAccountId") ?? getParam("contactedBySenderId");
+  if (rawSender !== undefined && rawSender.trim() && rawSender.trim() !== "all") {
+    conditions.push({ assignedSenderAccountId: rawSender.trim() });
+  }
+
   const where: Prisma.LeadWhereInput = {
     AND: conditions,
   };
@@ -376,6 +381,7 @@ export async function listCampaignLeads(
       orderBy,
       skip,
       take: limit,
+      include: { assignedSender: { select: { username: true } } },
     }),
   ]);
 
@@ -385,6 +391,9 @@ export async function listCampaignLeads(
     ...lead,
     status: lead.status === LeadStatus.QUEUED ? "SENDING" : lead.status,
     leadStatus: lead.status,
+    contactedByUsername:
+      lead.contactedByUsernameSnapshot ??
+      (lead.assignedSender?.username ? `@${lead.assignedSender.username}` : null),
   }));
 
   return {

@@ -1,3 +1,5 @@
+import { createHash } from "node:crypto";
+
 import { getPrismaClient } from "@/lib/db/prisma";
 import {
   FollowUpStatus,
@@ -16,11 +18,11 @@ import {
 } from "../lead/json-lists";
 import { addDoNotContact, DncIdentifierType } from "../compliance/dnc-service";
 import {
-  canSendNow,
   getSendGateNow,
   chooseHealthySender,
+  reserveSendSlot,
+  releaseSendSlot,
 } from "./send-gate";
-import { recordSenderAccountSent } from "./bulk-messaging-service";
 import { findConnectedSendersForDispatch } from "../senders/instagram-sender-service";
 import { updateSenderAccountRecord } from "../senders/instagram-sender-repository";
 import { getMessagingProvider } from "./messaging-service";
@@ -60,7 +62,7 @@ export const OPT_OUT_KEYWORD_PATTERNS: readonly RegExp[] = [
 export function isStopKeyword(text: string | null | undefined): boolean {
   if (!text) return false;
   // Normalize smart quotes and common apostrophes
-  const normalized = text.replace(/[’‘`]/g, "'").trim();
+  const normalized = text.replace(/[ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¾ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬Ãƒâ€¦Ã‚Â¡ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¹ÃƒÆ’Ã¢â‚¬Â¦ÃƒÂ¢Ã¢â€šÂ¬Ã…â€œ`]/g, "'").trim();
 
   // 1. Check for false-positive phrases containing "stop" in non-opt-out contexts
   const hasFalsePositive = STOP_FALSE_POSITIVE_PATTERNS.some((pattern) =>
@@ -78,7 +80,7 @@ export function isStopKeyword(text: string | null | undefined): boolean {
     return true;
   }
 
-  // 3. Standalone or word-bounded "stop" (e.g. "STOP", "stop!", "Please stop", "stop 🛑")
+  // 3. Standalone or word-bounded "stop" (e.g. "STOP", "stop!", "Please stop", "stop ÃƒÆ’Ã†â€™Ãƒâ€ Ã¢â‚¬â„¢ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â°ÃƒÆ’Ã†â€™ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¦ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚Â¸ÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Å¡Ãƒâ€šÃ‚ÂºÃƒÆ’Ã†â€™Ãƒâ€šÃ‚Â¢ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â€šÂ¬Ã…Â¡Ãƒâ€šÃ‚Â¬ÃƒÆ’Ã¢â‚¬Â¹Ãƒâ€¦Ã¢â‚¬Å“")
   return /\bstop\b/i.test(normalized);
 }
 
@@ -488,6 +490,7 @@ export async function dispatchDueFollowUps(options?: {
           status: true,
           followUpEnabled: true,
           followUpCount: true,
+          followUpAllowSenderSwitch: true,
         },
       },
       lead: {
@@ -500,6 +503,7 @@ export async function dispatchDueFollowUps(options?: {
           city: true,
           location: true,
           status: true,
+          assignedSenderAccountId: true,
         },
       },
     },
@@ -652,6 +656,7 @@ export async function dispatchDueFollowUps(options?: {
     // Resolve Sender Account
     let sender: {
       id: string;
+      username: string;
       status: string;
       pausedUntil: Date | null;
       connectionMethod?: string | null;
@@ -659,16 +664,27 @@ export async function dispatchDueFollowUps(options?: {
     if (item.senderAccountId) {
       sender = await prisma.instagramSenderAccount.findFirst({
         where: { id: item.senderAccountId },
-        select: { id: true, status: true, pausedUntil: true, connectionMethod: true },
+        select: { id: true, username: true, status: true, pausedUntil: true, connectionMethod: true },
       });
     }
 
-    if (!sender || sender.status !== "CONNECTED") {
+    const stickySenderId = item.senderAccountId ?? lead.assignedSenderAccountId ?? null;
+    const allowSenderSwitch = campaign.followUpAllowSenderSwitch === true ||
+      process.env.FOLLOWUP_ALLOW_SENDER_SWITCH === "true";
+    if (stickySenderId && !sender) {
+      sender = await prisma.instagramSenderAccount.findFirst({
+        where: { id: stickySenderId },
+        select: { id: true, username: true, status: true, pausedUntil: true, connectionMethod: true },
+      });
+    }
+
+    if ((!sender || sender.status !== "CONNECTED") && allowSenderSwitch) {
       const connectedSenders = await findConnectedSendersForDispatch(campaign.userId);
       const chosen = chooseHealthySender(connectedSenders);
       if (chosen) {
         sender = {
           id: chosen.id,
+          username: chosen.username,
           status: chosen.status,
           pausedUntil: chosen.pausedUntil,
           connectionMethod: chosen.connectionMethod,
@@ -676,35 +692,42 @@ export async function dispatchDueFollowUps(options?: {
       }
     }
 
-    if (!sender || (sender.pausedUntil && now.getTime() < sender.pausedUntil.getTime())) {
-      // No sender available or paused; defer
+    if (
+      !sender ||
+      sender.status !== "CONNECTED" ||
+      (sender.pausedUntil && now.getTime() < sender.pausedUntil.getTime())
+    ) {
+      // Never switch accounts automatically: wait for the sticky account.
+      await prisma.followUpMessage.update({
+        where: { id: item.id },
+        data: {
+          retryAt: new Date(now.getTime() + 3600000),
+          errorMessage: "Waiting for the assigned sender account to become available.",
+        },
+      });
       deferred++;
       continue;
     }
 
-    // Send Gate Check (daily/hourly cap, warmup, working hours in lead timezone)
-    const gateCheck = await canSendNow({
+    // Shared send gate reservation (caps, gap, hours, warm-up, idempotency)
+    const reservation = await reserveSendSlot({
       senderAccountId: sender.id,
       leadId: lead.id,
       lead,
       campaignId: campaign.id,
+      step: `followup_${item.id}`,
+      messageText: item.renderedBody,
       now,
     });
 
-    if (!gateCheck.allowed) {
-      if (
-        gateCheck.reason === "OUTSIDE_WORKING_HOURS" ||
-        gateCheck.reason === "DAILY_CAP_REACHED" ||
-        gateCheck.reason === "SENDING_DISABLED"
-      ) {
-        await prisma.followUpMessage.update({
-          where: { id: item.id },
-          data: {
-            retryAt: gateCheck.retryAt ?? new Date(now.getTime() + 3600000),
-            errorMessage: `Deferred: ${gateCheck.reason}`,
-          },
-        });
-      }
+    if (!reservation.success) {
+      await prisma.followUpMessage.update({
+        where: { id: item.id },
+        data: {
+          retryAt: reservation.retryAt ?? new Date(now.getTime() + 3600000),
+          errorMessage: `Deferred: ${reservation.reason}`,
+        },
+      });
       deferred++;
       continue;
     }
@@ -728,9 +751,6 @@ export async function dispatchDueFollowUps(options?: {
       });
 
       if (sendResult.success) {
-        // Record send in gate & sender
-        recordSenderAccountSent(sender.id, now.getTime());
-
         // Create Message row
         const createdMessage = await prisma.message.create({
           data: {
@@ -744,6 +764,10 @@ export async function dispatchDueFollowUps(options?: {
             providerMessageId: sendResult.providerMessageId || null,
             sentAt: now,
             idempotencyKey: item.idempotencyKey,
+            senderUsernameSnapshot: sender.username,
+            step: String(item.step + 1),
+            renderedTextHash: createHash("sha256").update(item.renderedBody).digest("hex"),
+            threadId: threadId ?? null,
           },
         });
 
@@ -755,6 +779,8 @@ export async function dispatchDueFollowUps(options?: {
             sentAt: now,
             messageId: createdMessage.id,
             senderAccountId: sender.id,
+            senderUsernameSnapshot: sender.username,
+            renderedTextHash: createHash("sha256").update(item.renderedBody).digest("hex"),
             errorMessage: null,
             errorCode: null,
           },
@@ -806,6 +832,10 @@ export async function dispatchDueFollowUps(options?: {
               errorMessage: "Delivery unconfirmed (timed out). No auto-retry to prevent duplicate sends.",
             },
           });
+          await releaseSendSlot(reservation.reservationId, {
+            status: "UNKNOWN",
+            errorCode: "UNKNOWN",
+          }).catch(() => undefined);
           continue;
         }
 
@@ -826,6 +856,10 @@ export async function dispatchDueFollowUps(options?: {
           });
         }
 
+        await releaseSendSlot(reservation.reservationId, {
+          status: "FAILED",
+          errorCode: classified.code,
+        }).catch(() => undefined);
         await prisma.followUpMessage.update({
           where: { id: item.id },
           data: {

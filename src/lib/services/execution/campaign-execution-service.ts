@@ -1920,13 +1920,8 @@ export async function dispatchExecution(
         dispatchErrorMessage = err instanceof Error ? err.message : String(err);
       }
     } else {
-      const dispatch = await provider.sendMessage({
-        profileUrl: item.lead.profileUrl,
-        message: item.messageText,
-        senderAccountId: undefined,
-      });
-      dispatchSuccess = dispatch.success;
-      dispatchErrorMessage = dispatch.success ? null : (dispatch.error?.message ?? "Failed");
+      dispatchSuccess = false;
+      dispatchErrorMessage = "No sender account assigned; DM dispatch requires the shared send path.";
     }
 
     const itemStatus = dispatchSuccess ? ExecutionItemStatus.SENT : ExecutionItemStatus.FAILED;

@@ -52,7 +52,7 @@ function check(cond: boolean, name: string, detail?: string) {
   }
 }
 
-/** Controlled Playwright replacement â€” no real browser or Instagram traffic. */
+/** Controlled Playwright replacement ÃƒÆ’Ã‚Â¢ÃƒÂ¢Ã¢â‚¬Å¡Ã‚Â¬ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â no real browser or Instagram traffic. */
 class MockSession implements SenderBrowserSession {
   readonly id = `mock_${Math.random().toString(36).slice(2, 8)}`;
   readonly context = {} as BrowserContext;
@@ -434,8 +434,8 @@ async function main() {
   }
   check(blockedByHours, "send gate blocks dispatch when clock is OUTSIDE_WORKING_HOURS (3 AM)");
   check(retryAtSet, "OUTSIDE_WORKING_HOURS error message includes retryAt time");
-  fakeClockTime = new Date("2026-06-10T14:05:00Z");
-  setSendGateClock(() => fakeClockTime); // restore working hours
+  fakeClockTime = new Date("2026-06-10T14:20:00Z");
+  setSendGateClock(() => fakeClockTime); // restore working hours and clear cooldown
 
   // ---- 10. Bulk job stores sender and worker uses it ----
   console.log("\n[10] Bulk job sender binding + worker");
@@ -478,7 +478,7 @@ async function main() {
 
   // ---- 11. CAPTCHA / rate limit causes safe pause, never SENT ----
   console.log("\n[11] CAPTCHA causes safe pause");
-  fakeClockTime = new Date(fakeClockTime.getTime() + 60_000);
+  fakeClockTime = new Date(fakeClockTime.getTime() + 20 * 60_000);
   const leadCaptcha = await prisma.lead.create({
     data: {
       campaignId: campaignA.id,
@@ -630,7 +630,7 @@ async function main() {
     manager.getManagedSessionInfo(senderTimeout.id) !== null,
     "[D] manual-login session tracked before timeout",
   );
-  await sleep(280);
+  await sleep(900);
   check(
     manager.getManagedSessionInfo(senderTimeout.id) === null,
     "[D] manual-login safety timeout eventually closes the browser",

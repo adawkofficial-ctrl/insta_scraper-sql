@@ -12,10 +12,10 @@ let failed = 0;
 
 function assert(condition: boolean, name: string) {
   if (condition) {
-    console.log(`  ✅ PASS: ${name}`);
+    console.log(`  âœ… PASS: ${name}`);
     passed++;
   } else {
-    console.error(`  ❌ FAIL: ${name}`);
+    console.error(`  âŒ FAIL: ${name}`);
     failed++;
   }
 }
@@ -311,7 +311,7 @@ async function main() {
       typeof jsonStatus.authenticated === "boolean",
       "GET /api/messaging/status returns accurate provider and authenticated status",
     );
-    console.log(`    ℹ️ Current Playwright Session Status: ${jsonStatus.status} (authenticated: ${jsonStatus.authenticated})`);
+    console.log(`    â„¹ï¸ Current Playwright Session Status: ${jsonStatus.status} (authenticated: ${jsonStatus.authenticated})`);
   }
 
   console.log("\n--- 9. Single-Lead Dispatch & Audit Record Creation (Requirements 1, 14, 15, 16, 21) ---");
@@ -325,7 +325,7 @@ async function main() {
       body: JSON.stringify({
         campaignId: campaignA.id,
         leadId: leadA.id,
-        message: "Hi there, this is a test single outreach message!",
+        message: "Hi Lead Alpha One, this is a test single outreach message!",
       }),
     });
 
@@ -418,13 +418,13 @@ async function main() {
       body: JSON.stringify({
         campaignId: campaignA.id,
         leadId: leadA.id,
-        message: "Hi there, this is a test single outreach message!",
+        message: "Hi Lead Alpha One, this is a test single outreach message!",
       }),
     });
 
     const dupJson = (await dupRes.json()) as any;
     // Since audit recorded previous attempt, if previous was SENT/SENDING or rapid:
-    console.log(`    ℹ️ Duplicate send response status: ${dupRes.status}, code: ${dupJson.error?.code || "none"}`);
+    console.log(`    â„¹ï¸ Duplicate send response status: ${dupRes.status}, code: ${dupJson.error?.code || "none"}`);
     assert(
       dupRes.status === 409 || dupRes.status === 200,
       "Duplicate protection safely guards rapid repetitive identical dispatch attempts",
@@ -457,7 +457,7 @@ async function main() {
       },
       body: JSON.stringify({
         leadId: leadA2.id,
-        message: "Test message through existing test endpoint",
+        message: "Hi Lead Alpha Two, test message through existing test endpoint",
       }),
     });
     const testJson = (await testRes.json()) as any;

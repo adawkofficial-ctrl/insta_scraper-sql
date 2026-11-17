@@ -3,6 +3,7 @@ import "server-only";
 import { getPrismaClient } from "@/lib/db/prisma";
 import {
   CampaignStatus,
+  DncChannel,
   DraftKind,
   DraftStatus,
   MessageChannel,
@@ -19,6 +20,7 @@ import {
 import { logger } from "@/lib/logger";
 import { resolveSenderForDispatch } from "@/lib/services/senders/instagram-sender-service";
 import { evaluateDraftDispatch } from "./draft-dispatch-guard";
+import { checkLeadSuppression } from "../compliance";
 import { classifyMessagingError, type ClassifiedErrorCode } from "./error-classifier";
 import { activeDispatches, getMessagingProvider } from "./messaging-service";
 import {

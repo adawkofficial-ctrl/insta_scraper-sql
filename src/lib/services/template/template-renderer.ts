@@ -3,6 +3,7 @@ export type TemplateLeadContext = {
   fullName?: string | null;
   biography?: string | null;
   category?: string | null;
+  city?: string | null;
   businessCategory?: string | null;
   businessCategoryName?: string | null;
   followersCount?: number | null;
@@ -30,7 +31,11 @@ export type TemplateVariableDefinition = {
 export const TEMPLATE_VARIABLE_DEFINITIONS: TemplateVariableDefinition[] = [
   { name: "username", label: "Username", description: "Instagram handle", sample: "natgeo" },
   { name: "fullName", label: "Full Name", description: "Lead's full name", sample: "National Geographic" },
-  { name: "firstName", label: "First Name", description: "First name (falls back to username)", sample: "National" },
+  { name: "firstName", label: "First Name", description: "First name (person names only; falls back to username for legacy drafts)", sample: "National" },
+  { name: "name", label: "Name", description: "Resolved contact or business name", sample: "National Geographic" },
+  { name: "businessName", label: "Business Name", description: "Verified business name", sample: "National Geographic" },
+  { name: "city", label: "City", description: "Lead city", sample: "Washington" },
+  { name: "specialty", label: "Specialty", description: "Specialty derived from category or bio", sample: "Media" },
   { name: "biography", label: "Biography", description: "Instagram bio text", sample: "Exploring the world since 1888" },
   { name: "followersCount", label: "Followers", description: "Follower count", sample: "280000000" },
   { name: "followingCount", label: "Following", description: "Following count", sample: "150" },
@@ -63,7 +68,27 @@ export const SUPPORTED_VARIABLES_SET = new Set(
   SUPPORTED_TEMPLATE_VARIABLES.map((variable) => variable.toLowerCase()),
 );
 
-const VARIABLE_PATTERN = /{{\s*([a-zA-Z0-9_]+)\s*}}/g;
+function deriveSpecialty(category: string, biography: string): string {
+  const text = `${category} ${biography}`.toLowerCase();
+  const known = [
+    "orthodontics",
+    "cosmetic dentistry",
+    "dental implants",
+    "dentistry",
+    "dental care",
+    "physiotherapy",
+    "chiropractic",
+    "real estate",
+    "fitness",
+    "beauty",
+    "marketing",
+    "accounting",
+    "legal",
+  ];
+  return known.find((item) => text.includes(item)) ?? category.trim();
+}
+
+const VARIABLE_PATTERN = /\{\{?\s*([a-zA-Z0-9_]+)\s*\}?\}/g;
 
 /** Returns the distinct variable names used in a template body. */
 export function extractTemplateVariables(text: string): string[] {
@@ -97,7 +122,7 @@ export function resolveFirstName(
   fallback = "there",
 ): string {
   if (fullName && fullName.trim().length > 0) {
-    const cleaned = fullName.trim().split(/[\s|•\-,]+/)[0];
+    const cleaned = fullName.trim().split(/[\s|ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢\-,]+/)[0];
     if (cleaned && cleaned.length > 0) {
       return cleaned;
     }
@@ -175,6 +200,8 @@ function buildVariableMap(
   }
 
   const sender = senderName?.trim() || "";
+  const city = lead.city?.trim() || "";
+  const specialty = deriveSpecialty(category, biography);
 
   return {
     username,
@@ -192,6 +219,10 @@ function buildVariableMap(
     services: campaignDescription,
     description: campaignDescription,
     sendername: sender,
+    name: fullName,
+    businessname: fullName,
+    city,
+    specialty,
     // aliases
     bio: biography,
     category,
@@ -208,7 +239,7 @@ export type RenderedTemplate = {
 };
 
 /**
- * Centralized, deterministic renderer. Plain string replacement only —
+ * Centralized, deterministic renderer. Plain string replacement only ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â
  * no eval, no expressions, no arbitrary database access.
  */
 export function renderTemplateDetailed(

@@ -80,6 +80,11 @@ export type Lead = {
   dedupMatchedBy?: string | null;
   duplicateOf?: { id: string; username: string } | null;
   possibleDuplicateOf?: { id: string; username: string } | null;
+  assignedSenderAccountId?: string | null;
+  firstContactedAt?: string | null;
+  lastContactedAt?: string | null;
+  contactedByUsername?: string | null;
+  outreachCount?: number | null;
   _count?: { sightings: number };
 
   /** Quality Score & Chain Detection */

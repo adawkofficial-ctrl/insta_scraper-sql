@@ -13,10 +13,10 @@ let failed = 0;
 
 function assert(condition: boolean, name: string, detail?: string) {
   if (condition) {
-    console.log(`  ✅ PASS: ${name}`);
+    console.log(`  âœ… PASS: ${name}`);
     passed++;
   } else {
-    console.error(`  ❌ FAIL: ${name} ${detail ? `(${detail})` : ""}`);
+    console.error(`  âŒ FAIL: ${name} ${detail ? `(${detail})` : ""}`);
     failed++;
   }
 }
@@ -534,7 +534,7 @@ async function main() {
     body: JSON.stringify({
       campaignId: campaignA.id,
       leadId: leadSingle.id,
-      message: "Single send regression verification message",
+      message: "Hi Lead Single, single send regression verification message",
     }),
   });
   const singleSendData = await singleSendRes.json() as any;

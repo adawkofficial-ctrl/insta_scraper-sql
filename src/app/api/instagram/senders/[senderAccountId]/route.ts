@@ -50,15 +50,37 @@ export async function PATCH(
       return NextResponse.json({ sender });
     }
 
-    const sender = await updateSenderSettings(senderAccountId, user.id, {
-      dailyCap: typeof body.dailyCap === "number" ? body.dailyCap : body.dailyCap === null ? null : undefined,
-      hourlyCap: typeof body.hourlyCap === "number" ? body.hourlyCap : body.hourlyCap === null ? null : undefined,
-      customMinGapSeconds: typeof body.customMinGapSeconds === "number" ? body.customMinGapSeconds : body.customMinGapSeconds === null ? null : undefined,
-      customMaxGapSeconds: typeof body.customMaxGapSeconds === "number" ? body.customMaxGapSeconds : body.customMaxGapSeconds === null ? null : undefined,
-      timezone: typeof body.timezone === "string" ? body.timezone : undefined,
-      workingHoursStart: typeof body.workingHoursStart === "number" ? body.workingHoursStart : undefined,
-      workingHoursEnd: typeof body.workingHoursEnd === "number" ? body.workingHoursEnd : undefined,
-    });
+    const sender = await updateSenderSettings(
+      senderAccountId,
+      user.id,
+      {
+        messagesPerDay:
+          typeof body.messagesPerDay === "number"
+            ? body.messagesPerDay
+            : typeof body.dailyCap === "number"
+              ? body.dailyCap
+              : undefined,
+        minutesBetweenMessages:
+          typeof body.minutesBetweenMessages === "number"
+            ? body.minutesBetweenMessages
+            : typeof body.customMinGapSeconds === "number"
+              ? Math.round(body.customMinGapSeconds / 60)
+              : undefined,
+        jitterMinutes: typeof body.jitterMinutes === "number" ? body.jitterMinutes : undefined,
+        timezone: typeof body.timezone === "string" ? body.timezone : undefined,
+        workingHoursStart:
+          typeof body.workingHoursStart === "number" ? body.workingHoursStart : undefined,
+        workingHoursEnd:
+          typeof body.workingHoursEnd === "number" ? body.workingHoursEnd : undefined,
+        warmUpEnabled:
+          typeof body.warmupEnabled === "boolean"
+            ? body.warmupEnabled
+            : typeof body.warmUpEnabled === "boolean"
+              ? body.warmUpEnabled
+              : undefined,
+      },
+      user.id,
+    );
     return NextResponse.json({ sender });
   } catch (error) {
     return handleRouteError(request, error);

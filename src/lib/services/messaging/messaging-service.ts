@@ -31,6 +31,14 @@ import {
 } from "./send-gate";
 import { extractDomainParts } from "../discovery/name-website-matcher";
 import { scheduleFollowUpsForLead } from "./follow-up-service";
+import {
+  markContactDeliveryStatus,
+  markContactSent,
+  normalizeContactHandle,
+  recordContactEvent,
+  reserveFirstContact,
+} from "./contact-ledger";
+import { validateFirstMessageText } from "./message-personalization";
 
 const MAX_MESSAGE_LENGTH = 1000;
 
@@ -184,6 +192,18 @@ export async function sendSingleMessage(
     typeof record.promptVersion === "string" && record.promptVersion.trim().length > 0
       ? record.promptVersion.trim()
       : undefined;
+  const templateId =
+    typeof record.templateId === "string" && record.templateId.trim().length > 0
+      ? record.templateId.trim()
+      : null;
+  const variant =
+    typeof record.variant === "string" && record.variant.trim().length > 0
+      ? record.variant.trim()
+      : null;
+  const scheduledAt =
+    typeof record.scheduledAt === "string" && record.scheduledAt.trim().length > 0
+      ? new Date(record.scheduledAt)
+      : null;
 
   // 5. In-flight concurrency guard (prevent double-clicks & simultaneous sends)
   if (activeDispatches.has(leadId)) {
@@ -203,6 +223,8 @@ export async function sendSingleMessage(
         select: {
           id: true,
           userId: true,
+          requireNameInFirstMessage: true,
+          allowNeutralGreeting: true,
         },
       },
     },
@@ -300,9 +322,10 @@ export async function sendSingleMessage(
 
   // 6b. Resolve the authoritative Instagram sender account. The client-provided
   // id is never trusted: it must belong to the authenticated user.
-  const requestedSenderAccountId =
-    typeof record.senderAccountId === "string" &&
-    record.senderAccountId.trim().length > 0
+  // Sticky assignment: a lead already owned by an account must never switch.
+  const requestedSenderAccountId = lead.assignedSenderAccountId
+    ? lead.assignedSenderAccountId
+    : typeof record.senderAccountId === "string" && record.senderAccountId.trim().length > 0
       ? record.senderAccountId.trim()
       : null;
 
@@ -418,6 +441,38 @@ export async function sendSingleMessage(
     }
   }
 
+  const stepValue =
+    typeof record.step === "string" && record.step.trim()
+      ? record.step.trim()
+      : String(currentAttemptNumber);
+
+  if (isFirstAttempt) {
+    const firstMessage = validateFirstMessageText({
+      text: messageText,
+      lead,
+      requireName: lead.campaign?.requireNameInFirstMessage !== false,
+      allowNeutralGreeting: lead.campaign?.allowNeutralGreeting === true,
+    });
+    if (!firstMessage.ok) {
+      await recordContactEvent({
+        userId: effectiveUserId,
+        leadId: lead.id,
+        campaignId: lead.campaignId,
+        senderAccountId: senderAccountId ?? null,
+        senderUsername: resolvedSender?.username ?? null,
+        step: stepValue,
+        channel: MessageChannel.INSTAGRAM,
+        status: "BLOCKED",
+        reason: firstMessage.code,
+        templateId,
+        variant,
+        renderedTextHash: contentHash,
+        scheduledAt,
+      }).catch(() => undefined);
+      throw new BadRequestError(firstMessage.code, firstMessage.reason);
+    }
+  }
+
   // Step 1 & 2: Shared Send Gate reservation (atomic DB counters & idempotency)
   let activeReservationId =
     typeof record.reservationId === "string" && record.reservationId.trim()
@@ -425,16 +480,12 @@ export async function sendSingleMessage(
       : undefined;
 
   if (!activeReservationId && senderAccountId) {
-    const step = typeof record.step === "string" && record.step.trim()
-      ? record.step.trim()
-      : String(currentAttemptNumber);
-
     const getNow = options?.getNow ?? getSendGateNow;
     const reservation = await reserveSendSlot({
       senderAccountId,
       campaignId: lead.campaignId,
       leadId: lead.id,
-      step,
+      step: stepValue,
       messageText,
       lead,
       now: getNow(),
@@ -467,6 +518,47 @@ export async function sendSingleMessage(
     activeReservationId = reservation.reservationId;
   }
 
+  // Cross-campaign first-contact ledger: exactly one reservation per handle.
+  let contactLedgerId: string | null = null;
+  if (
+    isFirstAttempt &&
+    lead.username &&
+    senderAccountId &&
+    resolvedSender &&
+    lead.campaign
+  ) {
+    const ledger = await reserveFirstContact({
+      userId: effectiveUserId,
+      leadId: lead.id,
+      campaignId: lead.campaignId,
+      handle: normalizeContactHandle(lead.username),
+      instagramUserId: lead.instagramUserId,
+      senderAccountId,
+      senderUsername: resolvedSender.username,
+      step: "1",
+      channel: MessageChannel.INSTAGRAM,
+      templateId,
+      variant,
+      renderedTextHash: contentHash,
+      scheduledAt,
+    });
+    if (ledger.kind === "blocked") {
+      if (activeReservationId) {
+        await releaseSendSlot(activeReservationId, {
+          status: "FAILED",
+          errorCode: ledger.reason,
+        }).catch(() => undefined);
+      }
+      throw new ConflictError(
+        ledger.reason,
+        `ALREADY_CONTACTED: this Instagram handle was first contacted by @${
+          ledger.contactedByUsername ?? "an account"
+        } on ${ledger.contactedAt?.toISOString() ?? "an earlier run"}.`,
+      );
+    }
+    contactLedgerId = ledger.ledgerId;
+  }
+
   const provider = getMessagingProvider(resolvedSender);
 
   // 12. Create initial MessageAttempt record in SENDING status
@@ -486,6 +578,13 @@ export async function sendSingleMessage(
       contentHash,
       startedAt: new Date(),
       senderAccountId,
+      senderUsernameSnapshot: resolvedSender?.username ?? null,
+      step: stepValue,
+      channel: MessageChannel.INSTAGRAM,
+      templateId,
+      variant,
+      renderedTextHash: contentHash,
+      scheduledAt,
     },
   });
 
@@ -638,11 +737,46 @@ export async function sendSingleMessage(
       contentHash,
       sentAt: finalStatus === MessageStatus.SENT ? completedAt : null,
       senderAccountId,
+      senderUsernameSnapshot: resolvedSender?.username ?? null,
+      step: stepValue,
+      templateId,
+      variant,
+      renderedTextHash: contentHash,
+      scheduledAt,
       draftId: optionalDraftId ?? null,
       aiGenerated,
       promptVersion: promptVersion ?? null,
     },
   });
+
+  if (contactLedgerId) {
+    if (finalStatus === MessageStatus.SENT) {
+      await markContactSent({
+        ledgerId: contactLedgerId,
+        providerMessageId: dispatchResult.providerMessageId ?? null,
+        threadId: null,
+        sentAt: completedAt,
+        renderedTextHash: contentHash,
+      }).catch((err) => {
+        logger.warn("[CONTACT_LEDGER] failed to mark SENT", {
+          ledgerId: contactLedgerId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+    } else {
+      await markContactDeliveryStatus({
+        ledgerId: contactLedgerId,
+        status: finalStatus === MessageStatus.UNKNOWN ? "UNKNOWN" : "FAILED",
+        errorCode: classifiedCode,
+        completedAt,
+      }).catch((err) => {
+        logger.warn("[CONTACT_LEDGER] failed to mark delivery status", {
+          ledgerId: contactLedgerId,
+          error: err instanceof Error ? err.message : String(err),
+        });
+      });
+    }
+  }
 
   // 16. Update MessageAttempt record with final status, linking to Message
   await prisma.messageAttempt.update({

@@ -48,10 +48,16 @@ import {
 
 import {
   calculateWarmupCap,
-  getSenderDailyHardMax,
   getSenderHourlyCap,
   getSenderHourlyHardMax,
 } from "../messaging/send-gate";
+import {
+  buildSenderSettingsPreview,
+  calculateScheduleOffsetSeconds,
+  getHourlyCapFromGap,
+  SENDER_SETTINGS_DEFAULTS,
+  validateSenderSettings,
+} from "./sender-settings";
 
 const MAX_DISPLAY_NAME_LENGTH = 100;
 const INSTAGRAM_USERNAME_PATTERN =
@@ -91,6 +97,22 @@ export type SenderAccountDto = {
   timezone: string;
   workingHoursStart: number;
   workingHoursEnd: number;
+  messagesPerDay: number;
+  minutesBetweenMessages: number;
+  jitterMinutes: number;
+  warmupEnabled: boolean;
+  scheduleOffsetSeconds: number;
+  settings: {
+    effectiveMessagesPerDay: number;
+    capacityFromGap: number;
+    warmupCap: number;
+    hardMax: number;
+    limitingFactor: string;
+    warmupStage: string;
+    warmupUntil: string | null;
+    preview: string;
+    riskWarnings: string[];
+  };
   nextAllowedSendAt: string | null;
 };
 
@@ -118,6 +140,28 @@ export function toSenderAccountDto(
     nextAllowedSendAt = record.pausedUntil.toISOString();
   }
 
+  const messagesPerDay = record.dailyCap ?? SENDER_SETTINGS_DEFAULTS.messagesPerDay;
+  const minGapSeconds = record.customMinGapSeconds ?? SENDER_SETTINGS_DEFAULTS.minutesBetweenMessages * 60;
+  const maxGapSeconds =
+    record.customMaxGapSeconds ?? minGapSeconds + SENDER_SETTINGS_DEFAULTS.jitterMinutes * 60;
+  const minutesBetweenMessages = Math.max(1, Math.round(minGapSeconds / 60));
+  const jitterMinutes = Math.max(0, Math.round((maxGapSeconds - minGapSeconds) / 60));
+  const settingsPreview = buildSenderSettingsPreview({
+    messagesPerDay,
+    minutesBetweenMessages,
+    workingHoursStart: record.workingHoursStart ?? 9,
+    workingHoursEnd: record.workingHoursEnd ?? 18,
+    warmupStartedAt: record.warmupStartedAt,
+    warmupEnabled: record.warmupEnabled,
+  });
+  const riskWarnings: string[] = [];
+  if (messagesPerDay > 25) {
+    riskWarnings.push("Above the recommended 25 messages/day. Instagram may restrict the account.");
+  }
+  if (minutesBetweenMessages < 8) {
+    riskWarnings.push("Below the recommended 8-minute gap. Rapid bursts increase checkpoint risk.");
+  }
+
   return {
     id: record.id,
     username: record.username,
@@ -136,7 +180,7 @@ export function toSenderAccountDto(
     sentThisHour: record.sentThisHour ?? 0,
     totalSent: record.totalSent ?? 0,
     dailyCap: record.dailyCap ?? null,
-    effectiveDailyCap: warmup.dailyCap,
+    effectiveDailyCap: settingsPreview.effective.effectiveMessagesPerDay,
     hourlyCap: record.hourlyCap ?? null,
     effectiveHourlyCap,
     warmupStage: warmup.stage,
@@ -150,6 +194,16 @@ export function toSenderAccountDto(
     timezone: record.timezone ?? "UTC",
     workingHoursStart: record.workingHoursStart ?? 9,
     workingHoursEnd: record.workingHoursEnd ?? 18,
+    messagesPerDay,
+    minutesBetweenMessages,
+    jitterMinutes,
+    warmupEnabled: record.warmupEnabled,
+    scheduleOffsetSeconds: record.scheduleOffsetSeconds ?? 0,
+    settings: {
+      ...settingsPreview.effective,
+      preview: settingsPreview.preview,
+      riskWarnings,
+    },
     nextAllowedSendAt,
   };
 }
@@ -353,6 +407,7 @@ export async function createSenderAccount(
     displayName = trimmed.length > 0 ? trimmed : null;
   }
 
+  const existingCount = await countSenderAccountsForUser(userId);
   const created = await createSenderAccountRecord({
     userId,
     username,
@@ -360,6 +415,14 @@ export async function createSenderAccount(
     sessionType: "PERSISTENT_PROFILE",
     sessionPath: buildSenderSessionPath(userId, "placeholder"),
     status: "CONNECTING",
+    dailyCap: SENDER_SETTINGS_DEFAULTS.messagesPerDay,
+    customMinGapSeconds: SENDER_SETTINGS_DEFAULTS.minutesBetweenMessages * 60,
+    customMaxGapSeconds:
+      (SENDER_SETTINGS_DEFAULTS.minutesBetweenMessages + SENDER_SETTINGS_DEFAULTS.jitterMinutes) * 60,
+    warmupEnabled: SENDER_SETTINGS_DEFAULTS.warmUpEnabled,
+    scheduleOffsetSeconds: calculateScheduleOffsetSeconds(existingCount),
+    workingHoursStart: SENDER_SETTINGS_DEFAULTS.workingHoursStart,
+    workingHoursEnd: SENDER_SETTINGS_DEFAULTS.workingHoursEnd,
   });
 
   // Rebuild the session path now that the id is known.
@@ -1283,18 +1346,25 @@ export async function findConnectedSendersForDispatch(
   return findConnectedSendersForUser(userId);
 }
 
+export type SenderSettingsUpdateInput = {
+  messagesPerDay?: number | null;
+  minutesBetweenMessages?: number | null;
+  jitterMinutes?: number | null;
+  workingHoursStart?: number;
+  workingHoursEnd?: number;
+  warmUpEnabled?: boolean;
+  timezone?: string;
+  // Legacy aliases accepted from older clients.
+  dailyCap?: number | null;
+  customMinGapSeconds?: number | null;
+  customMaxGapSeconds?: number | null;
+};
+
 export async function updateSenderSettings(
   senderAccountId: string,
   userId: string,
-  input: {
-    dailyCap?: number | null;
-    hourlyCap?: number | null;
-    customMinGapSeconds?: number | null;
-    customMaxGapSeconds?: number | null;
-    timezone?: string;
-    workingHoursStart?: number;
-    workingHoursEnd?: number;
-  },
+  input: SenderSettingsUpdateInput,
+  actorUserId: string = userId,
 ): Promise<SenderAccountDto> {
   const owned = await findSenderAccountOwned(senderAccountId, userId);
   if (!owned) {
@@ -1304,38 +1374,91 @@ export async function updateSenderSettings(
     );
   }
 
-  const hardMax = getSenderDailyHardMax();
-  if (input.dailyCap !== undefined && input.dailyCap !== null) {
-    if (typeof input.dailyCap !== "number" || input.dailyCap < 1 || input.dailyCap > hardMax) {
-      throw new BadRequestError(
-        "INVALID_DAILY_CAP",
-        `Daily cap must be between 1 and ${hardMax}.`,
-      );
-    }
+  const currentMinGap = owned.customMinGapSeconds ?? SENDER_SETTINGS_DEFAULTS.minutesBetweenMessages * 60;
+  const currentMessages = owned.dailyCap ?? SENDER_SETTINGS_DEFAULTS.messagesPerDay;
+  const validation = validateSenderSettings({
+    messagesPerDay: input.messagesPerDay ?? input.dailyCap ?? currentMessages,
+    minutesBetweenMessages:
+      input.minutesBetweenMessages ??
+      (input.customMinGapSeconds !== undefined && input.customMinGapSeconds !== null
+        ? Math.round(input.customMinGapSeconds / 60)
+        : Math.round(currentMinGap / 60)),
+    jitterMinutes:
+      input.jitterMinutes ??
+      (input.customMaxGapSeconds !== undefined &&
+      input.customMinGapSeconds !== undefined &&
+      input.customMaxGapSeconds !== null &&
+      input.customMinGapSeconds !== null
+        ? Math.max(0, Math.round((input.customMaxGapSeconds - input.customMinGapSeconds) / 60))
+        : undefined),
+    workingHoursStart: input.workingHoursStart ?? owned.workingHoursStart,
+    workingHoursEnd: input.workingHoursEnd ?? owned.workingHoursEnd,
+    warmUpEnabled: input.warmUpEnabled ?? owned.warmupEnabled,
+  });
+  if (!validation.ok) {
+    throw new BadRequestError(validation.code, validation.message);
   }
+  const value = validation.value;
 
-  const hourlyHardMax = getSenderHourlyHardMax();
-  if (input.hourlyCap !== undefined && input.hourlyCap !== null) {
-    if (typeof input.hourlyCap !== "number" || input.hourlyCap < 1 || input.hourlyCap > hourlyHardMax) {
-      throw new BadRequestError(
-        "INVALID_HOURLY_CAP",
-        `Hourly cap must be between 1 and ${hourlyHardMax}.`,
-      );
-    }
-  }
+  const oldValues = {
+    messagesPerDay: currentMessages,
+    minutesBetweenMessages: Math.round(currentMinGap / 60),
+    jitterMinutes: Math.max(
+      0,
+      Math.round(
+        ((owned.customMaxGapSeconds ?? currentMinGap + SENDER_SETTINGS_DEFAULTS.jitterMinutes * 60) -
+          currentMinGap) /
+          60,
+      ),
+    ),
+    workingHoursStart: owned.workingHoursStart,
+    workingHoursEnd: owned.workingHoursEnd,
+    warmUpEnabled: owned.warmupEnabled,
+    timezone: owned.timezone,
+  };
 
   const updated = await updateSenderAccountRecord(senderAccountId, {
-    dailyCap: input.dailyCap,
-    hourlyCap: input.hourlyCap,
-    customMinGapSeconds: input.customMinGapSeconds,
-    customMaxGapSeconds: input.customMaxGapSeconds,
-    timezone: input.timezone,
-    workingHoursStart: input.workingHoursStart,
-    workingHoursEnd: input.workingHoursEnd,
+    dailyCap: value.messagesPerDay,
+    customMinGapSeconds: value.minutesBetweenMessages * 60,
+    customMaxGapSeconds: (value.minutesBetweenMessages + value.jitterMinutes) * 60,
+    hourlyCap: getHourlyCapFromGap(value.minutesBetweenMessages),
+    workingHoursStart: value.workingHoursStart,
+    workingHoursEnd: value.workingHoursEnd,
+    warmupEnabled: value.warmUpEnabled,
+    ...(input.timezone !== undefined ? { timezone: input.timezone } : {}),
+    settingsUpdatedAt: new Date(),
+  });
+
+  await getPrismaClient().senderSettingsAudit.create({
+    data: {
+      userId: owned.userId,
+      senderAccountId,
+      actorUserId,
+      action: "UPDATE",
+      oldValues,
+      newValues: {
+        ...value,
+        timezone: input.timezone ?? owned.timezone,
+        riskWarnings: validation.riskWarnings,
+      },
+    },
   });
 
   const diagnostics = await getSenderSessionManager().getSessionDiagnostics(updated.id);
   return toSenderAccountDto(updated, diagnostics);
+}
+
+export async function applySenderSettingsToAll(
+  userId: string,
+  actorUserId: string,
+  input: SenderSettingsUpdateInput,
+): Promise<{ updated: number; senders: SenderAccountDto[] }> {
+  const records = await listSenderAccountsForUser(userId);
+  const senders: SenderAccountDto[] = [];
+  for (const record of records) {
+    senders.push(await updateSenderSettings(record.id, userId, input, actorUserId));
+  }
+  return { updated: senders.length, senders };
 }
 
 export async function pauseSenderAccount(

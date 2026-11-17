@@ -2,7 +2,11 @@ import { NextResponse } from "next/server";
 
 import { requireAuth } from "@/lib/services/auth";
 import { handleRouteError, apiError } from "@/lib/errors";
-import { createSenderAccount, listSenderAccounts } from "@/lib/services/senders";
+import {
+  applySenderSettingsToAll,
+  createSenderAccount,
+  listSenderAccounts,
+} from "@/lib/services/senders";
 
 export const runtime = "nodejs";
 export const dynamic = "force-dynamic";
@@ -12,6 +16,31 @@ export async function GET(request: Request): Promise<Response> {
     const user = await requireAuth(request);
     const senders = await listSenderAccounts(user.id);
     return NextResponse.json({ senders });
+  } catch (error) {
+    return handleRouteError(request, error);
+  }
+}
+
+export async function PATCH(request: Request): Promise<Response> {
+  try {
+    const user = await requireAuth(request);
+    const body = (await request.json()) as Record<string, unknown>;
+    const result = await applySenderSettingsToAll(user.id, user.id, {
+      messagesPerDay: typeof body.messagesPerDay === "number" ? body.messagesPerDay : undefined,
+      minutesBetweenMessages:
+        typeof body.minutesBetweenMessages === "number" ? body.minutesBetweenMessages : undefined,
+      jitterMinutes: typeof body.jitterMinutes === "number" ? body.jitterMinutes : undefined,
+      workingHoursStart:
+        typeof body.workingHoursStart === "number" ? body.workingHoursStart : undefined,
+      workingHoursEnd: typeof body.workingHoursEnd === "number" ? body.workingHoursEnd : undefined,
+      warmUpEnabled:
+        typeof body.warmupEnabled === "boolean"
+          ? body.warmupEnabled
+          : typeof body.warmUpEnabled === "boolean"
+            ? body.warmUpEnabled
+            : undefined,
+    });
+    return NextResponse.json(result);
   } catch (error) {
     return handleRouteError(request, error);
   }

@@ -80,3 +80,6 @@ scripts/restore_*.ts
 scripts/*_restore_local.*
 scripts/*.local.*
 *.credentials.*
+
+# Generated cutover/test artifacts
+/artifacts/

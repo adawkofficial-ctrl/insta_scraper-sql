@@ -2290,6 +2290,14 @@ export default function CampaignDetailPage() {
                                   {lead.username && (
                                     <span className="text-[9px] rounded bg-pink-500/10 text-pink-300 border border-pink-500/20 px-1 font-semibold">IG</span>
                                   )}
+                                  {lead.contactedByUsername && (
+                                    <span
+                                      className="text-[9px] rounded bg-indigo-500/10 text-indigo-300 border border-indigo-500/20 px-1 font-semibold"
+                                      title={`First contact: ${lead.firstContactedAt ?? "unknown"}`}
+                                    >
+                                      {lead.contactedByUsername}
+                                    </span>
+                                  )}
                                   {lead.email && (
                                     <span className="text-[9px] rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/20 px-1 font-semibold truncate max-w-[120px]" title={lead.email}>Email</span>
                                   )}

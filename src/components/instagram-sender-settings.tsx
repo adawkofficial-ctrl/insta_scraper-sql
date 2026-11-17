@@ -13,9 +13,12 @@ import {
   pauseSenderAccount,
   resumeSenderAccount,
   updateSenderSettings,
+  applySenderSettingsToAll,
   type InstagramSenderAccount,
   type SenderDmDiagnostics,
   type SenderSessionDiagnostics,
+  getSenderActivity,
+  type SenderActivity,
 } from "@/lib/api/senders";
 import { ApiClientError } from "@/lib/api/client";
 
@@ -159,6 +162,8 @@ export function InstagramSenderSettings() {
   const [cookieInput, setCookieInput] = useState("");
   const [isConnectingCookie, setIsConnectingCookie] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
+  const [activityBySender, setActivityBySender] = useState<Record<string, SenderActivity>>({});
+  const [activityLoadingId, setActivityLoadingId] = useState<string | null>(null);
   const [isCreating, setIsCreating] = useState(false);
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [dmTarget, setDmTarget] = useState("");
@@ -428,15 +433,19 @@ export function InstagramSenderSettings() {
 
   const [editingSenderId, setEditingSenderId] = useState<string | null>(null);
   const [editDailyCap, setEditDailyCap] = useState<number>(25);
-  const [editHourlyCap, setEditHourlyCap] = useState<number>(6);
+  const [editMinutesBetween, setEditMinutesBetween] = useState<number>(10);
+  const [editJitterMinutes, setEditJitterMinutes] = useState<number>(4);
+  const [editWarmupEnabled, setEditWarmupEnabled] = useState<boolean>(true);
   const [editHoursStart, setEditHoursStart] = useState<number>(9);
   const [editHoursEnd, setEditHoursEnd] = useState<number>(18);
   const [editTimezone, setEditTimezone] = useState<string>("UTC");
 
   const handleStartEdit = (sender: InstagramSenderAccount) => {
     setEditingSenderId(sender.id);
-    setEditDailyCap(sender.dailyCap ?? sender.effectiveDailyCap ?? 25);
-    setEditHourlyCap(sender.hourlyCap ?? sender.effectiveHourlyCap ?? 6);
+    setEditDailyCap(sender.messagesPerDay ?? sender.dailyCap ?? 25);
+    setEditMinutesBetween(sender.minutesBetweenMessages ?? 10);
+    setEditJitterMinutes(sender.jitterMinutes ?? 4);
+    setEditWarmupEnabled(sender.warmupEnabled ?? true);
     setEditHoursStart(sender.workingHoursStart ?? 9);
     setEditHoursEnd(sender.workingHoursEnd ?? 18);
     setEditTimezone(sender.timezone ?? "UTC");
@@ -448,19 +457,64 @@ export function InstagramSenderSettings() {
     setNotice(null);
     try {
       await updateSenderSettings(senderId, {
-        dailyCap: Number(editDailyCap),
-        hourlyCap: Number(editHourlyCap),
+        messagesPerDay: Number(editDailyCap),
+        minutesBetweenMessages: Number(editMinutesBetween),
+        jitterMinutes: Number(editJitterMinutes),
+        warmupEnabled: editWarmupEnabled,
         workingHoursStart: Number(editHoursStart),
         workingHoursEnd: Number(editHoursEnd),
         timezone: editTimezone.trim() || "UTC",
       });
       setEditingSenderId(null);
-      setNotice("Safety limits updated successfully.");
+      setNotice("Sending settings updated successfully.");
       await refresh({ silent: true });
     } catch (err) {
       setError(describeError(err, "Could not update sender safety settings."));
     } finally {
       setBusyId(null);
+    }
+  };
+
+  const handleApplySettingsToAll = async () => {
+    setBusyId("all");
+    setError(null);
+    setNotice(null);
+    try {
+      const result = await applySenderSettingsToAll({
+        messagesPerDay: Number(editDailyCap),
+        minutesBetweenMessages: Number(editMinutesBetween),
+        jitterMinutes: Number(editJitterMinutes),
+        warmupEnabled: editWarmupEnabled,
+        workingHoursStart: Number(editHoursStart),
+        workingHoursEnd: Number(editHoursEnd),
+      });
+      setNotice(`Settings applied to ${result.updated} sender account(s).`);
+      setEditingSenderId(null);
+      await refresh({ silent: true });
+    } catch (err) {
+      setError(describeError(err, "Could not apply settings to all accounts."));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  const toggleActivity = async (senderId: string) => {
+    if (activityBySender[senderId]) {
+      setActivityBySender((prev) => {
+        const next = { ...prev };
+        delete next[senderId];
+        return next;
+      });
+      return;
+    }
+    setActivityLoadingId(senderId);
+    try {
+      const activity = await getSenderActivity(senderId);
+      setActivityBySender((prev) => ({ ...prev, [senderId]: activity }));
+    } catch (err) {
+      setError(describeError(err, "Could not load sender activity."));
+    } finally {
+      setActivityLoadingId(null);
     }
   };
 
@@ -479,7 +533,7 @@ export function InstagramSenderSettings() {
             <h2 className="text-lg font-bold text-primary">Instagram Sender Accounts</h2>
             {connectedCount > 1 && (
               <span className="rounded-full bg-emerald-500/10 border border-emerald-500/20 px-2.5 py-0.5 text-[11px] font-semibold text-emerald-600 dark:text-emerald-400">
-                🔄 Round-Robin Enabled ({connectedCount} Accounts)
+                ðŸ”„ Round-Robin Enabled ({connectedCount} Accounts)
               </span>
             )}
           </div>
@@ -746,6 +800,19 @@ export function InstagramSenderSettings() {
                       </button>
                     )}
 
+                    <button
+                      type="button"
+                      onClick={() => toggleActivity(sender.id)}
+                      disabled={activityLoadingId === sender.id}
+                      className="rounded-lg border border-subtle bg-surface hover:bg-surface-hover px-3 py-1.5 text-xs font-medium text-secondary hover:text-primary transition-all disabled:opacity-40"
+                    >
+                      {activityLoadingId === sender.id
+                        ? "Loading..."
+                        : activityBySender[sender.id]
+                          ? "Hide Activity"
+                          : "Recent Contacts"}
+                    </button>
+
                     {sender.status === "CONNECTING" && (
                       <button
                         type="button"
@@ -817,6 +884,42 @@ export function InstagramSenderSettings() {
                   </div>
                 </div>
 
+                {activityBySender[sender.id] && (
+                  <div className="mt-3 rounded-xl border border-subtle bg-surface p-4 text-xs">
+                    <div className="flex flex-wrap items-center justify-between gap-2">
+                      <h4 className="font-semibold text-primary">Recent contacts</h4>
+                      <span className="text-[11px] text-muted">
+                        Messages: {activityBySender[sender.id].totalMessages} ·{" "}
+                        {Object.entries(activityBySender[sender.id].statusCounts)
+                          .map(([status, count]) => `${status}:${count}`)
+                          .join(" · ") || "No attempts"}
+                      </span>
+                    </div>
+                    {activityBySender[sender.id].leads.length === 0 ? (
+                      <p className="mt-2 text-muted">No leads assigned to this account yet.</p>
+                    ) : (
+                      <ul className="mt-2 max-h-56 space-y-1.5 overflow-y-auto pr-1">
+                        {activityBySender[sender.id].leads.slice(0, 20).map((lead) => (
+                          <li
+                            key={lead.id}
+                            className="flex flex-wrap items-center justify-between gap-2 rounded-lg border border-subtle bg-subtle px-2.5 py-1.5"
+                          >
+                            <span className="font-medium text-primary">
+                              {lead.username ?? lead.fullName ?? lead.id}
+                            </span>
+                            <span className="font-mono text-[10px] text-muted">
+                              {lead.lastContactedAt
+                                ? new Date(lead.lastContactedAt).toLocaleString()
+                                : "not sent"}{" "}
+                              · {lead.outreachCount} send(s)
+                            </span>
+                          </li>
+                        ))}
+                      </ul>
+                    )}
+                  </div>
+                )}
+
                 {editingSenderId === sender.id && (
                   <div className="mt-3 rounded-xl border border-indigo-500/30 bg-surface p-4 shadow-sm text-xs">
                     <h4 className="font-semibold text-primary mb-3">Configure Safety Limits & Schedule</h4>
@@ -833,13 +936,32 @@ export function InstagramSenderSettings() {
                         />
                       </div>
                       <div>
-                        <label className="block text-muted text-[11px] mb-1 font-medium">Hourly Send Cap (Max 10)</label>
+                        <label className="block text-muted text-[11px] mb-1 font-medium">Minutes Between Messages (min 5)</label>
                         <input
                           type="number"
-                          min={1}
-                          max={10}
-                          value={editHourlyCap}
-                          onChange={(e) => setEditHourlyCap(Math.min(10, Math.max(1, parseInt(e.target.value) || 1)))}
+                          min={5}
+                          max={1440}
+                          value={editMinutesBetween}
+                          onChange={(e) =>
+                            setEditMinutesBetween(
+                              Math.min(1440, Math.max(5, parseInt(e.target.value) || 5)),
+                            )
+                          }
+                          className="w-full rounded-lg border border-subtle bg-subtle px-2.5 py-1.5 text-xs font-mono text-primary"
+                        />
+                      </div>
+                      <div>
+                        <label className="block text-muted text-[11px] mb-1 font-medium">Random Jitter (0-60 min)</label>
+                        <input
+                          type="number"
+                          min={0}
+                          max={60}
+                          value={editJitterMinutes}
+                          onChange={(e) =>
+                            setEditJitterMinutes(
+                              Math.min(60, Math.max(0, parseInt(e.target.value) || 0)),
+                            )
+                          }
                           className="w-full rounded-lg border border-subtle bg-subtle px-2.5 py-1.5 text-xs font-mono text-primary"
                         />
                       </div>
@@ -876,7 +998,46 @@ export function InstagramSenderSettings() {
                         />
                       </div>
                     </div>
+                    <label className="mt-3 flex items-center gap-2 text-[11px] text-secondary">
+                      <input
+                        type="checkbox"
+                        checked={editWarmupEnabled}
+                        onChange={(e) => setEditWarmupEnabled(e.target.checked)}
+                        className="h-3.5 w-3.5 rounded border-subtle"
+                      />
+                      Enable warm-up ramp for new accounts
+                    </label>
+                    {(() => {
+                      const hours = Math.max(1, Number(editHoursEnd) - Number(editHoursStart));
+                      const capacity = Math.max(1, Math.floor((hours * 60) / Math.max(5, Number(editMinutesBetween))) + 1);
+                      const warmupCap = sender.settings?.warmupCap ?? 8;
+                      const effective = Math.min(Number(editDailyCap), editWarmupEnabled ? warmupCap : Number(editDailyCap), 40, capacity);
+                      const risk: string[] = [];
+                      if (Number(editDailyCap) > 25) risk.push("Above 25/day is above the recommended level and raises restriction risk.");
+                      if (Number(editMinutesBetween) < 8) risk.push("A gap below 8 minutes is faster than recommended and raises checkpoint risk.");
+                      return (
+                        <div className="mt-3 space-y-1.5">
+                          <p className="rounded-lg border border-indigo-500/20 bg-indigo-950/20 p-2 text-[11px] text-indigo-200">
+                            At {editDailyCap}/day and {editMinutesBetween} min gap: about {effective} messages today,
+                            limited by {editWarmupEnabled ? `warm-up (${sender.settings?.warmupStage ?? "current stage"})` : "your configured cap"}.
+                          </p>
+                          {risk.map((warning) => (
+                            <p key={warning} className="rounded-lg border border-rose-500/30 bg-rose-500/10 p-2 text-[11px] text-rose-300">
+                              {warning}
+                            </p>
+                          ))}
+                        </div>
+                      );
+                    })()}
                     <div className="mt-3 flex items-center justify-end gap-2">
+                      <button
+                        type="button"
+                        onClick={handleApplySettingsToAll}
+                        disabled={busyId !== null}
+                        className="rounded-lg border border-indigo-500/30 bg-indigo-500/10 hover:bg-indigo-500/20 text-indigo-300 px-3 py-1.5 text-xs font-medium transition disabled:opacity-40"
+                      >
+                        {busyId === "all" ? "Applying..." : "Apply to all accounts"}
+                      </button>
                       <button
                         type="button"
                         onClick={() => setEditingSenderId(null)}
@@ -901,7 +1062,7 @@ export function InstagramSenderSettings() {
                     data-testid="interactive-login-panel"
                     className="mt-3 rounded-xl border border-indigo-500/20 bg-indigo-500/5 p-3.5 text-[11px] text-indigo-900 dark:text-indigo-200"
                   >
-                    <p className="font-semibold">Instagram browser opened — authentication in progress</p>
+                    <p className="font-semibold">Instagram browser opened â€” authentication in progress</p>
                     <ul className="mt-1 list-disc space-y-0.5 pl-4 text-muted">
                       <li>Log into Instagram in the browser window. Keep the browser open.</li>
                       <li>Complete 2FA/security verification if requested.</li>
@@ -912,7 +1073,7 @@ export function InstagramSenderSettings() {
                       Elapsed: {elapsedLabel(sender.updatedAt, nowMs)}
                       {sender.username.startsWith("pending_")
                         ? ""
-                        : ` · @${sender.username}`}
+                        : ` Â· @${sender.username}`}
                     </p>
                   </div>
                 )}
@@ -953,10 +1114,10 @@ export function InstagramSenderSettings() {
                           <strong className={dmResult.composerFound ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"}>
                             {String(dmResult.composerFound)}
                           </strong>
-                          {dmResult.code ? ` · code: ${dmResult.code}` : ""}
+                          {dmResult.code ? ` Â· code: ${dmResult.code}` : ""}
                         </p>
                         <p>
-                          State: {dmResult.diagnostics.pageState} · URL:{" "}
+                          State: {dmResult.diagnostics.pageState} Â· URL:{" "}
                           {dmResult.diagnostics.currentUrl || "-"}
                         </p>
                         {dmResult.diagnostics.messageActionFound && (

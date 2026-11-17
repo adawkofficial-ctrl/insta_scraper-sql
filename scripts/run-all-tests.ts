@@ -1,10 +1,10 @@
 /**
- * TASK 13 Ã¢â‚¬â€ unified test runner.
+ * TASK 13 ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â unified test runner.
  *
  * Reuses the project's existing tsx-based suites (no new framework). Suites that
  * need the dev server are marked `needsServer`; suites that call Apify or a real
  * browser are only executed when RUN_EXTERNAL=1, otherwise they are reported as
- * SKIPPED (external) Ã¢â‚¬â€ never silently counted as passing.
+ * SKIPPED (external) ÃƒÂ¢Ã¢â€šÂ¬Ã¢â‚¬Â never silently counted as passing.
  *
  * Usage:
  *   npm test                 (always starts its own isolated server on a free port)
@@ -190,6 +190,8 @@ const SUITES: Suite[] = [
   { file: "test_task23_dm_composer.ts", category: "unit", kind: "deterministic", needsServer: false },
   { file: "test_unipile_integration.ts", category: "unit", kind: "deterministic", needsServer: false },
   { file: "test_multi_account_round_robin.ts", category: "unit", kind: "deterministic", needsServer: false },
+  { file: "test_multi_account_sending.ts", category: "unit", kind: "deterministic", needsServer: false },
+  { file: "test_send_path_guard.ts", category: "unit", kind: "deterministic", needsServer: false },
   { file: "test_csv_upload_leads.ts", category: "unit", kind: "deterministic", needsServer: false },
   { file: "test_lead_deletion.ts", category: "unit", kind: "deterministic", needsServer: false },
   { file: "test_auth_production_readiness.ts", category: "security", kind: "deterministic", needsServer: false },

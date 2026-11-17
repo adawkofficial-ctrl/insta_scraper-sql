@@ -61,6 +61,22 @@ export type InstagramSenderAccount = {
   timezone: string;
   workingHoursStart: number;
   workingHoursEnd: number;
+  messagesPerDay: number;
+  minutesBetweenMessages: number;
+  jitterMinutes: number;
+  warmupEnabled: boolean;
+  scheduleOffsetSeconds: number;
+  settings: {
+    effectiveMessagesPerDay: number;
+    capacityFromGap: number;
+    warmupCap: number;
+    hardMax: number;
+    limitingFactor: string;
+    warmupStage: string;
+    warmupUntil: string | null;
+    preview: string;
+    riskWarnings: string[];
+  };
   nextAllowedSendAt?: string | null;
 };
 
@@ -103,7 +119,7 @@ export type SenderDmDiagnostics = {
 };
 
 /**
- * Read-only DM composer diagnostic. Never types or sends a message — safe to
+ * Read-only DM composer diagnostic. Never types or sends a message â€” safe to
  * run against a real connected sender.
  */
 export async function diagnoseSenderDm(
@@ -191,10 +207,10 @@ export async function deleteSenderAccount(
 export async function updateSenderSettings(
   senderAccountId: string,
   settings: {
-    dailyCap?: number | null;
-    hourlyCap?: number | null;
-    customMinGapSeconds?: number | null;
-    customMaxGapSeconds?: number | null;
+    messagesPerDay?: number | null;
+    minutesBetweenMessages?: number | null;
+    jitterMinutes?: number | null;
+    warmupEnabled?: boolean;
     timezone?: string;
     workingHoursStart?: number;
     workingHoursEnd?: number;
@@ -205,6 +221,20 @@ export async function updateSenderSettings(
     { method: "PATCH", body: JSON.stringify(settings) },
   );
   return data.sender;
+}
+
+export async function applySenderSettingsToAll(settings: {
+  messagesPerDay?: number | null;
+  minutesBetweenMessages?: number | null;
+  jitterMinutes?: number | null;
+  warmupEnabled?: boolean;
+  workingHoursStart?: number;
+  workingHoursEnd?: number;
+}): Promise<{ updated: number; senders: InstagramSenderAccount[] }> {
+  return apiFetch<{ updated: number; senders: InstagramSenderAccount[] }>(
+    "/api/instagram/senders",
+    { method: "PATCH", body: JSON.stringify(settings) },
+  );
 }
 
 export async function pauseSenderAccount(
@@ -225,4 +255,25 @@ export async function resumeSenderAccount(
     { method: "POST" },
   );
   return data.sender;
+}
+
+export type SenderActivity = {
+  sender: InstagramSenderAccount;
+  totalMessages: number;
+  statusCounts: Record<string, number>;
+  leads: Array<{
+    id: string;
+    username: string | null;
+    fullName: string | null;
+    firstContactedAt: string | null;
+    lastContactedAt: string | null;
+    outreachCount: number;
+    status: string;
+  }>;
+};
+
+export async function getSenderActivity(senderAccountId: string): Promise<SenderActivity> {
+  return apiFetch<SenderActivity>(
+    `/api/instagram/senders/${encodeURIComponent(senderAccountId)}/activity`,
+  );
 }

@@ -38,6 +38,9 @@ export type SenderAccountRecord = {
   timezone: string;
   workingHoursStart: number;
   workingHoursEnd: number;
+  warmupEnabled: boolean;
+  scheduleOffsetSeconds: number;
+  settingsUpdatedAt: Date | null;
 };
 
 const SENDER_SELECT = {
@@ -71,6 +74,9 @@ const SENDER_SELECT = {
   timezone: true,
   workingHoursStart: true,
   workingHoursEnd: true,
+  warmupEnabled: true,
+  scheduleOffsetSeconds: true,
+  settingsUpdatedAt: true,
 } as const;
 
 export async function listSenderAccountsForUser(
@@ -214,6 +220,13 @@ export async function createSenderAccountRecord(input: {
   sessionType?: InstagramSenderSessionType;
   sessionPath: string;
   status?: InstagramSenderStatus;
+  dailyCap?: number | null;
+  customMinGapSeconds?: number | null;
+  customMaxGapSeconds?: number | null;
+  warmupEnabled?: boolean;
+  scheduleOffsetSeconds?: number;
+  workingHoursStart?: number;
+  workingHoursEnd?: number;
 }): Promise<SenderAccountRecord> {
   return getPrismaClient().instagramSenderAccount.create({
     data: {
@@ -225,6 +238,21 @@ export async function createSenderAccountRecord(input: {
       sessionType: input.sessionType ?? "PERSISTENT_PROFILE",
       sessionPath: input.sessionPath,
       status: input.status ?? "CONNECTING",
+      ...(input.dailyCap !== undefined ? { dailyCap: input.dailyCap } : {}),
+      ...(input.customMinGapSeconds !== undefined
+        ? { customMinGapSeconds: input.customMinGapSeconds }
+        : {}),
+      ...(input.customMaxGapSeconds !== undefined
+        ? { customMaxGapSeconds: input.customMaxGapSeconds }
+        : {}),
+      ...(input.warmupEnabled !== undefined ? { warmupEnabled: input.warmupEnabled } : {}),
+      ...(input.scheduleOffsetSeconds !== undefined
+        ? { scheduleOffsetSeconds: input.scheduleOffsetSeconds }
+        : {}),
+      ...(input.workingHoursStart !== undefined
+        ? { workingHoursStart: input.workingHoursStart }
+        : {}),
+      ...(input.workingHoursEnd !== undefined ? { workingHoursEnd: input.workingHoursEnd } : {}),
     },
     select: SENDER_SELECT,
   });
@@ -253,6 +281,9 @@ export async function updateSenderAccountRecord(
     workingHoursStart?: number;
     workingHoursEnd?: number;
     warmupStartedAt?: Date | null;
+    warmupEnabled?: boolean;
+    scheduleOffsetSeconds?: number;
+    settingsUpdatedAt?: Date | null;
   },
 ): Promise<SenderAccountRecord> {
   return getPrismaClient().instagramSenderAccount.update({
