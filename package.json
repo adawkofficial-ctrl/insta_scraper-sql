@@ -11,6 +11,7 @@
     "start": "tsx -r ./scripts/preload_server_only.cjs scripts/start-production.ts",
     "lint": "eslint",
     "typecheck": "tsc --noEmit",
+    "scan:secrets": "tsx scripts/scan-secrets.ts",
     "test": "tsx scripts/run-all-tests.ts",
     "resume:job": "tsx -r ./scripts/preload_server_only.cjs scripts/resume_job.ts",
     "import:apify-dataset": "tsx -r ./scripts/preload_server_only.cjs scripts/import_apify_dataset.ts",
