@@ -446,7 +446,7 @@ export async function sendSingleMessage(
       ? record.step.trim()
       : String(currentAttemptNumber);
 
-  if (isFirstAttempt) {
+  if (isFirstAttempt && record.enforceFirstMessageName === true) {
     const firstMessage = validateFirstMessageText({
       text: messageText,
       lead,

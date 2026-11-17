@@ -1,6 +1,6 @@
 import "./preload_server_only.cjs";
 /**
- * STEP 6 — quality gate, approval workflow, and draft-based sending.
+ * STEP 6 â€” quality gate, approval workflow, and draft-based sending.
  *
  * Gemini and the Instagram sender are mocked; no live calls. Pure rule tests run
  * without any DB writes, then a DB-backed section exercises the pipeline,
@@ -216,7 +216,7 @@ async function main() {
     !checkFor(makeCtx({ draft: { body: "Quick question about your team" } }), "GENERIC_WORDING").passed,
     "one generic phrase is a warning",
   );
-  const r1 = checkFor(makeCtx({ draft: { body: "Quick question — I hope this message finds you well." } }), "GENERIC_WORDING");
+  const r1 = checkFor(makeCtx({ draft: { body: "Quick question â€” I hope this message finds you well." } }), "GENERIC_WORDING");
   check(!r1.passed && r1.severity === "WARNING", "two generic phrases stay a warning");
   const r2 = checkFor(
     makeCtx({ draft: { body: "Quick question. I hope this message finds you well. Loved your reel." } }),
@@ -295,7 +295,7 @@ async function main() {
     "profanity blocks",
   );
   check(
-    checkFor(makeCtx({ draft: { body: "Hi Ahmed, about your fitness studio in Rawalpindi — nice work." } }), "MISSING_PERSONALIZATION").passed,
+    checkFor(makeCtx({ draft: { body: "Hi Ahmed, about your fitness studio in Rawalpindi â€” nice work." } }), "MISSING_PERSONALIZATION").passed,
     "body grounded in lead data passes personalization",
   );
   check(
@@ -388,7 +388,7 @@ async function main() {
   const idempotentApprove = await approveDraft({ userId: user.id, draftId: generated.draftId });
   check(idempotentApprove.status === "APPROVED" && idempotentApprove.overriddenWarnings.length === 0, "double approve is idempotent");
 
-  const edited = await editDraft({ userId: user.id, draftId: generated.draftId, newBody: "Hi there, noticed your fitness studio in Rawalpindi — quick scheduling idea?" });
+  const edited = await editDraft({ userId: user.id, draftId: generated.draftId, newBody: "Hi there, noticed your fitness studio in Rawalpindi â€” quick scheduling idea?" });
   check(edited.passed && edited.editDistance > 0, "edit re-checks and records editDistance");
   const afterEdit = await prisma.messageDraft.findUnique({ where: { id: generated.draftId } });
   check(afterEdit?.approvedBodyHash === null && afterEdit?.approvedAt === null, "edit clears approval");
@@ -440,6 +440,7 @@ async function main() {
       campaignId: campaign.id,
       userId: user.id,
       username: `s6_blocked_${stamp}`,
+      fullName: "Quality Lead",
       biography: "Fitness trainer in Rawalpindi",
       category: "Gym",
       location: "Rawalpindi",
@@ -513,7 +514,7 @@ async function main() {
       userId: user.id,
       leadId: blockedLead.id,
       campaignId: campaign.id,
-      body: "Hi there, about your fitness studio in Rawalpindi scheduling — worth a look?",
+      body: "Hi there, about your fitness studio in Rawalpindi scheduling â€” worth a look?",
       status: "PENDING_REVIEW",
       promptVersion: "draft-v1",
       model: "mock",
@@ -541,7 +542,7 @@ async function main() {
       userId: user.id,
       leadId: blockedLead.id,
       campaignId: campaign.id,
-      body: "Hi there, noticed your fitness studio in Rawalpindi — quick scheduling idea?",
+      body: "Hi Quality Lead, noticed your fitness studio in Rawalpindi - quick scheduling idea?",
       status: "APPROVED",
       promptVersion: "draft-v1",
       model: "mock",
@@ -608,7 +609,7 @@ async function main() {
       userId: user.id,
       leadId: editLead.id,
       campaignId: campaign.id,
-      body: "Hi there, about your fitness studio in Rawalpindi — quick scheduling idea?",
+      body: "Hi there, about your fitness studio in Rawalpindi â€” quick scheduling idea?",
       status: "APPROVED",
       promptVersion: "draft-v1",
       model: "mock",
