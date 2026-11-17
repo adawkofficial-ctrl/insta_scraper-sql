@@ -93,8 +93,6 @@ function computeDiscoveryCostEstimate(
   const geminiCost = Number((limit * geminiUnit).toFixed(4));
 
   const totalCost = Number((mapsRunCost + placesCost + contactsCost + profileCost + geminiCost).toFixed(3));
-  const maxJobUsd = budget?.discoveryMaxJobUsd ?? Number.POSITIVE_INFINITY;
-  const isOverCeiling = Number.isFinite(maxJobUsd) && totalCost > maxJobUsd;
 
   return {
     plannedKeywordsCount,
@@ -108,8 +106,6 @@ function computeDiscoveryCostEstimate(
     profileCost,
     geminiCost,
     totalCost,
-    maxJobUsd,
-    isOverCeiling,
   };
 }
 
@@ -137,7 +133,6 @@ export function ScrapeLeadsModal({
   const [discoverResult, setDiscoverResult] =
     useState<DiscoverLeadsResponse | null>(null);
   const [budget, setBudget] = useState<ScraperBudgetInfo | null>(null);
-  const [confirmRealRun, setConfirmRealRun] = useState(false);
   const [confirmCountryPlan, setConfirmCountryPlan] = useState(false);
 
   // Advanced criteria state
@@ -153,7 +148,6 @@ export function ScrapeLeadsModal({
       getScraperBudget()
         .then((b) => {
           setBudget(b);
-          setConfirmRealRun(false);
           if (b.activeProviders?.discoveryProvider === "instagram_all_in_one") {
             setMinFollowers((prev) => (prev === "100" ? "300" : prev));
             setMaxFollowers((prev) => (prev === "500000" ? "20000" : prev));
@@ -242,61 +236,12 @@ export function ScrapeLeadsModal({
       return;
     }
 
-    // Pre-run cost estimate calculation
-    const estimate = computeDiscoveryCostEstimate(trimmedIntent, parsedLimit, budget);
-    let estimateTotal = estimate.totalCost;
-    let estimateIsOverCeiling = estimate.isOverCeiling;
-    if (budget?.activeProviders?.discoveryProvider === "instagram_all_in_one") {
-      const plan = planInstagramQueries({
-        query: trimmedIntent,
-        category,
-        location: trimmedLocation,
-        maxQueries: budget?.igMaxQueriesPerJob ?? 6,
-        searchLimit: budget?.igSearchLimit ?? 10,
-      });
-      const unit = budget?.igScraperCostPerResultUsd ?? 0.0027;
-      const searchLimit = budget?.igSearchLimit ?? 10;
-      const detailsCount = Math.min(parsedLimit, plan.queries.length * searchLimit);
-      estimateTotal = Number(
-        (plan.queries.length * searchLimit * unit + detailsCount * unit).toFixed(4),
-      );
-      estimateIsOverCeiling = estimateTotal > estimate.maxJobUsd;
-    }
-    if (estimateIsOverCeiling) {
-      setError(
-        `Estimated cost ($${estimateTotal.toFixed(2)}) exceeds DISCOVERY_MAX_JOB_USD ceiling ($${estimate.maxJobUsd.toFixed(2)}). Discovery blocked to protect your budget.`,
-      );
-      return;
-    }
-
-    if (!budget?.isDryRun && budget?.remainingBudgetUsd !== null && budget?.remainingBudgetUsd !== undefined && budget.remainingBudgetUsd <= 0) {
-      setError(
-        `BUDGET_BLOCKED: Monthly Apify budget is exhausted ($0.00 left of $${budget.monthlyBudgetUsd?.toFixed(2) ?? "0.00"}, spend this month: $${budget.monthlySpendUsd?.toFixed(2) ?? "0.00"}). Real runs are blocked.`,
-      );
-      return;
-    }
-
     const normalizedLoc = trimmedLocation.toLowerCase().replace(/[^a-z0-9 ]/g, "").trim();
     const recommendedCities = COUNTRY_CITIES[normalizedLoc];
     const isCountryLoc = Boolean(recommendedCities && recommendedCities.length > 0);
     if (isCountryLoc && !confirmCountryPlan) {
       setError(`Location "${trimmedLocation}" is a whole country. Please review and confirm the multi-city search plan below before proceeding.`);
       return;
-    }
-
-    if (!budget?.isDryRun && !confirmRealRun) {
-      setError("Please check 'I understand this is a real paid run' before proceeding.");
-      return;
-    }
-
-    if (!budget?.isDryRun && estimate.totalCost > 0.25) {
-      const budgetLeftStr = !budget ? "..." : budget.remainingBudgetUsd === null ? "unlimited" : `$${budget.remainingBudgetUsd.toFixed(2)}`;
-      const proceed = window.confirm(
-        `Estimated real spend (~$${estimate.totalCost.toFixed(2)}) exceeds $0.25.\n\nPlanned: ${estimate.totalSearches} search(es) x ${estimate.plannedCitiesCount} city, up to ${estimate.totalPlaces} places.\nBudget left this month: ${budgetLeftStr}\n\nDo you want to proceed with this real discovery run?`
-      );
-      if (!proceed) {
-        return;
-      }
     }
 
     resetResults();
@@ -331,48 +276,6 @@ export function ScrapeLeadsModal({
       getScraperBudget().then(setBudget).catch(() => undefined);
       onScrapeCompleted();
     } catch (err) {
-      if (
-        (err instanceof ApiClientError && err.code === "EXPENSIVE_ZERO_LEADS_CONFIRMATION_REQUIRED") ||
-        (err instanceof Error && err.message.includes("EXPENSIVE_ZERO_LEADS_CONFIRMATION_REQUIRED"))
-      ) {
-        const confirmed = window.confirm(
-          "The previous discovery job for this campaign cost > $0.30 and produced 0 leads. Are you sure you want to retry another discovery job?",
-        );
-        if (confirmed) {
-          setIsSubmitting(true);
-          setError(null);
-          try {
-            const retryResult = await discoverLeads(
-              campaignId,
-              {
-                query: trimmedIntent,
-                location: trimmedLocation,
-                category: trimmedCategory,
-                maxLeads: parsedLimit,
-                criteria,
-                confirmHighCostRetry: true,
-                ...(parsedLimit > CONFIRM_RESULTS_ABOVE ? { confirmHighResults } : {}),
-              },
-              (event) => setProgress(event),
-            );
-            setDiscoverResult(retryResult);
-            getScraperBudget().then(setBudget).catch(() => undefined);
-            onScrapeCompleted();
-            return;
-          } catch (retryErr) {
-            if (retryErr instanceof ApiClientError) {
-              setError(`[${retryErr.code}] ${retryErr.message}`);
-            } else if (retryErr instanceof Error) {
-              setError(retryErr.message);
-            } else {
-              setError("Discovery failed. Please check server logs or Apify credentials.");
-            }
-          } finally {
-            setIsSubmitting(false);
-          }
-          return;
-        }
-      }
       if (err instanceof ApiClientError) {
         setError(`[${err.code}] ${err.message}`);
       } else if (err instanceof Error) {
@@ -424,16 +327,6 @@ export function ScrapeLeadsModal({
     if (profiles.length > MAX_PROFILE_BATCH) {
       setError(`Maximum ${MAX_PROFILE_BATCH} profiles allowed per scrape batch.`);
       return;
-    }
-
-    // Pre-run cost estimate confirmation for specific profile scrape
-    const estCount = Math.min(20, profiles.length || 1);
-    const estimatedCost = Number((0.005 + estCount * 0.0023).toFixed(3));
-    if (estimatedCost > 0.25) {
-      const proceed = window.confirm(
-        `Estimated cost (~$${estimatedCost.toFixed(2)}) exceeds $0.25.\n\nDo you want to proceed with importing ${profiles.length} profiles?`
-      );
-      if (!proceed) return;
     }
 
     resetResults();
@@ -783,16 +676,7 @@ export function ScrapeLeadsModal({
                   ${(discoverResult.meta.apifyCostUsd ?? 0).toFixed(2)}
                 </div>
               </div>
-              <div className="bg-zinc-950/50 p-2 rounded-lg border border-zinc-800/60">
-                <div className="text-zinc-500 text-[10px] uppercase">Budget left this month</div>
-                <div className="text-sm font-bold text-indigo-300">
-                  {(() => {
-                    const rem = discoverResult.meta.remainingBudgetUsd ?? budget?.remainingBudgetUsd;
-                    if (rem === null || rem === undefined) return "Unlimited";
-                    return `$${rem.toFixed(2)}`;
-                  })()}
-                </div>
-              </div>
+
             </div>
             {formatSkipCounts(discoverResult.meta.skipCounts) && (
               <p className="mt-2 border-t border-zinc-800/80 pt-2 font-mono text-[11px] text-zinc-400">
@@ -893,7 +777,6 @@ export function ScrapeLeadsModal({
               const detailsCost = expectedDetails * unit;
               const geminiCost = expectedDetails * 0.00015;
               const totalCost = searchCost + detailsCost + geminiCost;
-              const maxJobUsd = budget?.discoveryMaxJobUsd ?? Number.POSITIVE_INFINITY;
 
               if (plan.blocked) {
                 return (
@@ -943,16 +826,11 @@ export function ScrapeLeadsModal({
                     </div>
                     <div>
                       <div className="text-zinc-500 text-[10px] uppercase">Est. total</div>
-                      <div className={totalCost > maxJobUsd ? "text-amber-300" : "text-emerald-400"}>
+                      <div className="text-emerald-400">
                         {budget?.isDryRun ? "$0.00 (dry run)" : `$${totalCost.toFixed(3)}`}
                       </div>
                     </div>
                   </div>
-                  {totalCost > maxJobUsd && (
-                    <p className="text-[11px] text-amber-300">
-                      Estimated total exceeds DISCOVERY_MAX_JOB_USD (${maxJobUsd.toFixed(2)}); the job will stop early.
-                    </p>
-                  )}
                 </div>
               );
             })()}
@@ -1263,32 +1141,6 @@ export function ScrapeLeadsModal({
               )}
             </div>
 
-            {/* Provider Cost Warning Banner */}
-            {(budget?.discoveryProvider === "instagram_places" ||
-              budget?.discoveryProvider === "hybrid" ||
-              budget?.discoveryProvider === "instagram_search") && (
-              <div
-                id="ig-places-cost-warning"
-                className="rounded-xl border border-amber-500/30 bg-amber-500/10 p-3 text-xs text-amber-300"
-              >
-                <div className="flex items-center gap-2 font-semibold text-amber-200">
-                  <svg className="h-4 w-4 shrink-0 text-amber-400" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
-                  </svg>
-                  <span>
-                    Cost Notice: Provider &ldquo;{budget.discoveryProvider}&rdquo; active
-                  </span>
-                </div>
-                <p className="mt-1 text-[11px] text-amber-200/80">
-                  {budget.discoveryProvider === "instagram_places"
-                    ? "Instagram Places discovery is experimental, low yield (~$0.0027/item). google_maps is recommended for zero-cost Instagram extraction."
-                    : budget.discoveryProvider === "hybrid"
-                      ? "Hybrid discovery runs Google Maps first and tops up remaining quota with Instagram Places (~$0.0027/item)."
-                      : "Instagram Search discovery burns credits faster than Google Maps. google_maps is recommended."}
-                </p>
-              </div>
-            )}
-
             {/* Pre-run estimate banner */}
             {(() => {
               const parsedLimit = parseLimitInput(discoverLimitInput, discoveryMaxLeadLimit);
@@ -1319,36 +1171,19 @@ export function ScrapeLeadsModal({
                 (igSearchCost + igDetailsCost + igGeminiCost).toFixed(4),
               );
               const displayTotal = isIgMode ? igTotalCost : costEstimate.totalCost;
-              const isOverCeiling = isIgMode
-                ? Number.isFinite(costEstimate.maxJobUsd) &&
-                  igTotalCost > costEstimate.maxJobUsd
-                : costEstimate.isOverCeiling;
-              const isRealRun = budget && !budget.isDryRun;
-              const isBudgetExhausted = Boolean(
-                isRealRun &&
-                budget?.remainingBudgetUsd !== null &&
-                budget?.remainingBudgetUsd !== undefined &&
-                budget.remainingBudgetUsd <= 0
-              );
 
               return (
                 <>
-                  <div
-                    className={`rounded-xl border p-3.5 text-xs ${
-                      isOverCeiling || isBudgetExhausted
-                        ? "border-rose-500/40 bg-rose-950/20"
-                        : "border-indigo-500/20 bg-indigo-950/20"
-                    }`}
-                  >
+                  <div className="rounded-xl border border-indigo-500/20 bg-indigo-950/20 p-3.5 text-xs">
                     <div className="flex items-center justify-between">
-                      <span className="font-semibold text-indigo-300">Cost Guard Pre-Run Estimate</span>
+                      <span className="font-semibold text-indigo-300">Estimated Discovery Cost</span>
                       {budget?.isDryRun ? (
                         <span className="rounded bg-amber-500/20 px-2 py-0.5 text-[10px] font-bold text-amber-300 uppercase tracking-wide">
                           DRY RUN ($0.00)
                         </span>
                       ) : (
                         <span className="rounded bg-emerald-500/20 px-2 py-0.5 text-[10px] font-bold text-emerald-300 uppercase tracking-wide">
-                          REAL PAID RUN (~${displayTotal.toFixed(3)})
+                          ~${displayTotal.toFixed(3)}
                         </span>
                       )}
                     </div>
@@ -1402,38 +1237,6 @@ export function ScrapeLeadsModal({
                       )}
                     </div>
 
-                    <div className="mt-2 flex flex-wrap items-center justify-between gap-1 text-[11px] text-zinc-400 border-t border-zinc-800/80 pt-2">
-                      <span>
-                        Ceiling:{" "}
-                        <strong className="text-zinc-200">
-                          {Number.isFinite(costEstimate.maxJobUsd)
-                            ? `$${costEstimate.maxJobUsd.toFixed(2)}`
-                            : "disabled"}
-                        </strong>
-                      </span>
-                      <span>
-                        Budget left:{" "}
-                        <strong className="text-zinc-200">
-                          {!budget
-                            ? "..."
-                            : budget.remainingBudgetUsd === null
-                              ? "unlimited"
-                              : `$${budget.remainingBudgetUsd.toFixed(2)}`}
-                        </strong>
-                      </span>
-                    </div>
-
-                    {isOverCeiling && (
-                      <div className="mt-2.5 rounded-lg border border-rose-500/30 bg-rose-500/10 p-2 text-xs text-rose-300 font-medium">
-                        Estimated cost (${displayTotal.toFixed(2)}) exceeds DISCOVERY_MAX_JOB_USD ceiling (${costEstimate.maxJobUsd.toFixed(2)}). Discovery is blocked.
-                      </div>
-                    )}
-
-                    {isBudgetExhausted && (
-                      <div className="mt-2.5 rounded-lg border border-rose-500/30 bg-rose-500/10 p-2.5 text-xs text-rose-300 font-medium">
-                        <strong>BUDGET_BLOCKED:</strong> Monthly Apify budget is exhausted ($0.00 left of ${budget?.monthlyBudgetUsd?.toFixed(2) ?? "0.00"}, spend this month: ${budget?.monthlySpendUsd?.toFixed(2) ?? "0.00"}). Real runs are blocked.
-                      </div>
-                    )}
                     {(budget?.keywordSuggestions?.length ?? 0) > 0 && (
                       <div className="mt-2 text-[11px] text-emerald-300/90">
                         Best past keywords:{" "}
@@ -1441,28 +1244,6 @@ export function ScrapeLeadsModal({
                       </div>
                     )}
                   </div>
-
-                  {/* Real run confirmation checkbox */}
-                  {isRealRun && !isBudgetExhausted && (
-                    <div className="rounded-xl border border-amber-500/40 bg-amber-500/10 p-3 text-xs">
-                      <label className="flex items-start gap-2.5 cursor-pointer text-amber-200">
-                        <input
-                          type="checkbox"
-                          id="confirm-real-run-checkbox"
-                          checked={confirmRealRun}
-                          onChange={(e) => setConfirmRealRun(e.target.checked)}
-                          className="mt-0.5 h-4 w-4 rounded border-amber-600 bg-zinc-900 text-amber-500 focus:ring-amber-400"
-                        />
-                        <div>
-                          <span className="font-semibold text-amber-100">I understand this is a real paid run</span>
-                          <p className="mt-0.5 text-[11px] text-amber-300/80">
-                            Estimated spend: ~${displayTotal.toFixed(3)} USD. Live{" "}
-                            {isIgMode ? "apify/instagram-scraper" : "Apify and Google Maps provider"} credits will be consumed.
-                          </p>
-                        </div>
-                      </label>
-                    </div>
-                  )}
 
                   <div className="mt-6 flex items-center justify-end gap-3 pt-2">
                     <button
@@ -1476,7 +1257,7 @@ export function ScrapeLeadsModal({
                     <button
                       type="submit"
                       id="start-discovery-btn"
-                      disabled={isSubmitting || isLimitReached || isOverCeiling || isBudgetExhausted || (Boolean(isRealRun) && !confirmRealRun)}
+                      disabled={isSubmitting || isLimitReached}
                       className="inline-flex items-center gap-2 rounded-lg bg-gradient-to-r from-rose-600 to-indigo-600 px-4 py-2 text-sm font-medium text-white shadow-sm transition hover:from-rose-500 hover:to-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 focus:ring-offset-zinc-900 disabled:opacity-50"
                     >
                       {isSubmitting ? (
@@ -1489,12 +1270,6 @@ export function ScrapeLeadsModal({
                         </>
                       ) : isLimitReached ? (
                         <span>Limit Reached</span>
-                      ) : isBudgetExhausted ? (
-                        <span>Budget Blocked</span>
-                      ) : isOverCeiling ? (
-                        <span>Over Budget Ceiling</span>
-                      ) : isRealRun && !confirmRealRun ? (
-                        <span>Confirm Real Run Above</span>
                       ) : (
                         <span>Start Discovery</span>
                       )}
@@ -1558,31 +1333,6 @@ export function ScrapeLeadsModal({
               />
               <p className="mt-1.5 text-xs text-zinc-500">
                 Maximum number of profiles to import into this campaign.
-              </p>
-            </div>
-
-            {/* Pre-run estimate banner */}
-            <div className="rounded-xl border border-indigo-500/20 bg-indigo-950/20 p-3 text-xs">
-              <div className="flex items-center justify-between">
-                <span className="font-semibold text-indigo-300">Cost Guard Pre-Run Estimate</span>
-                {budget?.isDryRun && (
-                  <span className="rounded bg-amber-500/20 px-1.5 py-0.5 text-[10px] font-bold text-amber-300">
-                    DRY RUN ($0.00)
-                  </span>
-                )}
-              </div>
-              <p className="mt-1.5 text-zinc-300 font-mono text-[11px]">
-                {(() => {
-                  const profiles = normalizeProfiles(inputText);
-                  const estCount = Math.min(20, profiles.length || 1);
-                  const estCost = (0.005 + estCount * 0.0023).toFixed(3);
-                  const budgetLeftStr = !budget
-                    ? "..."
-                    : budget.remainingBudgetUsd === null
-                      ? "not set"
-                      : `$${budget.remainingBudgetUsd.toFixed(2)}`;
-                  return `Planned: ${profiles.length} profiles to import (max 20 survivor enrichments). Est. cost: ~$${estCost}. Budget left this month: ${budgetLeftStr}`;
-                })()}
               </p>
             </div>
 

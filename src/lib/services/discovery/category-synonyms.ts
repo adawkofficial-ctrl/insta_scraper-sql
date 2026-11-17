@@ -115,6 +115,37 @@ export function normalizeCategoryString(value: string | null | undefined): strin
 }
 
 /**
+ * Resolves a campaign category such as "Dental Clinics" or "Real Estate Agency"
+ * to its synonym group. Exact keys win; otherwise the longest known group
+ * contained in the category (or vice versa) is used, so descriptive plural
+ * categories do not fall through to the stricter exact-string fallback.
+ */
+function findCategorySynonyms(normalizedCampaign: string): string[] | undefined {
+  const compact = normalizedCampaign.replace(/[^a-z0-9]/g, "");
+
+  const direct = CATEGORY_SYNONYMS[normalizedCampaign] ?? CATEGORY_SYNONYMS[compact];
+  if (direct) return direct;
+
+  // "dental clinics" / "dental clinic" -> "dental"; "real estate agency" -> "realestate"
+  const withoutBusinessSuffix = compact.replace(
+    /(clinics?|services?|centers?|centres?|companies?|agenc(y|ies)|practices?)$/,
+    "",
+  );
+  const suffixMatch = CATEGORY_SYNONYMS[withoutBusinessSuffix];
+  if (suffixMatch) return suffixMatch;
+
+  const keys = Object.keys(CATEGORY_SYNONYMS).sort((a, b) => b.length - a.length);
+  for (const key of keys) {
+    if (key.length < 4) continue;
+    if (compact.includes(key) || key.includes(compact)) {
+      return CATEGORY_SYNONYMS[key];
+    }
+  }
+
+  return undefined;
+}
+
+/**
  * Checks whether a candidate profile category matches the allowed set for a campaign.
  *
  * RULES:
@@ -148,9 +179,8 @@ export function isCategoryAllowed(
     return true;
   }
 
-  // Lookup in synonym map (try exact normalized key, or key without spaces/special chars)
-  const mapKey = normalizedCampaign.replace(/[^a-z0-9]/g, "");
-  const synonyms = CATEGORY_SYNONYMS[normalizedCampaign] ?? CATEGORY_SYNONYMS[mapKey];
+  // Lookup in synonym map (exact, compact, suffix-normalized, or contained key)
+  const synonyms = findCategorySynonyms(normalizedCampaign);
 
   if (synonyms && synonyms.length > 0) {
     for (const syn of synonyms) {

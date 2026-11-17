@@ -223,6 +223,22 @@ async function runTests() {
       !isCategoryAllowed("Car Wash", "Orthodontics"),
       `Unmapped category fallback rejects non-matching category`,
     );
+
+    // Plural/descriptive campaign categories must resolve to their synonym group
+    for (const cat of ["Dentist", "Dental clinic", "Orthodontist", "Cosmetic dentist"]) {
+      check(
+        isCategoryAllowed(cat, "Dental Clinics"),
+        `"${cat}" is accepted for "Dental Clinics"`,
+      );
+    }
+    check(
+      isCategoryAllowed("Dentist", "Dental Clinic"),
+      `"Dentist" is accepted for "Dental Clinic"`,
+    );
+    check(
+      !isCategoryAllowed("Software Company", "Dental Clinics"),
+      `"Software Company" is rejected for "Dental Clinics"`,
+    );
   }
 
   {

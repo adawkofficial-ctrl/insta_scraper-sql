@@ -95,7 +95,6 @@ export type DiscoveryRequest = {
   category: string | null;
   maxLeads: number;
   criteria?: EnrichmentCriteria;
-  confirmHighCostRetry?: boolean;
   confirmHighResults?: boolean;
 };
 
@@ -322,8 +321,6 @@ export function parseDiscoveryRequest(body: unknown): DiscoveryRequest {
     };
   }
 
-  const confirmHighCostRetry = Boolean(record.confirmHighCostRetry);
-
   return {
     campaignId: rawCampaignId.trim(),
     query,
@@ -331,7 +328,6 @@ export function parseDiscoveryRequest(body: unknown): DiscoveryRequest {
     category,
     maxLeads,
     ...(criteria ? { criteria } : {}),
-    ...(confirmHighCostRetry ? { confirmHighCostRetry: true } : {}),
     ...(confirmHighResults ? { confirmHighResults: true } : {}),
   };
 }
@@ -406,32 +402,6 @@ export async function prepareDiscoveryRun(
       "CONCURRENT_DISCOVERY",
       "A discovery or scrape job is currently running for this campaign. Please wait for it to complete.",
     );
-  }
-
-  // 1b. Cost protection: do not start a new job if previous job for the same campaign cost > $0.30 with 0 leads, unless confirmed
-  const previousJob = await prisma.scrapeJob.findFirst({
-    where: {
-      campaignId: campaign.id,
-      status: { in: [ScrapeJobStatus.COMPLETED, ScrapeJobStatus.FAILED] },
-    },
-    orderBy: { createdAt: "desc" },
-  });
-
-  if (previousJob) {
-    const prevUsage = (previousJob.usage ?? {}) as Record<string, unknown>;
-    const prevCost =
-      typeof prevUsage.estimatedApifyCost === "number"
-        ? prevUsage.estimatedApifyCost
-        : typeof prevUsage.totalUsd === "number"
-          ? prevUsage.totalUsd
-          : 0;
-    const prevLeads = previousJob.processedCount;
-    if (prevCost > 0.30 && prevLeads === 0 && !request.confirmHighCostRetry) {
-      throw new ScrapeInputError(
-        "EXPENSIVE_ZERO_LEADS_CONFIRMATION_REQUIRED",
-        `CONFIRMATION_REQUIRED: Previous job for this campaign cost $${prevCost.toFixed(2)} with 0 leads. Confirmation required to retry.`,
-      );
-    }
   }
 
   const isCurrentRunDry = isDryRunMode();

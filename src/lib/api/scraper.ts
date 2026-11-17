@@ -174,7 +174,6 @@ export type DiscoverLeadsInput = {
     bioIncludeAny?: string[] | null;
     bioExclude?: string[] | null;
   };
-  confirmHighCostRetry?: boolean;
 };
 
 export async function discoverLeads(
@@ -189,7 +188,6 @@ export async function discoverLeads(
     category: input.category,
     maxLeads: input.maxLeads,
     ...(input.criteria ? { criteria: input.criteria } : {}),
-    ...(input.confirmHighCostRetry ? { confirmHighCostRetry: true } : {}),
   };
 
   const response = await fetch("/api/scraper/instagram/discover", {

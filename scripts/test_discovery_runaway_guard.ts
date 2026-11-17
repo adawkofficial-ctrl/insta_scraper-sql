@@ -6,7 +6,7 @@
  * b) Low-yield early stop triggers after the first search (e.g. 10 items, 1 with handle).
  * c) Enrichment of 12 survivors = 1 run, not 12.
  * d) A timed-out run is not retried and partial items are used.
- * e) Cost-per-lead guard stops the job; new-job confirmation appears after an expensive zero-lead job.
+ * e) Cost-per-lead guard stops the job; an expensive zero-lead job does not block the next run.
  * f) Already-seen handles/places are skipped without an Apify call.
  * g) Defaults are google_maps + profile_scraper.
  */
@@ -29,7 +29,6 @@ import {
 import {
   getIgEnrichmentActorMode,
   getActiveEnrichmentActorId,
-  ScrapeInputError,
 } from "../src/lib/services/scraper/instagram-profile";
 import { getPrismaClient } from "../src/lib/db/prisma";
 
@@ -523,8 +522,8 @@ async function run() {
         check(usage.stopReason === "cost_per_lead_exceeded", "Cost-per-lead guard stops job: stopReason='cost_per_lead_exceeded'", usage.stopReason);
         check(Boolean(result.notice?.includes("Cost per lead: $0.00")), "Notice displays 'Cost per lead: $0.00'", result.notice);
 
-        // 2. Expensive zero-lead job confirmation requirement:
-        // Set previous job cost to $0.35 with 0 leads
+        // 2. Expensive zero-lead jobs must not block or prompt for a retry:
+        // Set previous job cost to $0.35 with 0 leads, then start a new job.
         await prisma.scrapeJob.update({
           where: { id: job!.id },
           data: {
@@ -537,28 +536,6 @@ async function run() {
           },
         });
 
-        let confirmationRequiredThrown = false;
-        try {
-          await runDiscovery(
-            {
-              campaignId: campaign.id,
-              query: "expensive query retry",
-              category: null,
-              location: "Toronto, ON",
-              maxLeads: 10,
-              // confirmHighCostRetry is false/omitted
-            },
-            testUser!.id,
-          );
-        } catch (err: unknown) {
-          if (err instanceof ScrapeInputError && err.code === "EXPENSIVE_ZERO_LEADS_CONFIRMATION_REQUIRED") {
-            confirmationRequiredThrown = true;
-          }
-        }
-
-        check(confirmationRequiredThrown, "Attempting new job after >$0.30 zero-lead job throws EXPENSIVE_ZERO_LEADS_CONFIRMATION_REQUIRED");
-
-        // When confirmed with confirmHighCostRetry: true, it proceeds
         let retrySucceeded = false;
         try {
           await runDiscovery(
@@ -568,7 +545,6 @@ async function run() {
               category: null,
               location: "Toronto, ON",
               maxLeads: 10,
-              confirmHighCostRetry: true,
             },
             testUser!.id,
           );
@@ -577,7 +553,7 @@ async function run() {
           retrySucceeded = false;
         }
 
-        check(retrySucceeded, "Job with confirmHighCostRetry: true successfully bypasses confirmation block");
+        check(retrySucceeded, "New job after a >$0.30 zero-lead job starts without a confirmation prompt");
       } finally {
         await cleanupCampaign(campaign.id);
       }

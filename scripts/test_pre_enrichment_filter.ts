@@ -215,6 +215,28 @@ async function main(): Promise<void> {
   const resDentist = prefilterCandidate(realDentistFixture, DENTAL_CAMPAIGN);
   check(resDentist.action === "PROCEED", "Real Austin dentist fixture proceeds to enrichment");
 
+  // Google Maps often declares "Dentist" while the campaign category is the
+  // more descriptive plural "Dental Clinics". It must resolve to the dental
+  // synonym group rather than being rejected as an irrelevant category.
+  const googleMapsDentist: DiscoveredProfile = {
+    username: "markham_dental_smiles",
+    profileUrl: "https://www.instagram.com/markham_dental_smiles",
+    fullName: "Markham Dental Smiles",
+    biography: "Family dental clinic in Markham. Cleanings, implants and cosmetic dentistry.",
+    category: "Dentist",
+    location: "Markham, Ontario",
+  };
+  const pluralDentalCampaign: RelevanceCampaignContext = {
+    ...DENTAL_CAMPAIGN,
+    category: "Dental Clinics",
+    location: "Markham, ON",
+  };
+  const resPluralDental = prefilterCandidate(googleMapsDentist, pluralDentalCampaign);
+  check(
+    resPluralDental.action === "PROCEED",
+    "Google Maps 'Dentist' proceeds for campaign category 'Dental Clinics'",
+  );
+
   // ---------------------------------------------------------------------------
   // 4. FUNNEL SKIP REASON TRACKING
   // ---------------------------------------------------------------------------
