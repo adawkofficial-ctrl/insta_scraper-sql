@@ -4,10 +4,12 @@
  */
 import "dotenv/config";
 import { spawn } from "node:child_process";
+import { execSync } from "node:child_process";
 import { recoverUnfinishedScrapeJobs } from "../src/lib/services/discovery/startup-recovery";
 
 async function main() {
   try {
+    try { execSync("npx prisma migrate deploy --config prisma7.config.ts", { stdio: "inherit", env: process.env }); } catch (err) { console.warn("[MIGRATE] prisma migrate deploy failed:", err instanceof Error ? err.message : String(err)); }
     const result = await recoverUnfinishedScrapeJobs();
     if (result.scanned > 0) {
       console.log(
