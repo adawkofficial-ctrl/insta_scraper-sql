@@ -43,6 +43,7 @@ if (process.env.NODE_ENV === "production") {
 }
 
 const nextConfig: NextConfig = {
+  experimental: { cpus: 2 }, // cap build workers; shared hosting can't spawn 63
   // Allow the test runner to use an isolated build/dev directory so it never
   // collides with (or reuses) a developer's running `next dev` server.
   distDir: process.env.NEXT_DIST_DIR || ".next",
