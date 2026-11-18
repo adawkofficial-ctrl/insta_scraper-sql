@@ -33,7 +33,7 @@
     "db:migrate:status": "prisma migrate status",
     "db:seed:admin": "tsx scripts/seed_admin_account.ts",
     "predev": "node scripts/patch-next-drive-root-watch.cjs && prisma generate",
-    "prebuild": "prisma generate",
+    "prebuild": "prisma generate && (prisma migrate deploy --config prisma7.config.ts || echo '[prebuild] prisma migrate deploy skipped')",
     "pretest": "prisma generate",
     "postinstall": "node scripts/patch-next-drive-root-watch.cjs"
   },
