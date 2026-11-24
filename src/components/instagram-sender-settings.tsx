@@ -810,8 +810,8 @@ export function InstagramSenderSettings() {
                 data-testid={`sender-${sender.status}`}
                 className="rounded-xl border border-subtle bg-subtle p-4 transition-colors"
               >
-                <div className="flex flex-col gap-3 sm:flex-row sm:items-start sm:justify-between">
-                  <div className="space-y-1">
+                <div className="flex flex-col gap-3">
+                  <div className="min-w-0 space-y-1">
                     <div className="flex items-center gap-2">
                       <span className="text-sm font-semibold text-primary">
                         @{sender.username}
@@ -821,10 +821,10 @@ export function InstagramSenderSettings() {
                     {sender.displayName && (
                       <p className="text-xs text-muted">{sender.displayName}</p>
                     )}
-                    <dl className="mt-2 grid grid-cols-1 gap-x-6 gap-y-1 text-[11px] text-muted sm:grid-cols-2">
+                    <dl className="mt-2 grid grid-cols-1 gap-x-6 gap-y-1 text-[11px] text-muted sm:grid-cols-2 [&>div]:min-w-0">
                       <div>
                         <dt className="inline text-muted">Session type: </dt>
-                        <dd className="inline font-medium text-secondary">{sender.sessionType}</dd>
+                        <dd className="inline break-all font-medium text-secondary">{sender.sessionType}</dd>
                       </div>
                       <div>
                         <dt className="inline text-muted">Last verified: </dt>
@@ -923,7 +923,7 @@ export function InstagramSenderSettings() {
                     )}
                   </div>
 
-                  <div className="flex shrink-0 flex-wrap items-center gap-2">
+                  <div className="flex w-full flex-wrap items-center gap-2 border-t border-subtle pt-3">
                     {sender.status === "CONNECTING" ? (
                       <button
                         type="button"
