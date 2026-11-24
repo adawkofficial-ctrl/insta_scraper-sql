@@ -98,6 +98,34 @@ function elapsedLabel(fromIso: string, nowMs: number): string {
   return minutes > 0 ? `${minutes}m ${rest}s` : `${rest}s`;
 }
 
+const MIN_TIMER_MINUTES = 5;
+const MAX_TIMER_MINUTES = 1440;
+
+function clampTimerMinutes(value: number): number {
+  if (!Number.isFinite(value)) return 10;
+  return Math.min(MAX_TIMER_MINUTES, Math.max(MIN_TIMER_MINUTES, Math.round(value)));
+}
+
+/** Live countdown to the next allowed send for an account. */
+function nextSendCountdown(nextIso: string | null | undefined, nowMs: number): string | null {
+  if (!nextIso) return null;
+  const target = new Date(nextIso).getTime();
+  if (!Number.isFinite(target)) return null;
+  const diff = target - nowMs;
+  if (diff <= 0) return "ready now";
+  const total = Math.ceil(diff / 1000);
+  const minutes = Math.floor(total / 60);
+  const seconds = total % 60;
+  return minutes > 0 ? `in ${minutes}m ${String(seconds).padStart(2, "0")}s` : `in ${seconds}s`;
+}
+
+function describeTimer(
+  sender: Pick<InstagramSenderAccount, "minutesBetweenMessages" | "jitterMinutes">,
+): string {
+  const jitter = sender.jitterMinutes ? ` + ${sender.jitterMinutes} min jitter` : "";
+  return `${sender.minutesBetweenMessages} min between messages${jitter}`;
+}
+
 function SenderDiagnosticsPanel({
   diagnostics,
   status,
@@ -168,6 +196,9 @@ export function InstagramSenderSettings() {
   const [nowMs, setNowMs] = useState(() => Date.now());
   const [dmTarget, setDmTarget] = useState("");
   const [dmResult, setDmResult] = useState<SenderDmDiagnostics | null>(null);
+  // Send timer (inter-message gap): global default + per-account drafts.
+  const [defaultTimerMinutes, setDefaultTimerMinutes] = useState<number | null>(null);
+  const [timerDrafts, setTimerDrafts] = useState<Record<string, number>>({});
 
   const refresh = useCallback(async (options?: { silent?: boolean }) => {
     if (!options?.silent) {
@@ -498,6 +529,72 @@ export function InstagramSenderSettings() {
     }
   };
 
+  /** Apply the header "default timer" to every account (keeps other limits). */
+  const handleApplyDefaultTimer = async () => {
+    const minutes = clampTimerMinutes(effectiveDefaultTimer);
+    setBusyId("all");
+    setError(null);
+    setNotice(null);
+    try {
+      const result = await applySenderSettingsToAll({ minutesBetweenMessages: minutes });
+      setDefaultTimerMinutes(minutes);
+      setNotice(
+        `Default send timer set to ${minutes} min between messages for ${result.updated} account(s).`,
+      );
+      await refresh({ silent: true });
+    } catch (err) {
+      setError(describeError(err, "Could not apply the default send timer."));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  /** Set the timer for one account only. */
+  const handleSetSenderTimer = async (sender: InstagramSenderAccount) => {
+    const minutes = clampTimerMinutes(
+      timerDrafts[sender.id] ?? sender.minutesBetweenMessages ?? 10,
+    );
+    setBusyId(sender.id);
+    setError(null);
+    setNotice(null);
+    try {
+      await updateSenderSettings(sender.id, { minutesBetweenMessages: minutes });
+      setTimerDrafts((prev) => {
+        const next = { ...prev };
+        delete next[sender.id];
+        return next;
+      });
+      setNotice(`Send timer for @${sender.username} set to ${minutes} min between messages.`);
+      await refresh({ silent: true });
+    } catch (err) {
+      setError(describeError(err, `Could not update the send timer for @${sender.username}.`));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
+  /** Promote one account's timer to the default for all accounts. */
+  const handleUseSenderTimerForAll = async (sender: InstagramSenderAccount) => {
+    const minutes = clampTimerMinutes(
+      timerDrafts[sender.id] ?? sender.minutesBetweenMessages ?? 10,
+    );
+    setBusyId("all");
+    setError(null);
+    setNotice(null);
+    try {
+      const result = await applySenderSettingsToAll({ minutesBetweenMessages: minutes });
+      setDefaultTimerMinutes(minutes);
+      setNotice(
+        `Send timer set to ${minutes} min for ${result.updated} account(s) (from @${sender.username}).`,
+      );
+      await refresh({ silent: true });
+    } catch (err) {
+      setError(describeError(err, "Could not apply this timer to all accounts."));
+    } finally {
+      setBusyId(null);
+    }
+  };
+
   const toggleActivity = async (senderId: string) => {
     if (activityBySender[senderId]) {
       setActivityBySender((prev) => {
@@ -525,6 +622,31 @@ export function InstagramSenderSettings() {
       ? "Connecting"
       : "Not Connected";
 
+  // Most common per-account timer becomes the suggested default (unless the
+  // user already typed one in the header control).
+  const timerCounts = new Map<number, number>();
+  for (const sender of senders) {
+    const value = sender.minutesBetweenMessages;
+    if (typeof value === "number" && Number.isFinite(value)) {
+      timerCounts.set(value, (timerCounts.get(value) ?? 0) + 1);
+    }
+  }
+  let commonTimer: number | null = null;
+  let commonTimerCount = 0;
+  for (const [value, count] of timerCounts) {
+    if (count > commonTimerCount) {
+      commonTimer = value;
+      commonTimerCount = count;
+    }
+  }
+  const effectiveDefaultTimer = defaultTimerMinutes ?? commonTimer ?? 10;
+  const timerSummary =
+    senders.length === 0
+      ? "no accounts yet"
+      : timerCounts.size <= 1
+        ? `${commonTimer ?? 10} min on all ${senders.length} account(s)`
+        : `mixed (most common: ${commonTimer ?? 10} min on ${commonTimerCount}/${senders.length})`;
+
   return (
     <section className="rounded-2xl border border-subtle bg-surface shadow-card p-6 transition-colors">
       <div className="flex flex-col gap-3 border-b border-subtle pb-5 sm:flex-row sm:items-center sm:justify-between">
@@ -539,8 +661,8 @@ export function InstagramSenderSettings() {
           </div>
           <p className="mt-1 text-xs text-muted max-w-2xl">
             Connect up to 10+ Instagram accounts for campaign outreach. Messages automatically rotate across your
-            connected accounts in round-robin sequence with an inter-message safety cooldown (default 10 minutes per account)
-            to maximize delivery speed while protecting account trust.
+            connected accounts in round-robin sequence with an inter-message safety timer (default 10 minutes per
+            account, set below for all accounts or per account) to maximize delivery speed while protecting account trust.
           </p>
         </div>
         <div className="flex shrink-0 flex-wrap items-center gap-2.5">
@@ -566,6 +688,36 @@ export function InstagramSenderSettings() {
                 : connectedCount > 0
                   ? "+ Add Another Account"
                   : "Connect via Hosted Link"}
+          </button>
+        </div>
+      </div>
+
+      {/* Default send timer (applies to all accounts) */}
+      <div className="mt-4 flex flex-col gap-2 rounded-xl border border-subtle bg-subtle px-3 py-2.5 text-xs sm:flex-row sm:items-center sm:justify-between">
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="font-semibold text-primary">Default send timer</span>
+          <input
+            type="number"
+            min={MIN_TIMER_MINUTES}
+            max={MAX_TIMER_MINUTES}
+            value={effectiveDefaultTimer}
+            onChange={(e) => setDefaultTimerMinutes(clampTimerMinutes(Number(e.target.value)))}
+            aria-label="Default send timer in minutes between messages"
+            className="w-16 rounded-lg border border-subtle bg-surface px-2 py-1 text-center font-mono text-primary focus:border-indigo-500 focus:outline-none"
+          />
+          <span className="text-muted">min between messages (all accounts)</span>
+        </div>
+        <div className="flex flex-wrap items-center gap-2">
+          <span className="text-[11px] text-muted">Current: {timerSummary}</span>
+          <button
+            type="button"
+            id="apply-default-send-timer-btn"
+            onClick={handleApplyDefaultTimer}
+            disabled={busyId !== null || senders.length === 0}
+            className="rounded-lg border border-indigo-500/30 bg-indigo-500/10 px-3 py-1.5 text-xs font-semibold text-indigo-700 dark:text-indigo-300 hover:bg-indigo-500/20 transition disabled:opacity-40"
+            title="Apply this timer to every sender account"
+          >
+            {busyId === "all" ? "Applying..." : `Apply to all (${senders.length})`}
           </button>
         </div>
       </div>
@@ -701,10 +853,17 @@ export function InstagramSenderSettings() {
                         </dd>
                       </div>
                       <div>
+                        <dt className="inline text-muted">Send Timer: </dt>
+                        <dd className="inline font-medium text-secondary">{describeTimer(sender)}</dd>
+                      </div>
+                      <div>
                         <dt className="inline text-muted">Next Send Allowed: </dt>
                         <dd className="inline font-medium text-secondary">
                           {sender.nextAllowedSendAt
-                            ? new Date(sender.nextAllowedSendAt).toLocaleTimeString()
+                            ? (() => {
+                                const countdown = nextSendCountdown(sender.nextAllowedSendAt, nowMs);
+                                return `${new Date(sender.nextAllowedSendAt).toLocaleTimeString()}${countdown ? ` (${countdown})` : ""}`;
+                              })()
                             : (sender.lastSentAt ? "Ready (gap elapsed)" : "Ready")}
                         </dd>
                       </div>
@@ -723,6 +882,39 @@ export function InstagramSenderSettings() {
                         </div>
                       )}
                     </dl>
+                    {/* Per-account send timer */}
+                    <div className="mt-2 flex flex-wrap items-center gap-2 rounded-lg border border-subtle bg-surface px-2.5 py-1.5 text-[11px]">
+                      <span className="font-semibold uppercase tracking-wide text-muted">Send timer</span>
+                      <input
+                        type="number"
+                        min={MIN_TIMER_MINUTES}
+                        max={MAX_TIMER_MINUTES}
+                        value={timerDrafts[sender.id] ?? sender.minutesBetweenMessages ?? 10}
+                        onChange={(e) =>
+                          setTimerDrafts((prev) => ({ ...prev, [sender.id]: Number(e.target.value) }))
+                        }
+                        aria-label={`Send timer minutes for @${sender.username}`}
+                        className="w-16 rounded border border-subtle bg-subtle px-2 py-1 text-center font-mono text-primary focus:border-indigo-500 focus:outline-none"
+                      />
+                      <span className="text-muted">min between messages</span>
+                      <button
+                        type="button"
+                        onClick={() => handleSetSenderTimer(sender)}
+                        disabled={busyId !== null}
+                        className="rounded border border-subtle bg-surface px-2 py-1 font-medium text-secondary hover:text-primary transition disabled:opacity-40"
+                      >
+                        {busyId === sender.id ? "Saving..." : "Set for this account"}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => handleUseSenderTimerForAll(sender)}
+                        disabled={busyId !== null}
+                        className="rounded border border-indigo-500/30 bg-indigo-500/10 px-2 py-1 font-medium text-indigo-700 dark:text-indigo-300 hover:bg-indigo-500/20 transition disabled:opacity-40"
+                      >
+                        Use for all accounts
+                      </button>
+                      <span className="text-muted">Current: {describeTimer(sender)}</span>
+                    </div>
                     {sender.lastError && (
                       <div className="mt-2 rounded-lg border border-rose-500/20 bg-rose-500/10 p-2.5 text-[11px] text-rose-700 dark:text-rose-400">
                         <span className="font-semibold">Error: </span>

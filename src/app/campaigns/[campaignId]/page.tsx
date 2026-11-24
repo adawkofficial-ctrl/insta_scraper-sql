@@ -56,6 +56,80 @@ function hasLeadSocials(lead: { socialLink?: string | null; rawProfileData?: unk
   const socials = { ...(raw.socialLinks ?? {}), ...(raw.contacts?.socialLinks ?? {}) };
   return Object.values(socials).some((value) => typeof value === "string" && value.length > 0);
 }
+
+type LeadWebsiteEnrichment = {
+  /** True once the website scraper has been run for this lead. */
+  enriched: boolean;
+  ranAt: string | null;
+  /** All social platforms found (website scrape + stored social link). */
+  socials: Array<[string, string]>;
+  hasInstagram: boolean;
+};
+
+function getLeadWebsiteEnrichment(lead: {
+  username?: string | null;
+  instagramUsername?: string | null;
+  profileUrl?: string | null;
+  socialLink?: string | null;
+  socialPlatform?: string | null;
+  lastHandleEnrichmentAt?: string | null;
+  rawProfileData?: unknown;
+}): LeadWebsiteEnrichment {
+  const raw =
+    lead.rawProfileData && typeof lead.rawProfileData === "object"
+      ? (lead.rawProfileData as {
+          socialLinks?: Record<string, unknown>;
+          contacts?: { socialLinks?: Record<string, unknown>; extractedAt?: string };
+          websiteEnrichment?: { fetchedAt?: string };
+        })
+      : {};
+
+  const merged = new Map<string, string>();
+  const collect = (source: Record<string, unknown> | undefined) => {
+    if (!source) return;
+    for (const [platform, value] of Object.entries(source)) {
+      const key = platform.trim().toLowerCase();
+      if (key && typeof value === "string" && value.trim() && !merged.has(key)) {
+        merged.set(key, value.trim());
+      }
+    }
+  };
+  collect(raw.socialLinks);
+  collect(raw.contacts?.socialLinks);
+  if (lead.socialLink && lead.socialLink.trim()) {
+    const key = (lead.socialPlatform || "social").trim().toLowerCase();
+    if (key && !merged.has(key)) merged.set(key, lead.socialLink.trim());
+  }
+
+  const handle = getLeadInstagramHandle(lead);
+  if (handle) {
+    const profileUrl = lead.profileUrl?.trim() || `https://www.instagram.com/${handle}/`;
+    merged.set("instagram", profileUrl);
+  }
+
+  const ranAt =
+    raw.websiteEnrichment?.fetchedAt ??
+    raw.contacts?.extractedAt ??
+    lead.lastHandleEnrichmentAt ??
+    null;
+
+  return {
+    enriched: Boolean(ranAt),
+    ranAt,
+    socials: Array.from(merged.entries()),
+    hasInstagram: Boolean(handle),
+  };
+}
+
+function formatWebsiteEnrichedTitle(info: LeadWebsiteEnrichment): string {
+  if (!info.enriched) return "Website scraper has not run for this lead yet.";
+  const when = info.ranAt ? ` on ${new Date(info.ranAt).toLocaleString()}` : "";
+  const socials = info.socials.length > 0 ? info.socials.map(([platform]) => platform).join(", ") : "none";
+  return info.hasInstagram
+    ? `Website scraped${when}. Instagram + socials found: ${socials}.`
+    : `Website scraped${when}. No Instagram handle found. Socials: ${socials}.`;
+}
+
 import { ApiClientError } from "@/lib/api/client";
 import { Navbar } from "@/components/navbar";
 import { ScrapeLeadsModal } from "@/components/scrape-leads-modal";
@@ -140,6 +214,26 @@ export default function CampaignDetailPage() {
   const [isDeletingCampaign, setIsDeletingCampaign] = useState(false);
   const [activeLeadId, setActiveLeadId] = useState<string | null>(null);
   const [drawerInitialTab, setDrawerInitialTab] = useState<"profile" | "message">("profile");
+  const [leadsView, setLeadsView] = useState<"list" | "grid">("list");
+
+  useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem("leads-view-mode");
+      // eslint-disable-next-line react-hooks/set-state-in-effect -- one-time hydration of the persisted view preference
+      if (saved === "grid" || saved === "list") setLeadsView(saved);
+    } catch {
+      // localStorage unavailable (private mode); keep default.
+    }
+  }, []);
+
+  const changeLeadsView = useCallback((mode: "list" | "grid") => {
+    setLeadsView(mode);
+    try {
+      window.localStorage.setItem("leads-view-mode", mode);
+    } catch {
+      // ignore storage failures
+    }
+  }, []);
 
   // Scrape Jobs State
   const [scrapeJobs, setScrapeJobs] = useState<ScrapeJobItem[]>([]);
@@ -989,7 +1083,7 @@ export default function CampaignDetailPage() {
             </p>
           </div>
 
-          <div className="flex items-center gap-3">
+          <div className="flex flex-wrap items-center gap-3 md:justify-end">
             <button
               type="button"
               id="edit-campaign-btn"
@@ -1793,7 +1887,47 @@ export default function CampaignDetailPage() {
                 </button>
               </div>
 
-              <div className="flex items-center gap-3">
+              <div className="flex flex-wrap items-center gap-3">
+                <div
+                  className="inline-flex items-center rounded-lg border border-zinc-700 bg-zinc-900 p-0.5"
+                  role="group"
+                  aria-label="Leads view mode"
+                >
+                  <button
+                    type="button"
+                    id="btn-leads-view-list"
+                    aria-pressed={leadsView === "list"}
+                    onClick={() => changeLeadsView("list")}
+                    title="List view"
+                    className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 font-medium transition ${
+                      leadsView === "list"
+                        ? "bg-zinc-700 text-white"
+                        : "text-zinc-400 hover:text-zinc-200"
+                    }`}
+                  >
+                    <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M4 6h16M4 12h16M4 18h16" />
+                    </svg>
+                    <span>List</span>
+                  </button>
+                  <button
+                    type="button"
+                    id="btn-leads-view-grid"
+                    aria-pressed={leadsView === "grid"}
+                    onClick={() => changeLeadsView("grid")}
+                    title="Grid view"
+                    className={`inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 font-medium transition ${
+                      leadsView === "grid"
+                        ? "bg-zinc-700 text-white"
+                        : "text-zinc-400 hover:text-zinc-200"
+                    }`}
+                  >
+                    <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M4 4h7v7H4zM13 4h7v7h-7zM4 13h7v7H4zM13 13h7v7h-7z" />
+                    </svg>
+                    <span>Grid</span>
+                  </button>
+                </div>
                 <span className="text-zinc-400">
                   Target:{" "}
                   <strong className="text-zinc-100">
@@ -2000,11 +2134,12 @@ export default function CampaignDetailPage() {
 
             {/* Leads Table */}
             <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 overflow-hidden shadow-xs">
-              <div className="overflow-x-auto">
-                <table className="w-full text-left text-xs">
+              {leadsView === "list" && (
+              <div className="overflow-hidden">
+                <table className="hidden w-full table-fixed text-left text-xs md:table">
                   <thead className="border-b border-zinc-800 bg-zinc-950/80 text-zinc-400 uppercase font-semibold">
                     <tr>
-                      <th className="w-8 py-3 px-3">
+                      <th className="w-10 py-3 px-3">
                         <input
                           type="checkbox"
                           aria-label="Select all visible leads"
@@ -2026,16 +2161,16 @@ export default function CampaignDetailPage() {
                         />
                       </th>
                       <th className="py-3 px-4">Profile</th>
-                      <th className="py-3 px-4">Followers</th>
-                      <th className="py-3 px-4">Following</th>
-                      <th className="py-3 px-4">Posts</th>
-                      <th className="py-3 px-4">Category</th>
-                      <th className="py-3 px-4">Score</th>
-                      <th className="hidden py-3 px-4 lg:table-cell">City / Location</th>
-                      <th className="hidden py-3 px-4 md:table-cell">Contact &amp; Socials</th>
-                      <th className="hidden py-3 px-4 xl:table-cell">Bio</th>
-                      <th className="hidden py-3 px-4 lg:table-cell">Scraped</th>
-                      <th className="py-3 px-4 text-right">Actions</th>
+                      <th className="w-28 py-3 px-4">Followers</th>
+                      <th className="hidden w-24 py-3 px-4 xl:table-cell">Following</th>
+                      <th className="hidden w-20 py-3 px-4 xl:table-cell">Posts</th>
+                      <th className="hidden py-3 px-4 lg:table-cell">Category</th>
+                      <th className="w-28 py-3 px-4">Score</th>
+                      <th className="hidden py-3 px-4 xl:table-cell">City / Location</th>
+                      <th className="hidden py-3 px-4 lg:table-cell">Contact &amp; Socials</th>
+                      <th className="hidden py-3 px-4 2xl:table-cell">Bio</th>
+                      <th className="hidden py-3 px-4 xl:table-cell">Scraped</th>
+                      <th className="w-52 py-3 px-4 text-right">Actions</th>
                     </tr>
                   </thead>
                   <tbody className="divide-y divide-zinc-800/60 text-zinc-300">
@@ -2310,6 +2445,18 @@ export default function CampaignDetailPage() {
                                   {hasLeadSocials(lead) && (
                                     <span className="text-[9px] rounded bg-amber-500/10 text-amber-300 border border-amber-500/20 px-1 font-semibold" title={lead.socialLink || "Social profile"}>Social</span>
                                   )}
+                                  {(() => {
+                                    const websiteInfo = getLeadWebsiteEnrichment(lead);
+                                    if (!websiteInfo.enriched) return null;
+                                    return (
+                                      <span
+                                        className="text-[9px] rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/20 px-1 font-semibold"
+                                        title={formatWebsiteEnrichedTitle(websiteInfo)}
+                                      >
+                                        Enriched
+                                      </span>
+                                    );
+                                  })()}
                                 </div>
                               </div>
                             </div>
@@ -2384,7 +2531,7 @@ export default function CampaignDetailPage() {
                           </td>
 
                           {/* Following */}
-                          <td className="py-3 px-4 text-zinc-400">
+                          <td className="hidden py-3 px-4 text-zinc-400 xl:table-cell">
                             {(() => {
                               const isNotEnriched =
                                 (lead.rawProfileData as { enrichmentStatus?: string } | undefined)?.enrichmentStatus === "NOT_ENRICHED" ||
@@ -2394,7 +2541,7 @@ export default function CampaignDetailPage() {
                           </td>
 
                           {/* Posts */}
-                          <td className="py-3 px-4 text-zinc-400">
+                          <td className="hidden py-3 px-4 text-zinc-400 xl:table-cell">
                             {(() => {
                               const isNotEnriched =
                                 (lead.rawProfileData as { enrichmentStatus?: string } | undefined)?.enrichmentStatus === "NOT_ENRICHED" ||
@@ -2404,9 +2551,9 @@ export default function CampaignDetailPage() {
                           </td>
 
                           {/* Category */}
-                          <td className="py-3 px-4">
+                          <td className="hidden py-3 px-4 lg:table-cell">
                             {lead.businessCategoryName || lead.category || (lead.rawProfileData as { mapsCategory?: string } | undefined)?.mapsCategory ? (
-                              <span className="rounded bg-zinc-800 px-2 py-0.5 text-[11px] text-zinc-300 font-medium">
+                              <span className="inline-block max-w-full truncate rounded bg-zinc-800 px-2 py-0.5 text-[11px] text-zinc-300 font-medium">
                                 {lead.businessCategoryName || lead.category || (lead.rawProfileData as { mapsCategory?: string } | undefined)?.mapsCategory}
                               </span>
                             ) : (
@@ -2504,7 +2651,7 @@ export default function CampaignDetailPage() {
                           </td>
 
                           {/* City / Location */}
-                          <td className="hidden py-3 px-4 text-zinc-400 lg:table-cell">
+                          <td className="hidden py-3 px-4 text-zinc-400 xl:table-cell">
                             {lead.location || (lead.rawProfileData as { city?: string; address?: string } | undefined)?.city || (lead.rawProfileData as { address?: string } | undefined)?.address ? (
                               <span className="text-[11px] truncate max-w-[140px] block" title={lead.location || (lead.rawProfileData as { address?: string } | undefined)?.address}>
                                 {lead.location || (lead.rawProfileData as { city?: string; address?: string } | undefined)?.city || (lead.rawProfileData as { address?: string } | undefined)?.address}
@@ -2515,7 +2662,7 @@ export default function CampaignDetailPage() {
                           </td>
 
                           {/* Contact & Socials */}
-                          <td className="hidden py-3 px-4 md:table-cell">
+                          <td className="hidden py-3 px-4 lg:table-cell">
                             {(() => {
                               const contactsData = (lead.rawProfileData as { contacts?: { whatsapps?: Array<{ url: string; phone?: string }> } } | undefined)?.contacts;
                               const whatsapps = contactsData?.whatsapps ?? [];
@@ -2523,9 +2670,9 @@ export default function CampaignDetailPage() {
                               const hasPhone = Boolean(lead.phone || (lead.rawProfileData as { phone?: string } | undefined)?.phone);
                               const hasWebsite = Boolean(lead.website || (lead.rawProfileData as { website?: string } | undefined)?.website);
                               const hasWhatsapp = whatsapps.length > 0;
-                              const socials = (lead.rawProfileData as { socialLinks?: Record<string, string | null> } | undefined)?.socialLinks;
-                              const socialEntries = socials ? Object.entries(socials).filter((entry) => Boolean(entry[1])) : [];
-                              const hasAnySocial = socialEntries.length > 0 || Boolean(lead.socialLink);
+                              const websiteInfo = getLeadWebsiteEnrichment(lead);
+                              const socialEntries = websiteInfo.socials;
+                              const hasAnySocial = socialEntries.length > 0;
 
                               if (!hasEmail && !hasPhone && !hasWebsite && !hasWhatsapp && !hasAnySocial) {
                                 return (
@@ -2591,11 +2738,11 @@ export default function CampaignDetailPage() {
                                     </a>
                                   )}
                                   {hasAnySocial && (
-                                    <div className="flex items-center gap-1.5 mt-0.5">
+                                    <div className="flex items-center gap-1.5 mt-0.5 flex-wrap">
                                       {socialEntries.map(([platform, url]) => (
                                         <a
                                           key={platform}
-                                          href={url!.startsWith("http") ? url! : `https://${url}`}
+                                          href={url.startsWith("http") ? url : `https://${url}`}
                                           target="_blank"
                                           rel="noopener noreferrer"
                                           className="text-zinc-400 hover:text-rose-400 transition"
@@ -2604,17 +2751,6 @@ export default function CampaignDetailPage() {
                                           <SocialPlatformIcon platform={platform} className="h-3.5 w-3.5" />
                                         </a>
                                       ))}
-                                      {lead.socialLink && !socialEntries.some(([p]) => p.toLowerCase() === (lead.socialPlatform || "").toLowerCase()) && (
-                                        <a
-                                          href={lead.socialLink.startsWith("http") ? lead.socialLink : `https://${lead.socialLink}`}
-                                          target="_blank"
-                                          rel="noopener noreferrer"
-                                          className="text-zinc-400 hover:text-sky-400 transition"
-                                          title={`Open ${lead.socialPlatform || "social"}`}
-                                        >
-                                          <SocialPlatformIcon platform={lead.socialPlatform || "social"} className="h-3.5 w-3.5" />
-                                        </a>
-                                      )}
                                     </div>
                                   )}
                                 </div>
@@ -2623,7 +2759,7 @@ export default function CampaignDetailPage() {
                           </td>
 
                           {/* Bio */}
-                          <td className="hidden py-3 px-4 xl:table-cell">
+                          <td className="hidden py-3 px-4 2xl:table-cell">
                             {(() => {
                               const isNotEnriched =
                                 (lead.rawProfileData as { enrichmentStatus?: string } | undefined)?.enrichmentStatus === "NOT_ENRICHED" ||
@@ -2642,13 +2778,13 @@ export default function CampaignDetailPage() {
                           </td>
 
                           {/* Scraped At */}
-                          <td className="hidden py-3 px-4 text-[11px] text-zinc-400 lg:table-cell">
+                          <td className="hidden py-3 px-4 text-[11px] text-zinc-400 xl:table-cell">
                             {lead.scrapedAt ? new Date(lead.scrapedAt).toLocaleDateString() : "—"}
                           </td>
 
                           {/* Actions */}
-                          <td className="py-3 px-4 text-right">
-                            <div className="flex items-center justify-end gap-2">
+                          <td className="py-3 px-4 text-right align-top">
+                            <div className="flex flex-wrap items-center justify-end gap-1.5">
                               {(() => {
                                 const isNotEnriched =
                                   (lead.rawProfileData as { enrichmentStatus?: string } | undefined)?.enrichmentStatus === "NOT_ENRICHED" ||
@@ -2772,9 +2908,10 @@ export default function CampaignDetailPage() {
                   </tbody>
                 </table>
               </div>
+              )}
 
               {/* Responsive Stacked Cards (visible on smaller screens / mobile) */}
-              {!isLeadsLoading && leadsData && leadsData.items.length > 0 && (
+              {leadsView === "list" && !isLeadsLoading && leadsData && leadsData.items.length > 0 && (
                 <div className="block md:hidden divide-y divide-zinc-800/80 border-t border-zinc-800 bg-zinc-950/40">
                   {leadsData.items.map((lead: Lead) => (
                     <div key={`card-${lead.id}`} className="p-4 space-y-3">
@@ -2854,6 +2991,18 @@ export default function CampaignDetailPage() {
                                   NAME/SITE MISMATCH
                                 </span>
                               )}
+                              {(() => {
+                                const websiteInfo = getLeadWebsiteEnrichment(lead);
+                                if (!websiteInfo.enriched) return null;
+                                return (
+                                  <span
+                                    className="shrink-0 rounded bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-300 border border-emerald-500/20"
+                                    title={formatWebsiteEnrichedTitle(websiteInfo)}
+                                  >
+                                    Enriched
+                                  </span>
+                                );
+                              })()}
                             </div>
                             {lead.fullName && (
                               <p className="text-xs text-zinc-400 truncate">{lead.fullName}</p>
@@ -2968,8 +3117,8 @@ export default function CampaignDetailPage() {
 
                       {/* Other Social Links on Mobile */}
                       {(() => {
-                        const socials = (lead.rawProfileData as { socialLinks?: Record<string, string | null> } | undefined)?.socialLinks;
-                        const entries = socials ? Object.entries(socials).filter((entry) => Boolean(entry[1])) : [];
+                        const websiteInfo = getLeadWebsiteEnrichment(lead);
+                        const entries = websiteInfo.socials;
                         if (entries.length === 0) return null;
                         return (
                           <div className="flex items-center gap-2 pt-0.5">
@@ -2978,7 +3127,7 @@ export default function CampaignDetailPage() {
                               {entries.map(([platform, url]) => (
                                 <a
                                   key={platform}
-                                  href={url!.startsWith("http") ? url! : `https://${url}`}
+                                  href={url.startsWith("http") ? url : `https://${url}`}
                                   target="_blank"
                                   rel="noopener noreferrer"
                                   className="text-zinc-400 hover:text-rose-400"
@@ -3105,6 +3254,258 @@ export default function CampaignDetailPage() {
                     </div>
                   ))}
                 </div>
+              )}
+
+              {/* Grid view */}
+              {leadsView === "grid" && (
+                isLeadsLoading ? (
+                  <div className="p-10 text-center text-sm text-zinc-500 animate-pulse">Loading leads...</div>
+                ) : (leadsData?.items ?? []).filter((l) => !hideDryRun || !isLeadDryRun(l)).length === 0 ? (
+                  <div className="p-10 text-center text-sm text-zinc-500">
+                    {leadsData?.items.length === 0 ? "No leads yet." : "No leads to display with the current filters."}
+                  </div>
+                ) : (
+                  <div id="leads-grid-view" className="grid grid-cols-1 gap-3 p-3 sm:grid-cols-2 xl:grid-cols-3">
+                    {(leadsData?.items ?? [])
+                      .filter((lead) => !hideDryRun || !isLeadDryRun(lead))
+                      .map((lead: Lead) => {
+                        const handle = getLeadInstagramHandle(lead);
+                        const websiteInfo = getLeadWebsiteEnrichment(lead);
+                        const isNotEnriched =
+                          (lead.rawProfileData as { enrichmentStatus?: string } | undefined)?.enrichmentStatus === "NOT_ENRICHED" ||
+                          (!lead.followersCount && !lead.followers && !lead.biography);
+                        const tier =
+                          lead.qualityTier ??
+                          (typeof lead.qualityScore === "number"
+                            ? lead.qualityScore >= 75
+                              ? "A"
+                              : lead.qualityScore >= 55
+                                ? "B"
+                                : lead.qualityScore >= 35
+                                  ? "C"
+                                  : "D"
+                            : null);
+                        const tierStyle =
+                          tier === "A"
+                            ? "bg-emerald-500/10 text-emerald-400 border-emerald-500/25"
+                            : tier === "B"
+                              ? "bg-sky-500/10 text-sky-400 border-sky-500/25"
+                              : tier === "C"
+                                ? "bg-amber-500/10 text-amber-400 border-amber-500/25"
+                                : "bg-rose-500/10 text-rose-400 border-rose-500/25";
+                        return (
+                          <div
+                            key={`grid-${lead.id}`}
+                            className="flex min-w-0 flex-col gap-2.5 rounded-xl border border-zinc-800 bg-zinc-900/60 p-3 transition hover:border-zinc-700"
+                          >
+                            <div className="flex min-w-0 items-start gap-2.5">
+                              <input
+                                type="checkbox"
+                                aria-label={`Select @${lead.username}`}
+                                checked={selectedLeadIdSet.has(lead.id)}
+                                onChange={() => toggleLeadSelection(lead.id)}
+                                className="mt-1 h-3.5 w-3.5 shrink-0 rounded border-zinc-600 bg-zinc-900 accent-rose-500"
+                              />
+                              <LeadAvatar
+                                profilePicUrlHD={lead.profilePicUrlHD}
+                                profilePicUrl={lead.profilePicUrl}
+                                profilePictureUrl={lead.profilePictureUrl}
+                                username={lead.username}
+                                size="md"
+                              />
+                              <div className="min-w-0 flex-1">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setDrawerInitialTab("profile");
+                                    setActiveLeadId(lead.id);
+                                  }}
+                                  className="block w-full truncate text-left text-sm font-semibold text-zinc-100 transition hover:text-rose-400"
+                                  title={handle ? `@${handle}` : lead.fullName || "Unnamed Lead"}
+                                >
+                                  {handle ? `@${handle}` : lead.fullName || "Unnamed Lead"}
+                                </button>
+                                {lead.fullName && handle && (
+                                  <div className="truncate text-[11px] text-zinc-400">{lead.fullName}</div>
+                                )}
+                                <div className="mt-1 flex flex-wrap items-center gap-1">
+                                  {tier && typeof lead.qualityScore === "number" && (
+                                    <span className={`rounded-full border px-1.5 py-0.5 text-[9px] font-bold ${tierStyle}`}>
+                                      Tier {tier} • {lead.qualityScore}
+                                    </span>
+                                  )}
+                                  {websiteInfo.enriched && (
+                                    <span
+                                      className="rounded border border-emerald-500/20 bg-emerald-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-emerald-300"
+                                      title={formatWebsiteEnrichedTitle(websiteInfo)}
+                                    >
+                                      Enriched
+                                    </span>
+                                  )}
+                                  {!handle && (
+                                    <span className="rounded border border-zinc-700 bg-zinc-800 px-1.5 py-0.5 text-[9px] font-semibold text-zinc-400">
+                                      No Instagram
+                                    </span>
+                                  )}
+                                  {isLeadDryRun(lead) && (
+                                    <span className="rounded border border-amber-500/20 bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-amber-400">
+                                      DRY-RUN
+                                    </span>
+                                  )}
+                                  {lead.isGroup && (
+                                    <span className="rounded border border-sky-500/20 bg-sky-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-sky-300">
+                                      GROUP
+                                    </span>
+                                  )}
+                                  {lead.duplicateOfLeadId && (
+                                    <span className="rounded border border-rose-500/20 bg-rose-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-rose-400">
+                                      DUPLICATE
+                                    </span>
+                                  )}
+                                </div>
+                              </div>
+                            </div>
+
+                            {websiteInfo.socials.length > 0 && (
+                              <div className="flex flex-wrap items-center gap-1.5">
+                                {websiteInfo.socials.map(([platform, url]) => (
+                                  <a
+                                    key={`${lead.id}-${platform}`}
+                                    href={url.startsWith("http") ? url : `https://${url}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="inline-flex items-center gap-1 rounded border border-zinc-800 bg-zinc-950/60 px-1.5 py-0.5 text-[10px] text-zinc-400 transition hover:text-rose-400"
+                                    title={`Open ${platform}`}
+                                  >
+                                    <SocialPlatformIcon platform={platform} className="h-3 w-3" />
+                                    <span className="capitalize">{platform}</span>
+                                  </a>
+                                ))}
+                              </div>
+                            )}
+
+                            {isNotEnriched ? (
+                              <div className="flex items-center justify-between gap-2 rounded-lg border border-zinc-800 bg-zinc-950/50 px-2.5 py-2 text-[11px]">
+                                <span className="text-zinc-500">Profile stats not enriched</span>
+                                <button
+                                  type="button"
+                                  onClick={() => handleEnrichSingle(lead.id)}
+                                  disabled={enrichingLeadId === lead.id}
+                                  className="rounded border border-rose-500/30 bg-rose-600/20 px-2 py-0.5 text-[10px] font-semibold text-rose-300 transition hover:bg-rose-600/30 disabled:opacity-50"
+                                >
+                                  {enrichingLeadId === lead.id ? "..." : "⚡ Enrich"}
+                                </button>
+                              </div>
+                            ) : (
+                              <div className="grid grid-cols-3 gap-1 rounded-lg border border-zinc-800 bg-zinc-950/50 p-2 text-center text-[11px]">
+                                <div>
+                                  <span className="block text-[9px] uppercase text-zinc-500">Followers</span>
+                                  <span className="font-bold text-zinc-200">{formatNumber(lead.followersCount ?? lead.followers)}</span>
+                                </div>
+                                <div className="border-x border-zinc-800">
+                                  <span className="block text-[9px] uppercase text-zinc-500">Following</span>
+                                  <span className="font-bold text-zinc-200">{formatNumber(lead.followsCount ?? lead.following)}</span>
+                                </div>
+                                <div>
+                                  <span className="block text-[9px] uppercase text-zinc-500">Posts</span>
+                                  <span className="font-bold text-zinc-200">{formatNumber(lead.postsCount)}</span>
+                                </div>
+                              </div>
+                            )}
+
+                            {(lead.email || lead.phone || lead.website) && (
+                              <div className="flex flex-wrap items-center gap-1 text-[10px]">
+                                {lead.email && (
+                                  <a
+                                    href={`mailto:${lead.email}`}
+                                    className="max-w-full truncate rounded bg-sky-500/10 px-1.5 py-0.5 text-sky-300"
+                                    title={lead.email}
+                                  >
+                                    {lead.email}
+                                  </a>
+                                )}
+                                {lead.phone && (
+                                  <a
+                                    href={`tel:${lead.phoneNormalized || lead.phone}`}
+                                    className="max-w-full truncate rounded bg-blue-500/10 px-1.5 py-0.5 text-blue-300"
+                                    title={lead.phone}
+                                  >
+                                    {lead.phone}
+                                  </a>
+                                )}
+                                {lead.website && (
+                                  <a
+                                    href={lead.website.startsWith("http") ? lead.website : `https://${lead.website}`}
+                                    target="_blank"
+                                    rel="noopener noreferrer"
+                                    className="max-w-full truncate rounded bg-purple-500/10 px-1.5 py-0.5 text-purple-300"
+                                    title={lead.website}
+                                  >
+                                    {lead.website.replace(/^https?:\/\/(www\.)?/, "")}
+                                  </a>
+                                )}
+                              </div>
+                            )}
+
+                            <div className="mt-auto flex flex-wrap items-center justify-between gap-1.5 border-t border-zinc-800/70 pt-2">
+                              <div className="flex items-center gap-1.5">
+                                {!handle && (
+                                  <button
+                                    type="button"
+                                    onClick={() => handleEnrichHandleSingle(lead.id)}
+                                    disabled={enrichingLeadId === lead.id}
+                                    className="rounded border border-sky-500/30 bg-sky-600/20 px-2 py-0.5 text-[10px] font-semibold text-sky-300 transition hover:bg-sky-600/30 disabled:opacity-50"
+                                    title="Scrape the website for an Instagram handle"
+                                  >
+                                    {enrichingLeadId === lead.id ? "..." : "⚡ Find IG"}
+                                  </button>
+                                )}
+                                {handle ? (
+                                  <button
+                                    type="button"
+                                    onClick={() => {
+                                      setDrawerInitialTab("message");
+                                      setActiveLeadId(lead.id);
+                                    }}
+                                    className="inline-flex items-center gap-1 rounded border border-rose-500/30 bg-rose-600/20 px-2 py-0.5 text-[10px] font-semibold text-rose-300 transition hover:bg-rose-600/30"
+                                  >
+                                    Message
+                                  </button>
+                                ) : (
+                                  <span className="rounded border border-zinc-700/60 bg-zinc-800/60 px-2 py-0.5 text-[10px] text-zinc-500">
+                                    No IG DM
+                                  </span>
+                                )}
+                              </div>
+                              <div className="flex items-center gap-1.5">
+                                <button
+                                  type="button"
+                                  onClick={() => {
+                                    setDrawerInitialTab("profile");
+                                    setActiveLeadId(lead.id);
+                                  }}
+                                  className="rounded bg-zinc-800 px-2 py-0.5 text-[10px] font-medium text-zinc-300 transition hover:bg-zinc-700 hover:text-white"
+                                >
+                                  View
+                                </button>
+                                <button
+                                  type="button"
+                                  onClick={() => setLeadPendingDelete(lead)}
+                                  className="rounded p-1 text-zinc-500 transition hover:bg-rose-500/10 hover:text-rose-400"
+                                  title={`Delete @${lead.username}`}
+                                  aria-label={`Delete @${lead.username}`}
+                                >
+                                  <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                  </svg>
+                                </button>
+                              </div>
+                            </div>
+                          </div>
+                        );
+                      })}
+                  </div>
+                )
               )}
 
               {/* Pagination Controls */}

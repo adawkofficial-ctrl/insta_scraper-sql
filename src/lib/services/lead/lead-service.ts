@@ -277,7 +277,9 @@ export async function listCampaignLeads(
     }
   }
 
-  // Filter by enrichment status ("enriched" or "not_enriched")
+  // Filter by enrichment status ("enriched" or "not_enriched"). A lead counts
+  // as enriched once the website scraper has run (lastHandleEnrichmentAt) or
+  // its Instagram profile has been enriched.
   const rawEnrichment = getParam("enrichmentStatus");
   if (rawEnrichment !== undefined) {
     const trimmedEnrichment = rawEnrichment.trim().toLowerCase();
@@ -285,6 +287,7 @@ export async function listCampaignLeads(
       if (trimmedEnrichment === "enriched") {
         conditions.push({
           OR: [
+            { lastHandleEnrichmentAt: { not: null } },
             { biography: { not: null } },
             { followersCount: { not: null } },
             {
@@ -297,14 +300,10 @@ export async function listCampaignLeads(
         });
       } else if (trimmedEnrichment === "not_enriched") {
         conditions.push({
-          OR: [
-            { rawProfileData: { path: "$.enrichmentStatus", equals: "NOT_ENRICHED" } },
-            {
-              AND: [
-                { followersCount: null },
-                { followers: null },
-              ],
-            },
+          AND: [
+            { lastHandleEnrichmentAt: null },
+            { followersCount: null },
+            { followers: null },
           ],
         });
       }
