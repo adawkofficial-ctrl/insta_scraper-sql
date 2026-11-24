@@ -3,7 +3,6 @@
 import { Navbar } from "@/components/navbar";
 import { InstagramSenderSettings } from "@/components/instagram-sender-settings";
 import { CompanyProfileSettings } from "@/components/company-profile-settings";
-import { NotificationSettingsPanel } from "@/components/notifications-settings-panel";
 import { DryRunCleanupPanel } from "@/components/dry-run-cleanup-panel";
 
 export default function SettingsPage() {
@@ -14,10 +13,9 @@ export default function SettingsPage() {
         <div className="border-b border-subtle pb-6">
           <h1 className="text-2xl font-bold tracking-tight text-primary sm:text-3xl">Settings</h1>
           <p className="mt-1 text-sm text-muted">
-            Manage integrations, sender accounts, notifications, and test data cleanup.
+            Manage integrations, sender accounts, and test data cleanup.
           </p>
         </div>
-        <NotificationSettingsPanel />
         <CompanyProfileSettings />
         <InstagramSenderSettings />
         <DryRunCleanupPanel />
