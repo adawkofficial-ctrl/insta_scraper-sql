@@ -95,11 +95,11 @@ async function runTests() {
 
   // 4. Test Missing profile URL on lead
   {
-    // Create temporary lead without profileUrl
+    // Create temporary lead without profileUrl and without a handle
     const noUrlLead = await prisma.lead.create({
       data: {
         campaignId: testLead.campaignId,
-        username: "no_url_user",
+        username: null,
         profileUrl: "",
       },
     });

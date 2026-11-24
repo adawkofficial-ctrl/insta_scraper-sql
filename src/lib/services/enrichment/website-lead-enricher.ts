@@ -1164,6 +1164,7 @@ type LeadForWebsiteEnrichment = {
   id: string;
   username?: string | null;
   instagramUsername?: string | null;
+  profileUrl?: string | null;
   fullName?: string | null;
   website?: string | null;
   email?: string | null;
@@ -1380,20 +1381,32 @@ export async function applyWebsiteEnrichmentToLead(
   }
 
   if (handleToStore) {
+    const canonicalHandle = handleToStore.toLowerCase();
     data.username = handleToStore;
     data.instagramUsername = handleToStore;
-    data.usernameNormalized = handleToStore;
+    data.usernameNormalized = canonicalHandle;
+    data.profileUrl = `https://www.instagram.com/${handleToStore}/`;
+    data.profileUrlCanonical = `https://www.instagram.com/${canonicalHandle}/`;
     data.handleSource = "website";
     data.handleConfidence = confidence;
     if (lead.status === LeadStatus.NEW) {
       data.status = LeadStatus.ENRICH_PENDING;
     }
-  } else if (!lead.username && lead.instagramUsername) {
-    // Backfill username from instagramUsername so the list treats the lead as
-    // having Instagram and hides the "Find IG" action.
-    data.username = lead.instagramUsername;
-    data.usernameNormalized = lead.instagramUsername.toLowerCase();
-    data.instagramUsername = lead.instagramUsername;
+  } else {
+    const existingHandle = lead.username || lead.instagramUsername;
+    if (existingHandle) {
+      // Repair leads whose handle was stored without a profile URL so the
+      // send gates and list links have a usable Instagram URL.
+      const canonicalHandle = existingHandle.toLowerCase();
+      if (!lead.profileUrl || !lead.profileUrl.trim()) {
+        data.profileUrl = `https://www.instagram.com/${existingHandle}/`;
+      }
+      if (!lead.username) {
+        data.username = existingHandle;
+        data.usernameNormalized = canonicalHandle;
+        data.instagramUsername = existingHandle;
+      }
+    }
   }
 
   const newEmailCount = emails.length - existingEmails.length;
@@ -1446,7 +1459,7 @@ export async function enrichLeadWebsiteById(
     },
     options,
   );
-  return applyWebsiteEnrichmentToLead(lead, extraction, { force: options?.force });
+  return applyWebsiteEnrichmentToLead(lead, extraction, { force: true });
 }
 
 export type WebsiteBulkEnrichmentResult = {
@@ -1511,19 +1524,22 @@ export async function enrichLeadsFromWebsites(input: {
   }
 
   const where: Prisma.LeadWhereInput = {
-    website: { not: null },
+    AND: [
+      { website: { not: null } },
+      { NOT: { website: "" } },
+      ...andConditions,
+    ],
     ...(input.campaignId ? { campaignId: input.campaignId } : {}),
     ...(input.leadIds?.length ? { id: { in: input.leadIds } } : {}),
     ...(input.userId
       ? { OR: [{ userId: input.userId }, { campaign: { userId: input.userId } }] }
       : {}),
-    AND: andConditions,
   };
 
   const leads = await prisma.lead.findMany({
     where,
     include: { campaign: { select: { location: true } } },
-    take: input.limit ?? (scanAll ? 1000 : 500),
+    take: input.limit ?? (scanAll ? 5000 : 500),
     orderBy: { createdAt: "desc" },
   });
 
@@ -1564,7 +1580,7 @@ export async function enrichLeadsFromWebsites(input: {
         },
         { fetchFn: input.fetchFn, force: input.force } as WebsiteEnrichmentOptions,
       );
-      const applied = await applyWebsiteEnrichmentToLead(lead, extraction, { force: input.force });
+      const applied = await applyWebsiteEnrichmentToLead(lead, extraction, { force: true });
 
       const found = Boolean(
         applied.handleStored ||

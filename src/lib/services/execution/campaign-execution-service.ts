@@ -31,6 +31,7 @@ import {
 } from "../compliance/dnc-service";
 import { notifySystemError } from "../notifications/notification-triggers";
 import { MAX_CAMPAIGN_LEAD_LIMIT } from "@/lib/constants/campaign-limits";
+import { resolveLeadProfileUrl } from "../lead/profile-url";
 
 // Worker lease configuration
 export const LEASE_DURATION_MS = 60 * 1000; // 60 seconds lease
@@ -1497,9 +1498,7 @@ export async function createExecutionPreview(
     orderBy: { createdAt: "asc" },
   });
 
-  const eligibleLeads = leads.filter(
-    (l) => Boolean(l.username?.trim()) && (l.profileUrl?.trim() || "").startsWith("http"),
-  );
+  const eligibleLeads = leads.filter((l) => Boolean(resolveLeadProfileUrl(l)));
   const nonUrlSkipped = leads.length - eligibleLeads.length;
 
   // Enforce DNC suppression on eligible leads
@@ -1839,7 +1838,7 @@ export async function dispatchExecution(
       }
     }
 
-    if (!item.lead.profileUrl || !item.lead.username) {
+    if (!resolveLeadProfileUrl(item.lead)) {
       await prisma.campaignExecutionItem.update({
         where: { id: item.id },
         data: {

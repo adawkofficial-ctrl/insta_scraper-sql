@@ -13,6 +13,7 @@ import { findPreviouslyContactedLeadIds } from "@/lib/services/dedup";
 import { transitionLeadStatus } from "@/lib/services/lead/lead-status-service";
 import { findConnectedSenderForDispatch } from "@/lib/services/senders/instagram-sender-service";
 import { findSenderAccountOwned } from "@/lib/services/senders/instagram-sender-repository";
+import { resolveLeadProfileUrl } from "@/lib/services/lead/profile-url";
 import { draftBodyHash } from "@/lib/services/quality";
 import type { BulkJobStatusResponse } from "../messaging/bulk-messaging-service";
 import {
@@ -166,8 +167,8 @@ export async function createDraftSendJob(input: {
       skip("ALREADY_CONTACTED");
       continue;
     }
-    const url = lead.profileUrl?.trim() ?? "";
-    if (!url.startsWith("http")) {
+    const url = resolveLeadProfileUrl(lead);
+    if (!url) {
       skip("MISSING_PROFILE_URL");
       continue;
     }

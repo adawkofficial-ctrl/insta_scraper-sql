@@ -30,6 +30,7 @@ import {
   isDryRunLead,
 } from "./send-gate";
 import { extractDomainParts } from "../discovery/name-website-matcher";
+import { resolveLeadProfileUrl } from "../lead/profile-url";
 import { scheduleFollowUpsForLead } from "./follow-up-service";
 import {
   markContactDeliveryStatus,
@@ -401,8 +402,10 @@ export async function sendSingleMessage(
     );
   }
 
-  // 10. Resolve recipient strictly from trusted DB record
-  if (!lead.profileUrl || !lead.profileUrl.trim()) {
+  // 10. Resolve recipient strictly from trusted DB record. A stored profile
+  // URL wins; otherwise the canonical URL is derived from the stored handle.
+  const recipientProfileUrl = resolveLeadProfileUrl(lead);
+  if (!recipientProfileUrl) {
     throw new BadRequestError(
       "MISSING_PROFILE_URL",
       `Lead @${lead.username} does not have a valid Instagram profile URL.`,
@@ -620,7 +623,7 @@ export async function sendSingleMessage(
     } else {
       await executeMicroDelay();
       const rawResult = await provider.sendMessage({
-        profileUrl: lead.profileUrl,
+        profileUrl: recipientProfileUrl,
         message: messageText,
         senderAccountId: senderAccountId ?? undefined,
       });

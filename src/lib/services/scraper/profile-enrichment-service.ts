@@ -190,6 +190,9 @@ export async function enrichLeadHandleWaterfall(
       status: lead.status,
     } as Parameters<typeof applyWebsiteEnrichmentToLead>[0],
     extraction,
+    // An explicit per-lead scrape always records that website enrichment ran,
+    // even when nothing new was found (drives the "Enriched" state in the UI).
+    { force: true },
   );
 
   const found = applied.handleStored || Boolean(applied.emailFound) || applied.socialsFound.length > 0;

@@ -105,7 +105,7 @@ async function main() {
   const leadA_noUrl = await prisma.lead.create({
     data: {
       campaignId: campaignA.id,
-      username: `lead_nourl_${Date.now()}`,
+      username: null,
       fullName: "Lead Without URL",
       profileUrl: "",
     },

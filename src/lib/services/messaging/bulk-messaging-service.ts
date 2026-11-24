@@ -26,6 +26,7 @@ import {
   getSendGateNow,
 } from "./send-gate";
 import { extractDomainParts } from "../discovery/name-website-matcher";
+import { resolveLeadProfileUrl } from "../lead/profile-url";
 import type { SenderAccountRecord } from "../senders/instagram-sender-repository";
 import { evaluateDraftDispatch } from "./draft-dispatch-guard";
 import {
@@ -597,8 +598,8 @@ export async function previewBulkMessageJob(
       });
       continue;
     }
-    const rawUrl = lead.profileUrl?.trim() || "";
-    if (!rawUrl.startsWith("http") || (!rawUrl.includes("instagram.com") && rawUrl.length < 10)) {
+    const rawUrl = resolveLeadProfileUrl(lead) ?? "";
+    if (!rawUrl.startsWith("http")) {
       skippedReasons.push({
         leadId: lead.id,
         username: lead.username ?? "",
@@ -639,7 +640,7 @@ export async function previewBulkMessageJob(
         followingCount: lead.followsCount ?? lead.following,
         postsCount: lead.postsCount,
         externalUrl: lead.externalUrl,
-        profileUrl: lead.profileUrl,
+        profileUrl: resolveLeadProfileUrl(lead),
       },
       {
         name: campaign.name,
@@ -697,7 +698,7 @@ export async function previewBulkMessageJob(
         followingCount: lead.followsCount ?? lead.following,
         postsCount: lead.postsCount,
         externalUrl: lead.externalUrl,
-        profileUrl: lead.profileUrl,
+        profileUrl: resolveLeadProfileUrl(lead),
       },
       {
         name: campaign.name,
@@ -855,8 +856,8 @@ export async function createBulkMessageJob(
       suppressedLeadIds.push(lead.id);
       continue;
     }
-    const rawUrl = lead.profileUrl?.trim() || "";
-    if (!rawUrl.startsWith("http") || (!rawUrl.includes("instagram.com") && rawUrl.length < 10)) {
+    const rawUrl = resolveLeadProfileUrl(lead) ?? "";
+    if (!rawUrl.startsWith("http")) {
       skippedCount++;
       continue;
     }
@@ -884,7 +885,7 @@ export async function createBulkMessageJob(
         followingCount: lead.followsCount ?? lead.following,
         postsCount: lead.postsCount,
         externalUrl: lead.externalUrl,
-        profileUrl: lead.profileUrl,
+        profileUrl: resolveLeadProfileUrl(lead),
       },
       {
         name: campaign.name,
