@@ -20,7 +20,7 @@ export const SENDER_RECOMMENDED = {
 
 export function getSenderMinGapFloorMinutes(): number {
   const parsed = Number(process.env.SENDER_MIN_GAP_FLOOR);
-  return Number.isFinite(parsed) && parsed > 0 ? Math.trunc(parsed) : 5;
+  return Number.isFinite(parsed) && parsed > 0 ? Math.trunc(parsed) : 1;
 }
 
 export type SenderSettingsInput = {

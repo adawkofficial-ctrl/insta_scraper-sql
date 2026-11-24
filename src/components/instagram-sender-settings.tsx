@@ -98,7 +98,7 @@ function elapsedLabel(fromIso: string, nowMs: number): string {
   return minutes > 0 ? `${minutes}m ${rest}s` : `${rest}s`;
 }
 
-const MIN_TIMER_MINUTES = 5;
+const MIN_TIMER_MINUTES = 1;
 const MAX_TIMER_MINUTES = 1440;
 
 function clampTimerMinutes(value: number): number {
@@ -703,7 +703,7 @@ export function InstagramSenderSettings() {
             value={effectiveDefaultTimer}
             onChange={(e) => setDefaultTimerMinutes(clampTimerMinutes(Number(e.target.value)))}
             aria-label="Default send timer in minutes between messages"
-            className="w-16 rounded-lg border border-subtle bg-surface px-2 py-1 text-center font-mono text-primary focus:border-indigo-500 focus:outline-none"
+            className="w-24 rounded-lg border border-subtle bg-surface px-2 py-1 text-center font-mono text-primary focus:border-indigo-500 focus:outline-none"
           />
           <span className="text-muted">min between messages (all accounts)</span>
         </div>
@@ -894,7 +894,7 @@ export function InstagramSenderSettings() {
                           setTimerDrafts((prev) => ({ ...prev, [sender.id]: Number(e.target.value) }))
                         }
                         aria-label={`Send timer minutes for @${sender.username}`}
-                        className="w-16 rounded border border-subtle bg-subtle px-2 py-1 text-center font-mono text-primary focus:border-indigo-500 focus:outline-none"
+                        className="w-24 rounded border border-subtle bg-subtle px-2 py-1 text-center font-mono text-primary focus:border-indigo-500 focus:outline-none"
                       />
                       <span className="text-muted">min between messages</span>
                       <button
@@ -1128,15 +1128,18 @@ export function InstagramSenderSettings() {
                         />
                       </div>
                       <div>
-                        <label className="block text-muted text-[11px] mb-1 font-medium">Minutes Between Messages (min 5)</label>
+                        <label className="block text-muted text-[11px] mb-1 font-medium">Minutes Between Messages (min 1)</label>
                         <input
                           type="number"
-                          min={5}
+                          min={MIN_TIMER_MINUTES}
                           max={1440}
                           value={editMinutesBetween}
                           onChange={(e) =>
                             setEditMinutesBetween(
-                              Math.min(1440, Math.max(5, parseInt(e.target.value) || 5)),
+                              Math.min(
+                                1440,
+                                Math.max(MIN_TIMER_MINUTES, parseInt(e.target.value) || MIN_TIMER_MINUTES),
+                              ),
                             )
                           }
                           className="w-full rounded-lg border border-subtle bg-subtle px-2.5 py-1.5 text-xs font-mono text-primary"
@@ -1201,7 +1204,7 @@ export function InstagramSenderSettings() {
                     </label>
                     {(() => {
                       const hours = Math.max(1, Number(editHoursEnd) - Number(editHoursStart));
-                      const capacity = Math.max(1, Math.floor((hours * 60) / Math.max(5, Number(editMinutesBetween))) + 1);
+                      const capacity = Math.max(1, Math.floor((hours * 60) / Math.max(MIN_TIMER_MINUTES, Number(editMinutesBetween))) + 1);
                       const warmupCap = sender.settings?.warmupCap ?? 8;
                       const effective = Math.min(Number(editDailyCap), editWarmupEnabled ? warmupCap : Number(editDailyCap), 40, capacity);
                       const risk: string[] = [];
