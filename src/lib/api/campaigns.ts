@@ -22,6 +22,11 @@ export type CampaignSummary = {
   location?: string | null;
   category?: string | null;
   leadLimit?: number | null;
+  sendWindowEnabled?: boolean;
+  sendWindowStart?: string | null;
+  sendWindowEnd?: string | null;
+  sendWindowDays?: number[] | null;
+  sendWindowTimezone?: string | null;
   followUpEnabled?: boolean;
   followUpCount?: number;
   followUpDelayDays?: number[];
@@ -120,6 +125,11 @@ export type CreateCampaignInput = {
   location?: string | null;
   category?: string | null;
   leadLimit?: number | null;
+  sendWindowEnabled?: boolean;
+  sendWindowStart?: string | null;
+  sendWindowEnd?: string | null;
+  sendWindowDays?: number[] | null;
+  sendWindowTimezone?: string | null;
   followUpEnabled?: boolean;
   followUpCount?: number;
   followUpDelayDays?: number[];
@@ -150,6 +160,11 @@ export type UpdateCampaignInput = {
   location?: string | null;
   category?: string | null;
   leadLimit?: number | null;
+  sendWindowEnabled?: boolean;
+  sendWindowStart?: string | null;
+  sendWindowEnd?: string | null;
+  sendWindowDays?: number[] | null;
+  sendWindowTimezone?: string | null;
   followUpEnabled?: boolean;
   followUpCount?: number;
   followUpDelayDays?: number[];

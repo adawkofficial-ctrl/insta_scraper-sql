@@ -148,8 +148,12 @@ export default function CampaignsPage() {
         {/* Top Header & Stats */}
         <div className="flex flex-col gap-6 md:flex-row md:items-center md:justify-between border-b border-subtle pb-6">
           <div>
-            <h1 className="text-2xl font-bold tracking-tight text-primary sm:text-3xl">
-              Campaigns Dashboard
+            <span className="inline-flex items-center gap-2 rounded-full border border-orange-500/30 bg-orange-500/10 px-2.5 py-0.5 text-[10px] font-semibold uppercase tracking-[0.18em] text-orange-300">
+              <span className="h-1.5 w-1.5 rounded-full bg-orange-500 animate-pulse" />
+              Outreach HQ
+            </span>
+            <h1 className="mt-3 text-2xl font-extrabold tracking-tight text-white sm:text-4xl">
+              Campaigns <span className="text-brand-gradient">Dashboard</span>
             </h1>
             <p className="mt-1 text-sm text-muted">
               Manage Instagram outreach campaigns, scraped leads, and profile datasets.
@@ -171,8 +175,8 @@ export default function CampaignsPage() {
         </div>
 
         {/* Metrics Grid */}
-        <div className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <Card className="p-5">
+        <div className="stagger mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <Card hoverable className="accent-top p-5">
             <div className="flex items-center justify-between">
               <span className="text-xs font-semibold uppercase tracking-wider text-muted">Total Campaigns</span>
               <span className="p-2 rounded-lg bg-indigo-500/10 text-indigo-600 dark:text-indigo-400">
@@ -186,7 +190,7 @@ export default function CampaignsPage() {
             </div>
           </Card>
 
-          <Card className="p-5">
+          <Card hoverable className="accent-top p-5">
             <div className="flex items-center justify-between">
               <span className="text-xs font-semibold uppercase tracking-wider text-muted">Total Leads Gathered</span>
               <span className="p-2 rounded-lg bg-indigo-500/10 text-indigo-600 dark:text-indigo-400">
@@ -200,7 +204,7 @@ export default function CampaignsPage() {
             </div>
           </Card>
 
-          <Card className="p-5">
+          <Card hoverable className="accent-top p-5">
             <div className="flex items-center justify-between">
               <span className="text-xs font-semibold uppercase tracking-wider text-muted">Total Messages</span>
               <span className="p-2 rounded-lg bg-emerald-500/10 text-emerald-600 dark:text-emerald-400">
@@ -214,7 +218,7 @@ export default function CampaignsPage() {
             </div>
           </Card>
 
-          <Card className="p-5">
+          <Card hoverable className="accent-top p-5">
             <div className="flex items-center justify-between">
               <span className="text-xs font-semibold uppercase tracking-wider text-muted">Active Scraping Jobs</span>
               <span className="p-2 rounded-lg bg-amber-500/10 text-amber-600 dark:text-amber-400">
@@ -282,15 +286,15 @@ export default function CampaignsPage() {
             /* Loading Skeleton */
             <div className="grid grid-cols-1 gap-4 sm:grid-cols-2 lg:grid-cols-3">
               {[1, 2, 3].map((i) => (
-                <Card key={i} className="h-44 p-5 animate-pulse">
+                <Card key={i} className="h-44 p-5">
                   <div className="flex justify-between items-start">
-                    <div className="h-5 w-36 rounded bg-subtle" />
-                    <div className="h-5 w-16 rounded-full bg-subtle" />
+                    <div className="h-5 w-36 rounded skeleton" />
+                    <div className="h-5 w-16 rounded-full skeleton" />
                   </div>
-                  <div className="mt-4 h-4 w-48 rounded bg-subtle" />
+                  <div className="mt-4 h-4 w-48 rounded skeleton" />
                   <div className="mt-8 flex justify-between">
-                    <div className="h-4 w-20 rounded bg-subtle" />
-                    <div className="h-4 w-24 rounded bg-subtle" />
+                    <div className="h-4 w-20 rounded skeleton" />
+                    <div className="h-4 w-24 rounded skeleton" />
                   </div>
                 </Card>
               ))}
@@ -325,12 +329,12 @@ export default function CampaignsPage() {
             </div>
           ) : (
             /* Populated Campaign Grid */
-            <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
+            <div className="stagger grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
               {campaigns.map((campaign) => (
                 <Card
                   key={campaign.id}
                   hoverable
-                  className="group relative flex flex-col justify-between p-5"
+                  className="accent-top group relative flex flex-col justify-between p-5"
                 >
                   <div>
                     <div className="flex items-start justify-between gap-3">

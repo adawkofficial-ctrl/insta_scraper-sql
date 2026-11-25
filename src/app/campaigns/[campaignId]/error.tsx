@@ -29,7 +29,7 @@ export default function CampaignError({
         <div className="flex justify-center gap-3 pt-2">
           <button
             onClick={() => reset()}
-            className="rounded-lg bg-rose-600 px-3.5 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-rose-500"
+            className="rounded-lg bg-orange-600 px-3.5 py-1.5 text-xs font-semibold text-white shadow-sm transition hover:bg-orange-500"
           >
             Retry
           </button>

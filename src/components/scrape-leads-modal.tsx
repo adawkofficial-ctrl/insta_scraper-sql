@@ -130,6 +130,9 @@ export function ScrapeLeadsModal({
     String(campaignLeadLimit ?? DEFAULT_MAX_LEADS),
   );
   const [progress, setProgress] = useState<DiscoveryProgress | null>(null);
+  const [discoverTarget, setDiscoverTarget] = useState<number>(
+    campaignLeadLimit ?? DEFAULT_MAX_LEADS,
+  );
   const [discoverResult, setDiscoverResult] =
     useState<DiscoverLeadsResponse | null>(null);
   const [budget, setBudget] = useState<ScraperBudgetInfo | null>(null);
@@ -182,6 +185,16 @@ export function ScrapeLeadsModal({
   const [error, setError] = useState<string | null>(null);
 
   if (!isOpen) return null;
+
+  // Live Apify discovery progress: determinate bar on leads actually saved
+  // against the requested target, plus the current pipeline stage.
+  const apifyTarget = Math.max(1, discoverTarget);
+  const apifySaved = progress?.persisted ?? 0;
+  const apifyPct =
+    progress?.stage === "done"
+      ? 100
+      : Math.min(99, Math.round((apifySaved / apifyTarget) * 100));
+  const apifyStageLabel = (progress?.stage ?? "starting").toUpperCase();
 
   const normalizeProfiles = (raw: string): string[] => {
     return raw
@@ -246,6 +259,7 @@ export function ScrapeLeadsModal({
 
     resetResults();
     setIsSubmitting(true);
+    setDiscoverTarget(parsedLimit);
 
     const parsedMinFollowers = minFollowers.trim() ? Number.parseInt(minFollowers.trim(), 10) : null;
     const parsedMaxFollowers = maxFollowers.trim() ? Number.parseInt(maxFollowers.trim(), 10) : null;
@@ -445,6 +459,34 @@ export function ScrapeLeadsModal({
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
               </svg>
               <span>{progress?.message ?? "Discovering Instagram profiles..."}</span>
+            </div>
+
+            {/* Determinate Apify progress bar */}
+            <div className="mt-3">
+              <div className="flex items-center justify-between font-mono text-[11px] text-indigo-200/80">
+                <span>
+                  Leads saved: <strong className="text-emerald-400">{apifySaved}</strong> / {apifyTarget}
+                </span>
+                <span>
+                  {apifyPct}% &bull; {apifyStageLabel}
+                </span>
+              </div>
+              <div
+                id="apify-discovery-progress-bar"
+                className="mt-1 h-2 w-full overflow-hidden rounded-full bg-indigo-950/70 ring-1 ring-inset ring-indigo-500/20"
+                role="progressbar"
+                aria-valuemin={0}
+                aria-valuemax={100}
+                aria-valuenow={apifyPct}
+                aria-label="Apify discovery progress"
+              >
+                <div
+                  className={`h-full rounded-full bg-gradient-to-r from-indigo-500 to-emerald-400 transition-[width] duration-500 ${
+                    progress?.stage === "discover" || !progress ? "animate-pulse" : ""
+                  }`}
+                  style={{ width: `${apifyPct}%` }}
+                />
+              </div>
             </div>
             <div className="mt-3 grid grid-cols-2 sm:grid-cols-3 gap-2 text-xs border-t border-indigo-500/20 pt-2.5 font-mono text-indigo-200/90">
               <div>

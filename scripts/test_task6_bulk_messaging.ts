@@ -281,7 +281,9 @@ async function main() {
     }),
   });
   const previewEmpty = await prevResEmpty.json() as any;
-  assert(previewEmpty.eligibleCount === 0 && previewEmpty.skippedCount === 1, "Lead with invalid URL yields 0 eligible and 1 skipped reason");
+  // Since 00cf7e9 the profile URL is rebuilt from a valid username, so a bad
+  // stored profileUrl alone no longer makes a lead ineligible.
+  assert(previewEmpty.eligibleCount === 1 && previewEmpty.skippedCount === 0, "Lead with bad stored URL but valid username is repaired and eligible");
 
   console.log("--- 11. Template rendering per recipient ---");
   assert(preview1.samples.length >= 2, "Preview returned personalized samples for recipients");

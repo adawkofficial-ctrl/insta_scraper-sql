@@ -275,6 +275,14 @@ model Campaign {
   executionMode           ExecutionMode  @default(MANUAL)
   messageApprovalRequired Boolean        @default(true)
   scheduledAt             DateTime?
+  // Campaign-level sending timetable. Additional constraint on top of each
+  // sender account's working hours: messages are only dispatched when the
+  // local campaign time falls inside this window and on an allowed weekday.
+  sendWindowEnabled       Boolean        @default(false)
+  sendWindowStart         String?        @db.VarChar(5) // "HH:MM" local
+  sendWindowEnd           String?        @db.VarChar(5) // "HH:MM" local
+  sendWindowDays          Json? // number[]: 0=Sunday .. 6=Saturday
+  sendWindowTimezone      String?        @db.VarChar(64)
   // Discovery intent (remember what the user searched for)
   intent                  String?        @db.Text
   location                String?        @db.VarChar(1000)

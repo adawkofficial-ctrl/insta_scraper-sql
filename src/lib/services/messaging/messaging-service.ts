@@ -28,6 +28,7 @@ import {
   executeMicroDelay,
   getSendGateNow,
   isDryRunLead,
+  isOutboundSendingEnabled,
 } from "./send-gate";
 import { extractDomainParts } from "../discovery/name-website-matcher";
 import { resolveLeadProfileUrl } from "../lead/profile-url";
@@ -519,6 +520,29 @@ export async function sendSingleMessage(
       );
     }
     activeReservationId = reservation.reservationId;
+  }
+
+  // Fail closed when no sender account could be resolved: without a sender
+  // there is no send-gate reservation, so the kill switch, caps, working
+  // hours and cooldowns would all be skipped.
+  // ("not_ready" senders keep their existing pre-dispatch failure handling.)
+  if (!activeReservationId && senderResolution.kind === "none") {
+    if (!isOutboundSendingEnabled()) {
+      throw new BadRequestError("SENDING_DISABLED", "Outbound sending is disabled.");
+    }
+    // Legacy single-session Playwright mode legitimately has no sender rows.
+    // Real Unipile without a sender row would DM from an arbitrary connected
+    // account with no caps/ledger, so it is refused. (MOCK_UNIPILE is a
+    // test-only flag and is rejected in production by the readiness probe.)
+    const usesRealUnipile =
+      getServerEnv("MESSAGING_PROVIDER")?.toLowerCase() === "unipile" &&
+      !(process.env.MOCK_UNIPILE === "1" && process.env.NODE_ENV !== "production");
+    if (usesRealUnipile && process.env.NODE_ENV !== "test") {
+      throw new BadRequestError(
+        "NO_SENDER",
+        "No Instagram sender account is connected. Connect a sender in Settings before sending.",
+      );
+    }
   }
 
   // Cross-campaign first-contact ledger: exactly one reservation per handle.

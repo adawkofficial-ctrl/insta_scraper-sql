@@ -16,20 +16,20 @@ export interface BadgeProps extends React.HTMLAttributes<HTMLSpanElement> {
 
 const variantStyles: Record<BadgeVariant, { badge: string; dot: string }> = {
   primary: {
-    badge: "bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 border-indigo-500/20",
-    dot: "bg-indigo-500",
+    badge: "bg-orange-500/12 text-orange-300 border-orange-500/30",
+    dot: "bg-orange-500",
   },
   default: {
-    badge: "bg-indigo-500/10 text-indigo-700 dark:text-indigo-300 border-indigo-500/20",
-    dot: "bg-indigo-500",
+    badge: "bg-orange-500/12 text-orange-300 border-orange-500/30",
+    dot: "bg-orange-500",
   },
   success: {
     badge: "bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-500/20",
     dot: "bg-emerald-500",
   },
   warning: {
-    badge: "bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-500/20",
-    dot: "bg-amber-500",
+    badge: "bg-yellow-400/10 text-yellow-300 border-yellow-400/25",
+    dot: "bg-yellow-400",
   },
   danger: {
     badge: "bg-rose-500/10 text-rose-700 dark:text-rose-400 border-rose-500/20",
@@ -40,7 +40,7 @@ const variantStyles: Record<BadgeVariant, { badge: string; dot: string }> = {
     dot: "bg-sky-500",
   },
   neutral: {
-    badge: "bg-slate-500/10 text-slate-700 dark:text-slate-300 border-slate-500/20",
+    badge: "bg-white/5 text-zinc-300 border-white/10",
     dot: "bg-slate-400",
   },
 };

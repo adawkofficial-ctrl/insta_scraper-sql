@@ -1,27 +1,27 @@
 {
-  "generatedAt": "2026-11-13T18:19:10.319Z",
-  "baseUrl": "http://localhost:50712",
-  "database": "insta_scraper_test",
+  "generatedAt": "2026-11-25T08:06:01.267Z",
+  "baseUrl": "http://localhost:63264",
+  "database": "insta_scraper_mysql_test",
   "runExternal": false,
   "totals": {
     "pass": 1,
     "fail": 0,
     "blocked": 0,
     "skipped": 0,
-    "assertionsPassed": 66,
+    "assertionsPassed": 39,
     "assertionsFailed": 0
   },
   "suites": [
     {
-      "file": "test_task8_execution_engine.ts",
+      "file": "test_task6_bulk_messaging.ts",
       "category": "api",
       "kind": "deterministic",
       "needsServer": true,
       "result": "PASS",
-      "passed": 66,
+      "passed": 39,
       "failed": 0,
-      "note": "exit=0 66s",
-      "dbName": "insta_scraper_test"
+      "note": "exit=0 46s",
+      "dbName": "insta_scraper_mysql_test"
     }
   ]
 }

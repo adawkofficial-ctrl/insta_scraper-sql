@@ -57,7 +57,36 @@ const nextConfig: NextConfig = {
   turbopack: {
     root: projectRoot,
   },
-  webpack: (config, { dev }) => {
+  webpack: (config, { dev, isServer, nextRuntime }) => {
+    // instrumentation.ts boots the outreach scheduler, which imports
+    // Prisma/MariaDB, Playwright and Apify. Next also compiles instrumentation
+    // for the browser/edge runtimes, where those Node-only packages cannot
+    // resolve. Externalizing the scheduler stops webpack tracing its graph in
+    // those bundles; the NEXT_RUNTIME guard means it is never required there.
+    if (!isServer || nextRuntime === "edge") {
+      type ExternalFn = (
+        data: { request?: string },
+        callback: (err?: Error | null, result?: string) => void,
+      ) => void;
+      const previousExternals = config.externals;
+      const schedulerExternal: ExternalFn = ({ request }, callback) => {
+        if (request && /services[\\/]scheduler[\\/]outreach-scheduler$/.test(request)) {
+          callback(null, `commonjs ${request}`);
+          return;
+        }
+        if (typeof previousExternals === "function") {
+          (previousExternals as unknown as ExternalFn)({ request }, callback);
+          return;
+        }
+        callback();
+      };
+      const existing = Array.isArray(previousExternals)
+        ? previousExternals
+        : previousExternals
+          ? [previousExternals]
+          : [];
+      config.externals = [...existing, schedulerExternal] as typeof config.externals;
+    }
     if (dev) {
       // Constrain Webpack/Watchpack to the project directory and explicitly
       // ignore drive-root system folders.

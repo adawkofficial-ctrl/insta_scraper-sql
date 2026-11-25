@@ -1,101 +1,164 @@
 @import "tailwindcss";
 
+/* Make every `dark:` variant follow the `.dark` class on <html> instead of the
+   OS colour-scheme media query, so the whole app renders one consistent theme. */
+@custom-variant dark (&:where(.dark, .dark *));
+
 /* ==========================================================================
-   INSTASCRAPER DESIGN SYSTEM TOKENS (Tailwind v4)
-   Light & Dark Mode Token Specifications
-   Default is DARK mode on first load for consistency with brand identity.
+   INSTASCRAPER DESIGN SYSTEM — "Ember" (Tailwind v4)
+
+   Colour budget:  ~50% BLACK  (canvas, surfaces, wells)
+                   ~30% ORANGE (brand, primary actions, active states, data accents)
+                   ~20% WHITE  (headings, body copy, key numbers)
+
+   Components hardcode Tailwind palette classes (zinc / indigo / purple ...).
+   Rather than touch thousands of call sites, the palettes are remapped here:
+     - zinc / slate / gray  -> true neutral black scale
+     - indigo / violet / purple -> orange brand scale
    ========================================================================== */
 
-:root {
-  /* Font Families */
-  --font-sans: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+@theme {
+  --font-sans: "Inter", system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
 
-  /* Backgrounds */
-  --bg-app: #f8fafc;                  /* Canvas / page background */
-  --bg-surface: #ffffff;              /* Standard card & container surface */
-  --bg-surface-elevated: #ffffff;     /* Modals, dropdowns, floating panels */
-  --bg-surface-hover: #f1f5f9;        /* Hover state for interactive items */
-  --bg-subtle: #f1f5f9;               /* Light contrast panels / inner wells */
-  --bg-input: #ffffff;                /* Form input background */
+  /* Neutral black scale (replaces the default blue-tinted zinc). */
+  --color-zinc-50: #fafafa;
+  --color-zinc-100: #f5f5f5;
+  --color-zinc-200: #e8e8e8;
+  --color-zinc-300: #d0d0d0;
+  --color-zinc-400: #a6a6a6;
+  --color-zinc-500: #8a8a8a;
+  --color-zinc-600: #5c5c5c;
+  --color-zinc-700: #2f2f2f;
+  --color-zinc-800: #1d1d1d;
+  --color-zinc-900: #121212;
+  --color-zinc-950: #070707;
 
-  /* Borders */
-  --border-subtle: #e2e8f0;           /* Soft divider / card perimeter */
-  --border-default: #cbd5e1;          /* Interactive borders & inputs */
-  --border-strong: #94a3b8;           /* High contrast borders */
+  --color-slate-50: #fafafa;
+  --color-slate-100: #f5f5f5;
+  --color-slate-200: #e8e8e8;
+  --color-slate-300: #d0d0d0;
+  --color-slate-400: #a6a6a6;
+  --color-slate-500: #8a8a8a;
+  --color-slate-600: #5c5c5c;
+  --color-slate-700: #2f2f2f;
+  --color-slate-800: #1d1d1d;
+  --color-slate-900: #121212;
+  --color-slate-950: #070707;
 
-  /* Typography Colors */
-  --text-primary: #0f172a;            /* Main titles, headings, high-contrast text */
-  --text-secondary: #334155;          /* Subtitles, body text, card labels */
-  --text-muted: #64748b;              /* Captions, timestamps, disabled indicators */
-  --text-faint: #94a3b8;              /* Micro-labels, subtle dividers */
+  --color-gray-400: #a6a6a6;
+  --color-gray-500: #8a8a8a;
+  --color-gray-700: #2f2f2f;
+  --color-gray-800: #1d1d1d;
+  --color-gray-900: #121212;
 
-  /* Brand Accent — Modern Indigo/Violet */
-  --primary: #4f46e5;                 /* Primary buttons & active nav indicators */
-  --primary-hover: #4338ca;           /* Button hover / active */
-  --primary-fg: #ffffff;              /* Text on primary */
-  --primary-subtle: #eef2ff;          /* Primary tint backgrounds */
-  --primary-border: #c7d2fe;          /* Primary boundary borders */
+  /* Orange brand scale — used for indigo, violet and purple call sites. */
+  --color-indigo-50: #fff6ed;
+  --color-indigo-100: #ffead4;
+  --color-indigo-200: #ffd0a8;
+  --color-indigo-300: #ffb070;
+  --color-indigo-400: #ff9142;
+  --color-indigo-500: #ff7a1a;
+  --color-indigo-600: #f26405;
+  --color-indigo-700: #c94c06;
+  --color-indigo-800: #9e3c0d;
+  --color-indigo-900: #7f330f;
+  --color-indigo-950: #451705;
 
-  /* Semantic — Success (Leads Contacted / Approved / Scrape Completed) */
-  --success: #059669;
-  --success-hover: #047857;
-  --success-subtle: #ecfdf5;
-  --success-border: #a7f3d0;
-  --success-fg: #065f46;
+  --color-violet-50: #fff6ed;
+  --color-violet-100: #ffead4;
+  --color-violet-200: #ffd0a8;
+  --color-violet-300: #ffb070;
+  --color-violet-400: #ff9142;
+  --color-violet-500: #ff7a1a;
+  --color-violet-600: #f26405;
+  --color-violet-700: #c94c06;
+  --color-violet-800: #9e3c0d;
+  --color-violet-900: #7f330f;
+  --color-violet-950: #451705;
 
-  /* Semantic — Warning (Pending Review / Running / In Progress) */
-  --warning: #d97706;
-  --warning-hover: #b45309;
-  --warning-subtle: #fffbeb;
-  --warning-border: #fde68a;
-  --warning-fg: #92400e;
+  /* Purple maps to a deeper amber-orange so gradients keep some depth. */
+  --color-purple-300: #ffc06b;
+  --color-purple-400: #ffa733;
+  --color-purple-500: #ff8f0f;
+  --color-purple-600: #e0700a;
+  --color-purple-700: #b85607;
+  --color-purple-900: #6b3206;
 
-  /* Semantic — Danger (Failed / Blocked / Rejected / DNC) */
-  --danger: #e11d48;
-  --danger-hover: #be123c;
-  --danger-subtle: #fff1f2;
-  --danger-border: #fecdd3;
-  --danger-fg: #9f1239;
-
-  /* Semantic — Info / Notice (Queued / Idle / New Leads) */
-  --info: #0284c7;
-  --info-hover: #0369a1;
-  --info-subtle: #f0f9ff;
-  --info-border: #bae6fd;
-  --info-fg: #075985;
-
-  /* Elevation & Shadows */
-  --shadow-card: 0 1px 3px 0 rgb(0 0 0 / 0.05), 0 1px 2px -1px rgb(0 0 0 / 0.05);
-  --shadow-card-hover: 0 4px 6px -1px rgb(0 0 0 / 0.07), 0 2px 4px -2px rgb(0 0 0 / 0.05);
-  --shadow-popover: 0 10px 15px -3px rgb(0 0 0 / 0.08), 0 4px 6px -4px rgb(0 0 0 / 0.05);
+  /* Animations */
+  --animate-fade-in: fade-in 0.35s ease-out both;
+  --animate-fade-up: fade-up 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+  --animate-scale-in: scale-in 0.22s cubic-bezier(0.22, 1, 0.36, 1) both;
+  --animate-slide-in-right: slide-in-right 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+  --animate-shimmer: shimmer 1.6s linear infinite;
+  --animate-glow: glow 2.4s ease-in-out infinite;
 }
 
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes fade-up {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes scale-in {
+  from { opacity: 0; transform: translateY(6px) scale(0.97); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes slide-in-right {
+  from { opacity: 0.4; transform: translateX(32px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes shimmer {
+  from { background-position: -200% 0; }
+  to { background-position: 200% 0; }
+}
+
+@keyframes glow {
+  0%, 100% { box-shadow: 0 0 0 0 rgb(255 122 26 / 0); }
+  50% { box-shadow: 0 0 18px 2px rgb(255 122 26 / 0.35); }
+}
+
+/* ==========================================================================
+   DESIGN TOKENS
+   The app is black-first. :root and .dark share the same palette so the UI is
+   identical whichever class is on <html>.
+   ========================================================================== */
+
+:root,
 .dark {
-  /* Backgrounds */
-  --bg-app: #090d16;                  /* Deep obsidian page background */
-  --bg-surface: #0f172a;              /* Slate-900 surface for cards */
-  --bg-surface-elevated: #162032;     /* Slightly lighter for elevated panels */
-  --bg-surface-hover: #1e293b;        /* Slate-800 hover state */
-  --bg-subtle: #141d2e;               /* Inner card wells & code blocks */
-  --bg-input: #0b1120;                /* Input background */
+  color-scheme: dark;
+
+  /* Backgrounds — black (≈50%) */
+  --bg-app: #000000;
+  --bg-surface: #0d0d0d;
+  --bg-surface-elevated: #141414;
+  --bg-surface-hover: #1a1a1a;
+  --bg-subtle: #111111;
+  --bg-input: #0a0a0a;
 
   /* Borders */
-  --border-subtle: #1e293b;           /* Slate-800 soft borders */
-  --border-default: #334155;          /* Slate-700 interactive borders */
-  --border-strong: #475569;           /* Slate-600 high contrast */
+  --border-subtle: #1f1f1f;
+  --border-default: #2e2e2e;
+  --border-strong: #474747;
 
-  /* Typography Colors */
-  --text-primary: #f8fafc;            /* Crisp white/slate-50 titles */
-  --text-secondary: #cbd5e1;          /* Slate-300 secondary text */
-  --text-muted: #94a3b8;              /* Slate-400 captions & meta */
-  --text-faint: #64748b;              /* Slate-500 micro-labels */
+  /* Typography — white (≈20%) */
+  --text-primary: #ffffff;
+  --text-secondary: #d9d9d9;
+  --text-muted: #9a9a9a;
+  --text-faint: #6b6b6b;
 
-  /* Brand Accent — Modern Indigo/Violet (tuned for dark background luminance) */
-  --primary: #6366f1;
-  --primary-hover: #818cf8;
+  /* Brand — orange (≈30%) */
+  --primary: #ff7a1a;
+  --primary-hover: #ff9142;
   --primary-fg: #ffffff;
-  --primary-subtle: rgba(99, 102, 241, 0.15);
-  --primary-border: rgba(99, 102, 241, 0.35);
+  --primary-subtle: rgba(255, 122, 26, 0.12);
+  --primary-border: rgba(255, 122, 26, 0.35);
+  --primary-glow: rgba(255, 122, 26, 0.25);
 
   /* Semantic — Success */
   --success: #34d399;
@@ -104,11 +167,11 @@
   --success-border: rgba(16, 185, 129, 0.3);
   --success-fg: #6ee7b7;
 
-  /* Semantic — Warning */
-  --warning: #fbbf24;
-  --warning-hover: #fcd34d;
-  --warning-subtle: rgba(245, 158, 11, 0.14);
-  --warning-border: rgba(245, 158, 11, 0.3);
+  /* Semantic — Warning (yellow, kept distinct from the orange brand) */
+  --warning: #facc15;
+  --warning-hover: #fde047;
+  --warning-subtle: rgba(250, 204, 21, 0.12);
+  --warning-border: rgba(250, 204, 21, 0.3);
   --warning-fg: #fde68a;
 
   /* Semantic — Danger */
@@ -118,80 +181,202 @@
   --danger-border: rgba(244, 63, 94, 0.3);
   --danger-fg: #fecdd3;
 
-  /* Semantic — Info / Notice */
+  /* Semantic — Info */
   --info: #38bdf8;
   --info-hover: #7dd3fc;
   --info-subtle: rgba(56, 189, 248, 0.14);
   --info-border: rgba(56, 189, 248, 0.3);
   --info-fg: #bae6fd;
 
-  /* Elevation & Shadows */
-  --shadow-card: 0 1px 3px 0 rgb(0 0 0 / 0.35), 0 1px 2px -1px rgb(0 0 0 / 0.35);
-  --shadow-card-hover: 0 4px 6px -1px rgb(0 0 0 / 0.45), 0 2px 4px -2px rgb(0 0 0 / 0.4);
-  --shadow-popover: 0 10px 15px -3px rgb(0 0 0 / 0.5), 0 4px 6px -4px rgb(0 0 0 / 0.4);
+  /* Elevation */
+  --shadow-card: 0 1px 0 0 rgb(255 255 255 / 0.03) inset, 0 1px 3px 0 rgb(0 0 0 / 0.6);
+  --shadow-card-hover: 0 1px 0 0 rgb(255 255 255 / 0.04) inset, 0 10px 30px -12px rgb(255 122 26 / 0.28), 0 4px 10px -4px rgb(0 0 0 / 0.6);
+  --shadow-popover: 0 20px 50px -12px rgb(0 0 0 / 0.85), 0 0 0 1px rgb(255 255 255 / 0.04);
+}
+
+/* ==========================================================================
+   BASE
+   ========================================================================== */
+
+html {
+  background: var(--bg-app);
+}
+
+body {
+  background-color: var(--bg-app);
+  /* A soft orange ember glow behind the top of every page. */
+  background-image:
+    radial-gradient(1100px 480px at 15% -10%, rgb(255 122 26 / 0.10), transparent 60%),
+    radial-gradient(900px 420px at 100% 0%, rgb(255 145 66 / 0.06), transparent 55%);
+  background-attachment: fixed;
+  background-repeat: no-repeat;
+}
+
+::selection {
+  background: #ff7a1a;
+  color: #000;
+}
+
+:focus-visible {
+  outline: 2px solid rgb(255 122 26 / 0.7);
+  outline-offset: 2px;
+}
+
+/* Inputs: dark wells with an orange focus ring. */
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]),
+select,
+textarea {
+  caret-color: #ff7a1a;
+  transition: border-color 150ms ease, box-shadow 150ms ease, background-color 150ms ease;
+}
+input:not([type="checkbox"]):not([type="radio"]):not([type="range"]):focus,
+select:focus,
+textarea:focus {
+  border-color: rgb(255 122 26 / 0.6) !important;
+  box-shadow: 0 0 0 3px rgb(255 122 26 / 0.15);
+  outline: none;
+}
+
+input[type="checkbox"],
+input[type="radio"],
+input[type="range"] {
+  accent-color: #ff7a1a;
+}
+
+/* Scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #2f2f2f transparent;
+}
+*::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+*::-webkit-scrollbar-thumb {
+  background: #2a2a2a;
+  border-radius: 999px;
+  border: 2px solid transparent;
+  background-clip: padding-box;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: #ff7a1a;
+  background-clip: padding-box;
+}
+
+/* Buttons get a subtle press feedback everywhere. */
+button:not(:disabled) {
+  transition-property: color, background-color, border-color, box-shadow, transform, opacity;
+  transition-duration: 150ms;
+}
+button:not(:disabled):active {
+  transform: translateY(1px) scale(0.985);
+}
+
+/* ==========================================================================
+   MOTION
+   ========================================================================== */
+
+/* Page sections cascade in on load. */
+main > * {
+  animation: var(--animate-fade-up);
+}
+main > *:nth-child(2) { animation-delay: 40ms; }
+main > *:nth-child(3) { animation-delay: 80ms; }
+main > *:nth-child(4) { animation-delay: 120ms; }
+main > *:nth-child(5) { animation-delay: 160ms; }
+main > *:nth-child(6) { animation-delay: 200ms; }
+main > *:nth-child(n + 7) { animation-delay: 240ms; }
+
+/* Grid children (stat tiles, campaign cards, lead cards) stagger in. */
+.stagger > * {
+  animation: var(--animate-fade-up);
+}
+.stagger > *:nth-child(2) { animation-delay: 35ms; }
+.stagger > *:nth-child(3) { animation-delay: 70ms; }
+.stagger > *:nth-child(4) { animation-delay: 105ms; }
+.stagger > *:nth-child(5) { animation-delay: 140ms; }
+.stagger > *:nth-child(6) { animation-delay: 175ms; }
+.stagger > *:nth-child(n + 7) { animation-delay: 210ms; }
+
+/* Modal backdrops fade, modal panels pop. Matches the shared overlay markup. */
+.fixed.inset-0[class*="bg-black/"] {
+  animation: var(--animate-fade-in);
+  animation-duration: 0.2s;
+}
+.fixed.inset-0.z-50.flex > :not(.fixed) {
+  animation: var(--animate-scale-in);
+}
+
+.skeleton {
+  background: linear-gradient(90deg, #121212 0%, #1f1f1f 40%, #121212 80%);
+  background-size: 200% 100%;
+  animation: var(--animate-shimmer);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    animation-delay: 0ms !important;
+    transition-duration: 0.01ms !important;
+  }
 }
 
 /* ==========================================================================
    SEMANTIC UTILITY ALIASES
-   These classes automatically adapt based on light/dark mode without extra variants.
    ========================================================================== */
 
-.bg-app {
-  background-color: var(--bg-app);
+.bg-app { background-color: var(--bg-app); }
+.bg-surface { background-color: var(--bg-surface); }
+.bg-surface-elevated { background-color: var(--bg-surface-elevated); }
+.bg-surface-hover { background-color: var(--bg-surface-hover); }
+.bg-subtle { background-color: var(--bg-subtle); }
+
+.border-subtle { border-color: var(--border-subtle); }
+.border-default { border-color: var(--border-default); }
+.border-strong { border-color: var(--border-strong); }
+.divide-subtle > :not(:last-child) { border-color: var(--border-subtle); }
+
+.text-primary { color: var(--text-primary); }
+.text-secondary { color: var(--text-secondary); }
+.text-muted { color: var(--text-muted); }
+.text-faint { color: var(--text-faint); }
+
+.shadow-card { box-shadow: var(--shadow-card); }
+.shadow-card-hover { box-shadow: var(--shadow-card-hover); }
+.shadow-popover { box-shadow: var(--shadow-popover); }
+
+/* Brand helpers */
+.text-brand { color: var(--primary); }
+.bg-brand { background-color: var(--primary); }
+.border-brand { border-color: var(--primary-border); }
+
+.bg-brand-gradient {
+  background-image: linear-gradient(135deg, #ff9142 0%, #ff7a1a 45%, #e0560a 100%);
 }
 
-.bg-surface {
-  background-color: var(--bg-surface);
+.text-brand-gradient {
+  background-image: linear-gradient(90deg, #ffb070 0%, #ff7a1a 50%, #ff5a0a 100%);
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
 }
 
-.bg-surface-elevated {
-  background-color: var(--bg-surface-elevated);
+/* A card with a thin orange accent rail across its top edge. */
+.accent-top {
+  position: relative;
+  overflow: hidden;
 }
-
-.bg-surface-hover {
-  background-color: var(--bg-surface-hover);
-}
-
-.bg-subtle {
-  background-color: var(--bg-subtle);
-}
-
-.border-subtle {
-  border-color: var(--border-subtle);
-}
-
-.border-default {
-  border-color: var(--border-default);
-}
-
-.border-strong {
-  border-color: var(--border-strong);
-}
-
-.text-primary {
-  color: var(--text-primary);
-}
-
-.text-secondary {
-  color: var(--text-secondary);
-}
-
-.text-muted {
-  color: var(--text-muted);
-}
-
-.text-faint {
-  color: var(--text-faint);
-}
-
-.shadow-card {
-  box-shadow: var(--shadow-card);
-}
-
-.shadow-card-hover {
-  box-shadow: var(--shadow-card-hover);
-}
-
-.shadow-popover {
-  box-shadow: var(--shadow-popover);
+.accent-top::before {
+  content: "";
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 2px;
+  background: linear-gradient(90deg, transparent, #ff7a1a 30%, #ffb070 70%, transparent);
+  opacity: 0.85;
 }

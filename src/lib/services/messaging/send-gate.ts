@@ -117,9 +117,27 @@ export function isOutboundSendingEnabled(): boolean {
   if (process.env.NODE_ENV === "test" && outboundSendingOverride !== null) {
     return outboundSendingOverride;
   }
+  // Global halt flags stop ALL outbound sends (first messages, follow-ups,
+  // replies), not only replies.
+  if (isGlobalHaltActive()) return false;
   const envVal = process.env.OUTBOUND_SENDING_ENABLED?.trim().toLowerCase();
   return envVal === "true" || envVal === "1";
 }
+
+export function isGlobalHaltActive(): boolean {
+  const truthy = (v: string | undefined) => ["true", "1", "yes"].includes(v?.trim().toLowerCase() ?? "");
+  return truthy(process.env.PAUSE_ALL_MESSAGING) || truthy(process.env.EMERGENCY_STOP);
+}
+
+/** Policy blocks (ledger/DNC/duplicate) are not delivery failures and must not pause a sender. */
+const NON_SENDER_ERROR_CODES = new Set([
+  "ALREADY_CONTACTED",
+  "UNKNOWN_PENDING",
+  "LEDGER_CONFLICT",
+  "DNC_SUPPRESSED",
+  "DUPLICATE_MESSAGE",
+  "SEND_SKIPPED",
+]);
 
 export function isDryRunLead(lead: {
   isDryRun?: boolean | null;
@@ -195,6 +213,21 @@ export function getRandomGapMs(
   const max = Math.max(min, maxSeconds * 1000);
   if (min === max) return min;
   return Math.floor(min + rng() * (max - min));
+}
+
+/**
+ * Stable pseudo-random value in [0, 1) for a given key. Used so the jittered
+ * gap after a send is chosen once per (sender, lastSentAt) and stays the same
+ * on every re-check; re-rolling it made a worker that waited until retryAt
+ * hit a fresh, longer gap and fail with COOLDOWN_ACTIVE.
+ */
+export function stableFraction(key: string): number {
+  let h = 2166136261;
+  for (let i = 0; i < key.length; i++) {
+    h ^= key.charCodeAt(i);
+    h = Math.imul(h, 16777619);
+  }
+  return ((h >>> 0) % 1_000_000) / 1_000_000;
 }
 
 // Micro delay before API call
@@ -318,6 +351,103 @@ export type WorkingHoursCheck = {
   nextWindowStart: Date;
   timezone: string;
 };
+
+export type SendWindowCheck = {
+  inWindow: boolean;
+  localWeekday: number;
+  localMinuteOfDay: number;
+  retryAt?: Date;
+};
+
+const SEND_WINDOW_WEEKDAYS: Record<string, number> = {
+  sun: 0, mon: 1, tue: 2, wed: 3, thu: 4, fri: 5, sat: 6,
+};
+
+export function parseSendWindowDays(value: unknown): number[] | null {
+  if (!Array.isArray(value)) return null;
+  const days = Array.from(
+    new Set(
+      value
+        .map((v) => Number(v))
+        .filter((n) => Number.isInteger(n) && n >= 0 && n <= 6),
+    ),
+  );
+  return days.length > 0 ? days.sort((a, b) => a - b) : null;
+}
+
+function parseMinutesOfDay(value: string | null | undefined, fallbackMinutes: number): number {
+  const match = /^(\d{1,2}):(\d{2})$/.exec((value ?? "").trim());
+  if (!match) return fallbackMinutes;
+  const hours = Number(match[1]);
+  const minutes = Number(match[2]);
+  if (!Number.isFinite(hours) || !Number.isFinite(minutes) || hours > 23 || minutes > 59) {
+    return fallbackMinutes;
+  }
+  return hours * 60 + minutes;
+}
+
+/**
+ * Campaign-level sending timetable. Evaluated in the campaign's timezone and
+ * on its allowed weekdays; overnight windows (end <= start) are supported.
+ */
+export function isWithinSendWindow(
+  now: Date,
+  timezone: string | null | undefined,
+  start: string | null | undefined,
+  end: string | null | undefined,
+  days: number[] | null,
+): SendWindowCheck {
+  let tz = timezone && timezone.trim() ? timezone.trim() : "UTC";
+  try {
+    Intl.DateTimeFormat("en-US", { timeZone: tz });
+  } catch {
+    tz = "UTC";
+  }
+
+  const formatter = new Intl.DateTimeFormat("en-US", {
+    timeZone: tz,
+    hour: "numeric",
+    minute: "numeric",
+    weekday: "short",
+    hour12: false,
+  });
+  const partMap: Record<string, string> = {};
+  for (const part of formatter.formatToParts(now)) partMap[part.type] = part.value;
+
+  let hour = parseInt(partMap.hour ?? "0", 10);
+  if (hour === 24) hour = 0;
+  const minute = parseInt(partMap.minute ?? "0", 10);
+  const weekday = SEND_WINDOW_WEEKDAYS[(partMap.weekday ?? "").toLowerCase().slice(0, 3)] ?? 0;
+  const minuteOfDay = hour * 60 + minute;
+
+  const startMin = parseMinutesOfDay(start, 9 * 60);
+  const endMin = parseMinutesOfDay(end, 18 * 60);
+  const timeOk =
+    endMin === startMin
+      ? true
+      : endMin > startMin
+        ? minuteOfDay >= startMin && minuteOfDay < endMin
+        : minuteOfDay >= startMin || minuteOfDay < endMin;
+  const dayOk = !days || days.length === 0 || days.includes(weekday);
+  const inWindow = timeOk && dayOk;
+
+  let retryAt: Date | undefined;
+  if (!inWindow) {
+    let deltaMinutes = 7 * 1440;
+    for (let offset = 0; offset < 8; offset++) {
+      const candidateDay = (weekday + offset) % 7;
+      if (days && days.length > 0 && !days.includes(candidateDay)) continue;
+      const candidateDelta = offset * 1440 + (startMin - minuteOfDay);
+      if (candidateDelta > 0) {
+        deltaMinutes = candidateDelta;
+        break;
+      }
+    }
+    retryAt = new Date(now.getTime() + deltaMinutes * 60000);
+  }
+
+  return { inWindow, localWeekday: weekday, localMinuteOfDay: minuteOfDay, retryAt };
+}
 
 export function isWithinWorkingHours(
   now: Date,
@@ -600,6 +730,7 @@ export type CanSendNowResult = {
     warmupStage: string;
     daysActive: number;
     workingHoursCheck?: WorkingHoursCheck;
+    campaignWindowCheck?: SendWindowCheck;
   };
 };
 
@@ -952,6 +1083,45 @@ export async function canSendNow(
     };
   }
 
+  // 5a. Campaign send timetable (days + local sending window)
+  if (!input.bypassWorkingHours && input.campaignId) {
+    const campaignWindow = await prisma.campaign.findUnique({
+      where: { id: input.campaignId },
+      select: {
+        sendWindowEnabled: true,
+        sendWindowStart: true,
+        sendWindowEnd: true,
+        sendWindowDays: true,
+        sendWindowTimezone: true,
+      },
+    });
+    if (campaignWindow?.sendWindowEnabled) {
+      const windowCheck = isWithinSendWindow(
+        now,
+        campaignWindow.sendWindowTimezone || sender.timezone || "UTC",
+        campaignWindow.sendWindowStart,
+        campaignWindow.sendWindowEnd,
+        parseSendWindowDays(campaignWindow.sendWindowDays),
+      );
+      if (!windowCheck.inWindow) {
+        return {
+          allowed: false,
+          reason: "OUTSIDE_CAMPAIGN_WINDOW",
+          retryAt: windowCheck.retryAt,
+          details: {
+            dailyCap: effectiveDailyCap,
+            sentToday: effectiveSentToday,
+            hourlyCap,
+            sentThisHour: effectiveSentThisHour,
+            warmupStage: warmup.stage,
+            daysActive: warmup.daysActive,
+            campaignWindowCheck: windowCheck,
+          },
+        };
+      }
+    }
+  }
+
   // 5b. Per-account stagger on the first send of the day.
   const offsetSeconds = sender.scheduleOffsetSeconds ?? 0;
   if (effectiveSentToday === 0 && offsetSeconds > 0) {
@@ -978,7 +1148,8 @@ export async function canSendNow(
   if (!input.bypassGapCheck && sender.lastSentAt) {
     const minSec = sender.customMinGapSeconds ?? getSenderMinGapSeconds();
     const maxSec = sender.customMaxGapSeconds ?? getSenderMaxGapSeconds();
-    const requiredGapMs = getRandomGapMs(minSec, maxSec);
+    const gapKey = `${sender.id}:${sender.lastSentAt.getTime()}`;
+    const requiredGapMs = getRandomGapMs(minSec, maxSec, () => stableFraction(gapKey));
     const elapsedMs = now.getTime() - sender.lastSentAt.getTime();
 
     if (elapsedMs < requiredGapMs) {
@@ -1428,6 +1599,9 @@ export async function releaseSendSlot(
       });
 
       if (sender) {
+        if (NON_SENDER_ERROR_CODES.has(result.errorCode ?? "")) {
+          return;
+        }
         const nextConsecutiveErrors = sender.consecutiveErrors + 1;
         const isDanger = isDangerErrorCode(result.errorCode);
 

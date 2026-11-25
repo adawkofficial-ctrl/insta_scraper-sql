@@ -130,6 +130,55 @@ function formatWebsiteEnrichedTitle(info: LeadWebsiteEnrichment): string {
     : `Website scraped${when}. No Instagram handle found. Socials: ${socials}.`;
 }
 
+type WebsiteScrapeState = {
+  phase: "scrape" | "profiles" | "done" | "error";
+  total: number;
+  processed: number;
+  found: number;
+  handlesFound: number;
+  emailsFound: number;
+  phonesFound: number;
+  socialsFound: number;
+  notFound: number;
+  failed: number;
+  profilesTotal: number;
+  profilesProcessed: number;
+  currentWebsite: string | null;
+  currentLead: string | null;
+  message: string;
+};
+
+type WebsiteScrapeEvent =
+  | { type: "start"; campaignId: string }
+  | {
+      type: "progress";
+      total: number;
+      processed: number;
+      found: number;
+      handlesFound: number;
+      emailsFound: number;
+      phonesFound: number;
+      socialsFound: number;
+      notFound: number;
+      failed: number;
+      currentWebsite: string | null;
+      currentLead: string | null;
+    }
+  | { type: "phase"; phase: "profiles"; total: number; processed: number; message: string }
+  | {
+      type: "result";
+      totalChecked: number;
+      processed: number;
+      found: number;
+      handlesFound: number;
+      emailsFound: number;
+      socialsFound: number;
+      notFound: number;
+      profilesEnriched?: number;
+      belowCriteria?: number;
+    }
+  | { type: "error"; error: { message: string } };
+
 import { ApiClientError } from "@/lib/api/client";
 import { Navbar } from "@/components/navbar";
 import { ScrapeLeadsModal } from "@/components/scrape-leads-modal";
@@ -210,6 +259,7 @@ export default function CampaignDetailPage() {
   const [isCsvUploadModalOpen, setIsCsvUploadModalOpen] = useState(false);
   const [isExportingCsv, setIsExportingCsv] = useState(false);
   const [isRehandling, setIsRehandling] = useState(false);
+  const [websiteScrape, setWebsiteScrape] = useState<WebsiteScrapeState | null>(null);
   const [showDeleteCampaignModal, setShowDeleteCampaignModal] = useState(false);
   const [isDeletingCampaign, setIsDeletingCampaign] = useState(false);
   const [activeLeadId, setActiveLeadId] = useState<string | null>(null);
@@ -234,6 +284,14 @@ export default function CampaignDetailPage() {
       // ignore storage failures
     }
   }, []);
+
+  const websiteScrapePct = websiteScrape
+    ? websiteScrape.phase === "done"
+      ? 100
+      : websiteScrape.total > 0
+        ? Math.min(99, Math.round((websiteScrape.processed / websiteScrape.total) * 100))
+        : 0
+    : 0;
 
   // Scrape Jobs State
   const [scrapeJobs, setScrapeJobs] = useState<ScrapeJobItem[]>([]);
@@ -900,24 +958,132 @@ export default function CampaignDetailPage() {
   const handleRehandleLeads = async () => {
     if (!campaignId) return;
     setIsRehandling(true);
+    setWebsiteScrape({
+      phase: "scrape",
+      total: 0,
+      processed: 0,
+      found: 0,
+      handlesFound: 0,
+      emailsFound: 0,
+      phonesFound: 0,
+      socialsFound: 0,
+      notFound: 0,
+      failed: 0,
+      profilesTotal: 0,
+      profilesProcessed: 0,
+      currentWebsite: null,
+      currentLead: null,
+      message: "Starting website scrape...",
+    });
     try {
       const res = await fetch(`/api/campaigns/${campaignId}/leads/rehandle`, {
         method: "POST",
+        headers: { Accept: "application/x-ndjson" },
       });
       if (!res.ok) {
-        const errJson = await res.json().catch(() => null);
-        throw new Error(
-          errJson?.error || `Rehandle failed with status ${res.status}`,
-        );
+        const errJson = (await res.json().catch(() => null)) as
+          | { error?: { message?: string } | string }
+          | null;
+        const message =
+          typeof errJson?.error === "string"
+            ? errJson.error
+            : errJson?.error?.message || `Website scrape failed with status ${res.status}`;
+        throw new Error(message);
       }
-      const data = await res.json();
-      alert(
-        `Website scrape complete!\nWebsites scanned: ${data.totalChecked}\nLeads with new data: ${data.found}\nNew Instagram handles: ${data.handlesFound}\nNew emails: ${data.emailsFound}\nNew social links: ${data.socialsFound}\nProfiles enriched: ${data.profilesEnriched ?? 0}\nBelow enrichment criteria: ${data.belowCriteria ?? 0}\nNo new data: ${data.notFound}`,
+      if (!res.body) throw new Error("Streaming is not supported by this browser.");
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let finalResult: Extract<WebsiteScrapeEvent, { type: "result" }> | null = null;
+      let streamError: string | null = null;
+
+      const handleLine = (line: string) => {
+        const trimmedLine = line.trim();
+        if (!trimmedLine) return;
+        let event: WebsiteScrapeEvent;
+        try {
+          event = JSON.parse(trimmedLine) as WebsiteScrapeEvent;
+        } catch {
+          return;
+        }
+        if (event.type === "progress") {
+          setWebsiteScrape((prev) => ({
+            phase: "scrape",
+            total: event.total,
+            processed: event.processed,
+            found: event.found,
+            handlesFound: event.handlesFound,
+            emailsFound: event.emailsFound,
+            phonesFound: event.phonesFound,
+            socialsFound: event.socialsFound,
+            notFound: event.notFound,
+            failed: event.failed,
+            profilesTotal: prev?.profilesTotal ?? 0,
+            profilesProcessed: prev?.profilesProcessed ?? 0,
+            currentWebsite: event.currentWebsite,
+            currentLead: event.currentLead,
+            message: event.currentWebsite
+              ? `Scraped ${event.processed} of ${event.total} websites — last: ${event.currentWebsite}`
+              : `Preparing ${event.total} websites...`,
+          }));
+        } else if (event.type === "phase") {
+          setWebsiteScrape((prev) =>
+            prev
+              ? {
+                  ...prev,
+                  phase: "profiles",
+                  profilesTotal: event.total,
+                  profilesProcessed: event.processed,
+                  message: event.message,
+                }
+              : prev,
+          );
+        } else if (event.type === "result") {
+          finalResult = event;
+        } else if (event.type === "error") {
+          streamError = event.error?.message ?? "Website scrape failed.";
+        }
+      };
+
+      for (;;) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const lines = buffer.split("\n");
+        buffer = lines.pop() ?? "";
+        lines.forEach(handleLine);
+      }
+      if (buffer.trim()) handleLine(buffer);
+
+      if (streamError) throw new Error(streamError);
+      if (!finalResult) throw new Error("Website scrape ended without a result.");
+      const result = finalResult as Extract<WebsiteScrapeEvent, { type: "result" }>;
+
+      setWebsiteScrape((prev) =>
+        prev
+          ? {
+              ...prev,
+              phase: "done",
+              total: result.totalChecked,
+              processed: result.totalChecked,
+              found: result.found,
+              handlesFound: result.handlesFound,
+              emailsFound: result.emailsFound,
+              socialsFound: result.socialsFound,
+              notFound: result.notFound,
+              currentWebsite: null,
+              currentLead: null,
+              profilesProcessed: result.profilesEnriched ?? prev.profilesProcessed,
+              message: `Website scrape complete — ${result.totalChecked} website(s) scanned, ${result.found} lead(s) updated, ${result.handlesFound} new handle(s), ${result.profilesEnriched ?? 0} profile(s) enriched.`,
+            }
+          : prev,
       );
       await fetchLeads();
     } catch (err) {
-      alert(
-        err instanceof Error ? err.message : "Failed to re-run handle search",
+      const message = err instanceof Error ? err.message : "Failed to run the website scraper";
+      setWebsiteScrape((prev) =>
+        prev ? { ...prev, phase: "error", message } : prev,
       );
     } finally {
       setIsRehandling(false);
@@ -1137,7 +1303,7 @@ export default function CampaignDetailPage() {
                   ? "Campaign has reached its configured lead limit"
                   : undefined
               }
-              className="inline-flex items-center gap-2 rounded-lg bg-gradient-to-r from-rose-600 to-indigo-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:from-rose-500 hover:to-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="inline-flex items-center gap-2 rounded-lg bg-gradient-to-r from-orange-500 to-orange-600 px-4 py-2 text-sm font-semibold text-white shadow-sm transition hover:from-orange-400 hover:to-orange-500 disabled:opacity-50 disabled:cursor-not-allowed"
             >
               <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
@@ -1396,7 +1562,7 @@ export default function CampaignDetailPage() {
                   id="confirm-change-profile-btn"
                   onClick={handleSaveProfileChange}
                   disabled={isSavingProfileChange || !selectedChangeProfileId}
-                  className="rounded-lg bg-rose-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-rose-500 transition disabled:opacity-50"
+                  className="rounded-lg bg-orange-600 px-4 py-1.5 text-xs font-semibold text-white hover:bg-orange-500 transition disabled:opacity-50"
                 >
                   {isSavingProfileChange ? "Updating..." : "Save Profile"}
                 </button>
@@ -1446,13 +1612,13 @@ export default function CampaignDetailPage() {
         </div>
 
         {/* Tab Navigation */}
-        <div className="mt-8 flex items-center gap-4 border-b border-zinc-800 overflow-x-auto">
+        <div className="sticky top-[61px] z-20 -mx-1 mt-8 flex items-center gap-5 overflow-x-auto border-b border-zinc-800 bg-black/80 px-1 pt-3 backdrop-blur-xl">
           <button
             onClick={() => setActiveTab("leads")}
             id="tab-leads"
             className={`pb-3 text-sm font-semibold transition border-b-2 whitespace-nowrap ${activeTab === "leads"
-                ? "border-rose-500 text-rose-400"
-                : "border-transparent text-zinc-400 hover:text-zinc-200"
+                ? "border-orange-500 text-orange-300 [text-shadow:0_0_18px_rgba(255,122,26,0.45)]"
+                : "border-transparent text-zinc-400 hover:text-white hover:border-zinc-700"
               }`}
           >
             Leads Directory ({leadsData?.pagination.total ?? campaign.leadCount ?? 0})
@@ -1461,8 +1627,8 @@ export default function CampaignDetailPage() {
             onClick={() => setActiveTab("analytics")}
             id="tab-analytics"
             className={`pb-3 text-sm font-semibold transition border-b-2 whitespace-nowrap ${activeTab === "analytics"
-                ? "border-rose-500 text-rose-400"
-                : "border-transparent text-zinc-400 hover:text-zinc-200"
+                ? "border-orange-500 text-orange-300 [text-shadow:0_0_18px_rgba(255,122,26,0.45)]"
+                : "border-transparent text-zinc-400 hover:text-white hover:border-zinc-700"
               }`}
           >
             Analytics
@@ -1471,8 +1637,8 @@ export default function CampaignDetailPage() {
             onClick={() => setActiveTab("review")}
             id="tab-review"
             className={`pb-3 text-sm font-semibold transition border-b-2 whitespace-nowrap ${activeTab === "review"
-                ? "border-rose-500 text-rose-400"
-                : "border-transparent text-zinc-400 hover:text-zinc-200"
+                ? "border-orange-500 text-orange-300 [text-shadow:0_0_18px_rgba(255,122,26,0.45)]"
+                : "border-transparent text-zinc-400 hover:text-white hover:border-zinc-700"
               }`}
           >
             Review Queue
@@ -1481,8 +1647,8 @@ export default function CampaignDetailPage() {
             onClick={() => setActiveTab("templates")}
             id="tab-templates"
             className={`pb-3 text-sm font-semibold transition border-b-2 whitespace-nowrap ${activeTab === "templates"
-                ? "border-rose-500 text-rose-400"
-                : "border-transparent text-zinc-400 hover:text-zinc-200"
+                ? "border-orange-500 text-orange-300 [text-shadow:0_0_18px_rgba(255,122,26,0.45)]"
+                : "border-transparent text-zinc-400 hover:text-white hover:border-zinc-700"
               }`}
           >
             Message Templates
@@ -1491,8 +1657,8 @@ export default function CampaignDetailPage() {
             onClick={() => setActiveTab("execution")}
             id="tab-execution"
             className={`pb-3 text-sm font-semibold transition border-b-2 whitespace-nowrap ${activeTab === "execution"
-                ? "border-rose-500 text-rose-400"
-                : "border-transparent text-zinc-400 hover:text-zinc-200"
+                ? "border-orange-500 text-orange-300 [text-shadow:0_0_18px_rgba(255,122,26,0.45)]"
+                : "border-transparent text-zinc-400 hover:text-white hover:border-zinc-700"
               }`}
           >
             Campaign Execution
@@ -1501,8 +1667,8 @@ export default function CampaignDetailPage() {
             onClick={() => setActiveTab("email")}
             id="tab-email"
             className={`pb-3 text-sm font-semibold transition border-b-2 whitespace-nowrap ${activeTab === "email"
-                ? "border-rose-500 text-rose-400"
-                : "border-transparent text-zinc-400 hover:text-zinc-200"
+                ? "border-orange-500 text-orange-300 [text-shadow:0_0_18px_rgba(255,122,26,0.45)]"
+                : "border-transparent text-zinc-400 hover:text-white hover:border-zinc-700"
               }`}
           >
             Email
@@ -1511,8 +1677,8 @@ export default function CampaignDetailPage() {
             onClick={() => setActiveTab("history")}
             id="tab-history"
             className={`pb-3 text-sm font-semibold transition border-b-2 whitespace-nowrap ${activeTab === "history"
-                ? "border-rose-500 text-rose-400"
-                : "border-transparent text-zinc-400 hover:text-zinc-200"
+                ? "border-orange-500 text-orange-300 [text-shadow:0_0_18px_rgba(255,122,26,0.45)]"
+                : "border-transparent text-zinc-400 hover:text-white hover:border-zinc-700"
               }`}
           >
             Scrape History ({scrapeJobs.length})
@@ -1541,7 +1707,7 @@ export default function CampaignDetailPage() {
         )}
 
         {activeTab === "leads" && (
-          <div className="mt-6 space-y-4">
+          <div className="mt-6 space-y-4 animate-fade-up">
             {/* Filter Toolbar */}
             <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4 space-y-3">
               {/* Quick Tabs: All | With Instagram | No Instagram */}
@@ -1554,7 +1720,7 @@ export default function CampaignDetailPage() {
                   }}
                   className={`rounded-lg px-3 py-1 text-xs font-semibold transition ${
                     channelFilter === "all"
-                      ? "bg-rose-600 text-white shadow-sm"
+                      ? "bg-orange-600 text-white shadow-sm"
                       : "bg-zinc-800 text-zinc-300 hover:bg-zinc-700"
                   }`}
                 >
@@ -1568,7 +1734,7 @@ export default function CampaignDetailPage() {
                   }}
                   className={`rounded-lg px-3 py-1 text-xs font-semibold transition ${
                     channelFilter === "has_instagram" || channelFilter === "instagram_only"
-                      ? "bg-rose-600 text-white shadow-sm"
+                      ? "bg-orange-600 text-white shadow-sm"
                       : "bg-zinc-800 text-zinc-300 hover:bg-zinc-700"
                   }`}
                 >
@@ -1582,7 +1748,7 @@ export default function CampaignDetailPage() {
                   }}
                   className={`rounded-lg px-3 py-1 text-xs font-semibold transition ${
                     channelFilter === "no_instagram"
-                      ? "bg-rose-600 text-white shadow-sm"
+                      ? "bg-orange-600 text-white shadow-sm"
                       : "bg-zinc-800 text-zinc-300 hover:bg-zinc-700"
                   }`}
                 >
@@ -1942,7 +2108,7 @@ export default function CampaignDetailPage() {
                   disabled={!sendingEnabled || (selectedLeadIds.length === 0 && bulkSelectionMode !== "allEligible")}
                   title={!sendingEnabled ? "Sending is disabled (SENDING_DISABLED)" : undefined}
                   onClick={() => setIsBulkModalOpen(true)}
-                  className="rounded-lg bg-rose-600 px-3.5 py-1.5 font-semibold text-white shadow-md shadow-rose-950/40 transition hover:bg-rose-500 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
+                  className="rounded-lg bg-orange-600 px-3.5 py-1.5 font-semibold text-white shadow-md shadow-orange-950/40 transition hover:bg-orange-500 disabled:opacity-40 disabled:cursor-not-allowed flex items-center gap-1.5"
                 >
                   <span>✉ Bulk Message</span>
                   {(selectedLeadIds.length > 0 || bulkSelectionMode === "allEligible") && (
@@ -2132,6 +2298,119 @@ export default function CampaignDetailPage() {
               </div>
             )}
 
+            {/* Website scrape progress */}
+            {websiteScrape && (
+              <div
+                id="website-scrape-progress"
+                role="status"
+                aria-live="polite"
+                className={`mb-3 rounded-xl border p-3 text-xs ${
+                  websiteScrape.phase === "error"
+                    ? "border-rose-500/30 bg-rose-500/5"
+                    : websiteScrape.phase === "done"
+                      ? "border-emerald-500/30 bg-emerald-500/5"
+                      : "border-amber-500/25 bg-amber-500/[0.06]"
+                }`}
+              >
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex min-w-0 items-center gap-2 font-semibold text-zinc-100">
+                    {websiteScrape.phase === "scrape" || websiteScrape.phase === "profiles" ? (
+                      <svg className="h-4 w-4 shrink-0 animate-spin text-amber-400" fill="none" viewBox="0 0 24 24">
+                        <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4" />
+                        <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4z" />
+                      </svg>
+                    ) : (
+                      <span className={websiteScrape.phase === "done" ? "text-emerald-400" : "text-rose-400"}>
+                        {websiteScrape.phase === "done" ? "✓" : "⚠"}
+                      </span>
+                    )}
+                    <span className="truncate" title={websiteScrape.message}>
+                      {websiteScrape.message}
+                    </span>
+                  </div>
+                  <div className="flex shrink-0 items-center gap-3">
+                    <span className="font-mono text-[11px] text-zinc-400">{websiteScrapePct}%</span>
+                    <button
+                      type="button"
+                      onClick={() => setWebsiteScrape(null)}
+                      disabled={isRehandling}
+                      className="rounded border border-zinc-700 px-2 py-0.5 text-[10px] font-medium text-zinc-400 transition hover:text-white disabled:opacity-40"
+                    >
+                      {isRehandling ? "Running..." : "Dismiss"}
+                    </button>
+                  </div>
+                </div>
+
+                <div
+                  className="mt-2 h-2 w-full overflow-hidden rounded-full bg-zinc-800"
+                  role="progressbar"
+                  aria-valuemin={0}
+                  aria-valuemax={100}
+                  aria-valuenow={websiteScrapePct}
+                  aria-label="Website scrape progress"
+                >
+                  <div
+                    className={`h-full rounded-full transition-[width] duration-300 ${
+                      websiteScrape.phase === "error"
+                        ? "bg-rose-500"
+                        : websiteScrape.phase === "done"
+                          ? "bg-emerald-500"
+                          : "bg-gradient-to-r from-amber-500 to-orange-500"
+                    }`}
+                    style={{ width: `${websiteScrapePct}%` }}
+                  />
+                </div>
+
+                <div className="mt-2 grid grid-cols-2 gap-x-4 gap-y-1 font-mono text-[11px] text-zinc-400 sm:grid-cols-4 lg:grid-cols-7">
+                  <div>
+                    <span>Websites</span>
+                    <strong className="block text-zinc-100">
+                      {websiteScrape.processed} / {websiteScrape.total || "…"}
+                    </strong>
+                  </div>
+                  <div>
+                    <span>Leads updated</span>
+                    <strong className="block text-emerald-400">{websiteScrape.found}</strong>
+                  </div>
+                  <div>
+                    <span>New IG</span>
+                    <strong className="block text-sky-300">{websiteScrape.handlesFound}</strong>
+                  </div>
+                  <div>
+                    <span>Emails</span>
+                    <strong className="block text-zinc-100">{websiteScrape.emailsFound}</strong>
+                  </div>
+                  <div>
+                    <span>Phones</span>
+                    <strong className="block text-zinc-100">{websiteScrape.phonesFound}</strong>
+                  </div>
+                  <div>
+                    <span>Socials</span>
+                    <strong className="block text-zinc-100">{websiteScrape.socialsFound}</strong>
+                  </div>
+                  <div>
+                    <span>No data / errors</span>
+                    <strong className="block text-zinc-300">
+                      {websiteScrape.notFound} / <span className="text-rose-400">{websiteScrape.failed}</span>
+                    </strong>
+                  </div>
+                </div>
+
+                {websiteScrape.phase === "profiles" && websiteScrape.profilesTotal > 0 && (
+                  <div className="mt-2 flex items-center gap-2 text-[11px] text-sky-300">
+                    <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-sky-400" />
+                    Instagram profile enrichment: {websiteScrape.profilesProcessed} / {websiteScrape.profilesTotal} via Apify
+                  </div>
+                )}
+                {websiteScrape.phase === "scrape" && websiteScrape.currentWebsite && (
+                  <div className="mt-2 truncate text-[10px] text-zinc-500">
+                    Now scraping: {websiteScrape.currentWebsite}
+                    {websiteScrape.currentLead ? ` (${websiteScrape.currentLead})` : ""}
+                  </div>
+                )}
+              </div>
+            )}
+
             {/* Leads Table */}
             <div className="rounded-xl border border-zinc-800 bg-zinc-900/40 overflow-hidden shadow-xs">
               {leadsView === "list" && (
@@ -2169,7 +2448,7 @@ export default function CampaignDetailPage() {
                       <th className="hidden py-3 px-4 xl:table-cell">City / Location</th>
                       <th className="hidden py-3 px-4 lg:table-cell">Contact &amp; Socials</th>
                       <th className="hidden py-3 px-4 2xl:table-cell">Bio</th>
-                      <th className="hidden py-3 px-4 xl:table-cell">Scraped</th>
+                      <th className="hidden py-3 px-4 lg:table-cell">Scraped</th>
                       <th className="w-52 py-3 px-4 text-right">Actions</th>
                     </tr>
                   </thead>
@@ -2254,7 +2533,7 @@ export default function CampaignDetailPage() {
                                     type="button"
                                     id="empty-state-discover-btn"
                                     onClick={() => setIsScrapeModalOpen(true)}
-                                    className="mt-3.5 inline-flex items-center gap-2 rounded-lg bg-gradient-to-r from-rose-600 to-indigo-600 px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:from-rose-500 hover:to-indigo-500"
+                                    className="mt-3.5 inline-flex items-center gap-2 rounded-lg bg-gradient-to-r from-orange-500 to-orange-600 px-4 py-2 text-xs font-semibold text-white shadow-sm transition hover:from-orange-400 hover:to-orange-500"
                                   >
                                     <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                                       <path strokeLinecap="round" strokeLinejoin="round" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
@@ -2493,7 +2772,7 @@ export default function CampaignDetailPage() {
                                       type="button"
                                       onClick={() => handleEnrichSingle(lead.id)}
                                       disabled={enrichingLeadId === lead.id}
-                                      className="rounded bg-rose-600/20 px-1.5 py-0.5 text-[10px] font-semibold text-rose-300 border border-rose-500/30 hover:bg-rose-600/30 transition disabled:opacity-50"
+                                      className="rounded bg-orange-600/20 px-1.5 py-0.5 text-[10px] font-semibold text-orange-300 border border-orange-500/30 hover:bg-orange-600/30 transition disabled:opacity-50"
                                       title="Enrich Profile (Est. ~$0.0026)"
                                     >
                                       {enrichingLeadId === lead.id ? "..." : "Enrich"}
@@ -2514,7 +2793,7 @@ export default function CampaignDetailPage() {
                                       type="button"
                                       onClick={() => handleEnrichSingle(lead.id)}
                                       disabled={enrichingLeadId === lead.id}
-                                      className="rounded bg-rose-600/20 px-1.5 py-0.5 text-[10px] font-semibold text-rose-300 border border-rose-500/30 hover:bg-rose-600/30 transition disabled:opacity-50"
+                                      className="rounded bg-orange-600/20 px-1.5 py-0.5 text-[10px] font-semibold text-orange-300 border border-orange-500/30 hover:bg-orange-600/30 transition disabled:opacity-50"
                                       title="Enrich Profile (Est. ~$0.0026)"
                                     >
                                       {enrichingLeadId === lead.id ? "..." : "Enrich"}
@@ -2778,8 +3057,10 @@ export default function CampaignDetailPage() {
                           </td>
 
                           {/* Scraped At */}
-                          <td className="hidden py-3 px-4 text-[11px] text-zinc-400 xl:table-cell">
-                            {lead.scrapedAt ? new Date(lead.scrapedAt).toLocaleDateString() : "—"}
+                          <td className="hidden py-3 px-4 text-[11px] text-zinc-400 lg:table-cell">
+                            <span title={lead.scrapedAt ? new Date(lead.scrapedAt).toLocaleString() : undefined}>
+                              {lead.scrapedAt ? new Date(lead.scrapedAt).toLocaleDateString() : "—"}
+                            </span>
                           </td>
 
                           {/* Actions */}
@@ -2795,7 +3076,7 @@ export default function CampaignDetailPage() {
                                       type="button"
                                       onClick={() => handleEnrichSingle(lead.id)}
                                       disabled={enrichingLeadId === lead.id}
-                                      className="rounded bg-rose-600/20 px-2 py-1 text-xs font-semibold text-rose-300 border border-rose-500/30 hover:bg-rose-600/30 transition disabled:opacity-50"
+                                      className="rounded bg-orange-600/20 px-2 py-1 text-xs font-semibold text-orange-300 border border-orange-500/30 hover:bg-orange-600/30 transition disabled:opacity-50"
                                       title="Enrich Profile (Est. ~$0.0026)"
                                     >
                                       {enrichingLeadId === lead.id ? "..." : "⚡ Enrich"}
@@ -2862,7 +3143,7 @@ export default function CampaignDetailPage() {
                                     setDrawerInitialTab("message");
                                     setActiveLeadId(lead.id);
                                   }}
-                                  className="inline-flex items-center gap-1 rounded bg-rose-600/20 px-2.5 py-1 text-xs font-semibold text-rose-400 border border-rose-500/30 hover:bg-rose-600/30 hover:text-rose-300 transition"
+                                  className="inline-flex items-center gap-1 rounded bg-orange-600/20 px-2.5 py-1 text-xs font-semibold text-orange-400 border border-orange-500/30 hover:bg-orange-600/30 hover:text-orange-300 transition"
                                   title={`Message @${lead.username}`}
                                 >
                                   <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -3056,7 +3337,7 @@ export default function CampaignDetailPage() {
                                 type="button"
                                 onClick={() => handleEnrichSingle(lead.id)}
                                 disabled={enrichingLeadId === lead.id}
-                                className="rounded bg-rose-600/20 px-2.5 py-1 text-xs font-semibold text-rose-300 border border-rose-500/30 hover:bg-rose-600/30 transition disabled:opacity-50"
+                                className="rounded bg-orange-600/20 px-2.5 py-1 text-xs font-semibold text-orange-300 border border-orange-500/30 hover:bg-orange-600/30 transition disabled:opacity-50"
                                 title="Enrich Profile (Est. ~$0.0026)"
                               >
                                 {enrichingLeadId === lead.id ? "..." : "⚡ Enrich (~$0.0026)"}
@@ -3141,6 +3422,13 @@ export default function CampaignDetailPage() {
                         );
                       })()}
 
+                      <div className="flex items-center gap-1.5 text-[10px] text-zinc-500">
+                        <span className="uppercase font-semibold">Scraped:</span>
+                        <span title={lead.scrapedAt ? new Date(lead.scrapedAt).toLocaleString() : undefined}>
+                          {lead.scrapedAt ? new Date(lead.scrapedAt).toLocaleString() : "Not scraped"}
+                        </span>
+                      </div>
+
                       {/* Actions */}
                       <div className="flex items-center justify-between pt-1 border-t border-zinc-800/60 text-xs">
                         <div className="flex items-center gap-2">
@@ -3213,7 +3501,7 @@ export default function CampaignDetailPage() {
                                 setDrawerInitialTab("message");
                                 setActiveLeadId(lead.id);
                               }}
-                              className="inline-flex items-center gap-1 rounded-lg bg-rose-600/20 px-2.5 py-1 text-xs font-semibold text-rose-400 border border-rose-500/30 hover:bg-rose-600/30 transition"
+                              className="inline-flex items-center gap-1 rounded-lg bg-orange-600/20 px-2.5 py-1 text-xs font-semibold text-orange-400 border border-orange-500/30 hover:bg-orange-600/30 transition"
                             >
                               <svg className="h-3.5 w-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
                                 <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 12h.01M12 12h.01M16 12h.01M21 12c0 4.418-4.03 8-9 8a9.863 9.863 0 01-4.255-.949L3 20l1.395-3.72C3.512 15.042 3 13.574 3 12c0-4.418 4.03-8 9-8s9 3.582 9 8z" />
@@ -3391,7 +3679,7 @@ export default function CampaignDetailPage() {
                                   type="button"
                                   onClick={() => handleEnrichSingle(lead.id)}
                                   disabled={enrichingLeadId === lead.id}
-                                  className="rounded border border-rose-500/30 bg-rose-600/20 px-2 py-0.5 text-[10px] font-semibold text-rose-300 transition hover:bg-rose-600/30 disabled:opacity-50"
+                                  className="rounded border border-orange-500/30 bg-orange-600/20 px-2 py-0.5 text-[10px] font-semibold text-orange-300 transition hover:bg-orange-600/30 disabled:opacity-50"
                                 >
                                   {enrichingLeadId === lead.id ? "..." : "⚡ Enrich"}
                                 </button>
@@ -3447,6 +3735,13 @@ export default function CampaignDetailPage() {
                               </div>
                             )}
 
+                            <div className="flex items-center gap-1.5 text-[10px] text-zinc-500">
+                              <span className="uppercase font-semibold">Scraped:</span>
+                              <span title={lead.scrapedAt ? new Date(lead.scrapedAt).toLocaleString() : undefined}>
+                                {lead.scrapedAt ? new Date(lead.scrapedAt).toLocaleString() : "Not scraped"}
+                              </span>
+                            </div>
+
                             <div className="mt-auto flex flex-wrap items-center justify-between gap-1.5 border-t border-zinc-800/70 pt-2">
                               <div className="flex items-center gap-1.5">
                                 {!handle && (
@@ -3467,7 +3762,7 @@ export default function CampaignDetailPage() {
                                       setDrawerInitialTab("message");
                                       setActiveLeadId(lead.id);
                                     }}
-                                    className="inline-flex items-center gap-1 rounded border border-rose-500/30 bg-rose-600/20 px-2 py-0.5 text-[10px] font-semibold text-rose-300 transition hover:bg-rose-600/30"
+                                    className="inline-flex items-center gap-1 rounded border border-orange-500/30 bg-orange-600/20 px-2 py-0.5 text-[10px] font-semibold text-orange-300 transition hover:bg-orange-600/30"
                                   >
                                     Message
                                   </button>

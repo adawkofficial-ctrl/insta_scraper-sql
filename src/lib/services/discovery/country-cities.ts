@@ -365,6 +365,12 @@ export function buildQualifiedLocationString(
   // 1. Direct GTA area mapping
   if (GTA_AREAS[stripped] || GTA_AREAS[normArea]) {
     const info = GTA_AREAS[stripped] || GTA_AREAS[normArea];
+    // The city itself (e.g. "Toronto") must not be doubled: "Toronto, Toronto,
+    // ON, Canada" geocodes to Toronto Pearson Airport (a 15 km2 polygon) and
+    // the Maps actor returns 0 places.
+    if (stripped === info.city.toLowerCase() || normArea === info.city.toLowerCase()) {
+      return `${info.city}, ${info.state}, ${info.country}`;
+    }
     return `${effectiveArea}, ${info.city}, ${info.state}, ${info.country}`;
   }
 

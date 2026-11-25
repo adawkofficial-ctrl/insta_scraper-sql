@@ -19,6 +19,15 @@ import { safeFetchHtml } from "../discovery/handle-discovery-waterfall";
 import { checkNameWebsiteMismatch } from "../discovery/name-website-matcher";
 import { computeLeadScore } from "../discovery/lead-quality-score";
 import { scoreFlagReplace, withLeadChannelFlags } from "../lead/lead-channels";
+import {
+  decodeEntities,
+  extractBusinessProfile,
+  hasBusinessData,
+  mergeBusinessProfiles,
+  type WebsiteBusinessProfile,
+} from "./website-business-profile";
+
+export type { WebsiteBusinessProfile } from "./website-business-profile";
 
 // ============================================================================
 // Types
@@ -97,6 +106,8 @@ export type WebsiteScrapeResult = {
   homepageTitle: string | null;
   homepageH1: string | null;
   ogSiteName: string | null;
+  /** What the business is / sells / where / when — see website-business-profile.ts. */
+  business?: WebsiteBusinessProfile | null;
 };
 
 export type WebsiteEnrichmentOptions = {
@@ -197,7 +208,23 @@ const CONTACT_SUBPAGE_PATHS = [
   "/about-us",
 ] as const;
 
-const SUBPAGE_KEYWORD = /contact|about|team|location|follow/i;
+// Pages that tend to carry contact details (contact/location/hours), the
+// people (team/staff) or the offering (services/menu). Includes common
+// non-English slugs (FR/ES/DE/IT/PT) and legal-notice pages, which in the EU
+// must list an address and email.
+const SUBPAGE_KEYWORD =
+  /contact|about|team|staff|location|follow|hours|visit|find-us|services?|treatments?|menu|book|appointment|contacto|kontakt|nous-joindre|a-propos|quienes-somos|ueber-uns|uber-uns|chi-siamo|contatti|sobre|impressum|mentions-legales|aviso-legal/i;
+
+// Higher = fetched first when there are more candidates than subpage slots.
+function subpagePriority(url: string, text: string): number {
+  const haystack = `${url} ${text}`.toLowerCase();
+  if (/contact|kontakt|contacto|contatti|nous-joindre|impressum|mentions-legales|aviso-legal/.test(haystack)) return 5;
+  if (/about|a-propos|ueber-uns|uber-uns|quienes-somos|chi-siamo|sobre/.test(haystack)) return 4;
+  if (/location|hours|visit|find-us/.test(haystack)) return 3;
+  if (/services?|treatments?|menu/.test(haystack)) return 2;
+  if (/team|staff/.test(haystack)) return 1;
+  return 0;
+}
 
 // ============================================================================
 // Rate limiting (2 requests/second per host) + concurrency helper
@@ -283,7 +310,7 @@ async function defaultFetch(
     html: result.html,
     finalUrl: result.finalUrl,
     error: result.error,
-    status: result.ok ? 200 : null,
+    status: result.status ?? (result.ok ? 200 : null),
   };
 }
 
@@ -416,7 +443,8 @@ function extractPageMeta(html: string): {
   h1: string | null;
   ogSiteName: string | null;
 } {
-  const title = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html)?.[1]?.trim() ?? null;
+  const rawTitle = /<title[^>]*>([\s\S]*?)<\/title>/i.exec(html)?.[1];
+  const title = rawTitle ? decodeEntities(rawTitle).replace(/\s+/g, " ").trim() || null : null;
   const h1 = /<h1[^>]*>([\s\S]*?)<\/h1>/i.exec(html)?.[1]?.replace(/<[^>]+>/g, " ").trim() ?? null;
   const ogSiteName =
     /<meta\b[^>]*property=["']og:site_name["'][^>]*content=["']([^"']+)["']/i.exec(html)?.[1]?.trim() ??
@@ -725,7 +753,19 @@ export function extractWebsiteData(
   let jsonMatch: RegExpExecArray | null;
   while ((jsonMatch = jsonLdRegex.exec(html)) !== null) {
     try {
-      const parsed = JSON.parse(jsonMatch[1]);
+      const body = jsonMatch[1]
+        .replace(/^\s*<!\[CDATA\[/, "")
+        .replace(/\]\]>\s*$/, "")
+        .replace(/^\s*<!--/, "")
+        .replace(/-->\s*$/, "")
+        .trim();
+      let parsed: unknown;
+      try {
+        parsed = JSON.parse(body);
+      } catch {
+        // Some CMSs emit raw newlines inside strings or a trailing ";".
+        parsed = JSON.parse(body.replace(/[\r\n\t]+/g, " ").replace(/;\s*$/, ""));
+      }
       const walk = (value: unknown) => {
         if (!value || typeof value !== "object") return;
         if (Array.isArray(value)) {
@@ -781,7 +821,12 @@ export function extractWebsiteData(
       addEmail(mailtoMatch[1], "mailto");
     }
   }
-  for (const email of extractAllEmails(html)) addEmail(email, "text");
+  // Scan markup with non-JSON-LD <script>/<style> removed so bundle strings
+  // (e.g. "logo@2x.png", sentry DSNs) don't masquerade as contact emails.
+  const htmlNoScripts = html
+    .replace(/<script\b(?![^>]*application\/ld\+json)[^>]*>[\s\S]*?<\/script>/gi, " ")
+    .replace(/<style\b[\s\S]*?<\/style>/gi, " ");
+  for (const email of extractAllEmails(htmlNoScripts)) addEmail(email, "text");
   for (const email of jsonLdEmails) addEmail(email, "jsonld");
 
   const cfRegex = /data-cfemail=["']([0-9a-f]+)["']/gi;
@@ -790,7 +835,7 @@ export function extractWebsiteData(
     const decoded = decodeCloudflareEmail(cfMatch[1]);
     if (decoded) addEmail(decoded, "cloudflare");
   }
-  for (const email of decodeObfuscatedEmails(html)) addEmail(email, "obfuscated");
+  for (const email of decodeObfuscatedEmails(htmlNoScripts)) addEmail(email, "obfuscated");
 
   // Phones
   const phones = new Map<string, WebsitePhone>();
@@ -799,10 +844,16 @@ export function extractWebsiteData(
     if (!normalized || phones.has(normalized)) return;
     phones.set(normalized, { value: raw.trim(), normalized, source, sourceUrl: pageUrl });
   };
-  const telRegex = /tel:([+]?[\d\s().-]{7,20})/gi;
+  const telRegex = /tel:((?:%2B|\+)?[\d\s().%-]{7,40})/gi;
   let telMatch: RegExpExecArray | null;
   while ((telMatch = telRegex.exec(html)) !== null) {
-    addPhone(telMatch[1], "tel");
+    let rawTel = telMatch[1];
+    try {
+      rawTel = decodeURIComponent(rawTel);
+    } catch {
+      rawTel = rawTel.replace(/%2B/gi, "+").replace(/%20/g, " ");
+    }
+    addPhone(rawTel, "tel");
   }
   const visibleText = extractVisibleText(html);
   for (const phone of extractAllPhones(visibleText, countryCode)) addPhone(phone.raw, "text");
@@ -870,32 +921,46 @@ export function findSameDomainSubpages(
   const base = new URL(pageUrl);
   const baseHost = base.hostname.toLowerCase().replace(/^www\./, "");
   const origin = base.origin;
-  const results: string[] = [];
-  const seen = new Set<string>([pageUrl]);
+  const homeClean = `${base.origin}${base.pathname}`.replace(/\/+$/, "") || base.origin;
+  const linked: { url: string; priority: number; order: number }[] = [];
+  const seen = new Set<string>([pageUrl, homeClean]);
 
-  const push = (url: string) => {
+  const normalize = (url: string): string | null => {
     try {
       const parsed = new URL(url);
       const host = parsed.hostname.toLowerCase().replace(/^www\./, "");
-      if (host !== baseHost) return;
-      if (!/^https?:$/i.test(parsed.protocol)) return;
-      if (/\.(pdf|zip|png|jpe?g|gif|webp|svg|mp4|mov|css|js|ico)$/i.test(parsed.pathname)) return;
+      if (host !== baseHost) return null;
+      if (!/^https?:$/i.test(parsed.protocol)) return null;
+      if (/\.(pdf|zip|png|jpe?g|gif|webp|svg|mp4|mov|css|js|ico|xml|json)$/i.test(parsed.pathname)) return null;
       const clean = `${parsed.origin}${parsed.pathname}`.replace(/\/+$/, "") || parsed.origin;
-      if (seen.has(clean)) return;
+      if (seen.has(clean)) return null;
       seen.add(clean);
-      results.push(clean);
+      return clean;
     } catch {
-      // ignore
+      return null;
     }
   };
 
+  // Pages the site actually links to come first (ranked by how likely they
+  // are to carry contact data); guessed paths only fill remaining slots, so a
+  // 404 on /contact-us never displaces a real "Contact" link.
+  let order = 0;
   for (const anchor of extractAnchors(html)) {
     if (!SUBPAGE_KEYWORD.test(anchor.href) && !SUBPAGE_KEYWORD.test(anchor.text)) continue;
     const resolved = resolveHref(anchor.href, pageUrl);
-    if (resolved) push(resolved);
+    const clean = resolved ? normalize(resolved) : null;
+    if (clean) linked.push({ url: clean, priority: subpagePriority(clean, anchor.text), order: order++ });
   }
+  linked.sort((a, b) => b.priority - a.priority || a.order - b.order);
+  const results = linked.map((entry) => entry.url);
+
+  const hasLinkedContact = linked.some((entry) => entry.priority >= 5);
+  const hasLinkedAbout = linked.some((entry) => entry.priority === 4);
   for (const path of CONTACT_SUBPAGE_PATHS) {
-    push(`${origin}${path}`);
+    if (hasLinkedContact && path.startsWith("/contact")) continue;
+    if (hasLinkedAbout && path.startsWith("/about")) continue;
+    const clean = normalize(`${origin}${path}`);
+    if (clean) results.push(clean);
   }
 
   return results.slice(0, maxSubpages);
@@ -1001,11 +1066,13 @@ export async function scrapeLeadWebsite(
     socialLinks: WebsiteSocialLinks;
     emails: Map<string, WebsiteEmail>;
     phones: Map<string, WebsitePhone>;
+    business: WebsiteBusinessProfile | null;
   } = {
     handles: new Map(),
     socialLinks: {},
     emails: new Map(),
     phones: new Map(),
+    business: null,
   };
 
   const processPage = (
@@ -1032,6 +1099,15 @@ export async function scrapeLeadWebsite(
     }
     for (const phone of extraction.phones) {
       if (!merged.phones.has(phone.normalized)) merged.phones.set(phone.normalized, phone);
+    }
+    try {
+      const pageProfile = extractBusinessProfile(html, pageUrl);
+      merged.business = merged.business ? mergeBusinessProfiles(merged.business, pageProfile) : pageProfile;
+    } catch (err) {
+      console.warn(
+        `[website-enrichment] business profile parse failed for ${pageUrl}:`,
+        err instanceof Error ? err.message : err,
+      );
     }
     pages.push({
       url: pageUrl,
@@ -1094,9 +1170,15 @@ export async function scrapeLeadWebsite(
   const subpages = findSameDomainSubpages(homeHtml, home.finalUrl ?? homeUrl, maxSubpages);
 
   // If the homepage already yields everything, do not spend more fetches.
+  // "Everything" includes a phone and a physical address, which usually live
+  // on the contact page rather than the homepage.
   const needsMore =
     subpages.length > 0 &&
-    (!merged.handles.size || merged.emails.size === 0 || Object.keys(merged.socialLinks).length === 0);
+    (!merged.handles.size ||
+      merged.emails.size === 0 ||
+      merged.phones.size === 0 ||
+      Object.keys(merged.socialLinks).length === 0 ||
+      !merged.business?.address);
 
   if (needsMore) {
     for (const subpageUrl of subpages) {
@@ -1123,7 +1205,14 @@ export async function scrapeLeadWebsite(
     }
   }
 
-  const rankedHandles = Array.from(merged.handles.entries()).sort((a, b) => b[1] - a[1]);
+  // Rank by page frequency, breaking ties with the homepage ranking (which
+  // already accounts for header/footer prominence and business-name match).
+  const homeRank = new Map(homeExtraction.instagramProfiles.map((h, i) => [h, i] as const));
+  const rankedHandles = Array.from(merged.handles.entries()).sort(
+    (a, b) =>
+      b[1] - a[1] ||
+      (homeRank.get(a[0]) ?? Number.MAX_SAFE_INTEGER) - (homeRank.get(b[0]) ?? Number.MAX_SAFE_INTEGER),
+  );
   const handle = rankedHandles[0]?.[0] ?? homeExtraction.handle;
   const alternates = rankedHandles
     .map(([value]) => value)
@@ -1141,7 +1230,13 @@ export async function scrapeLeadWebsite(
     domain: norm.domain,
     pages,
     handle,
-    handleConfidence: handle ? "high" : null,
+    // One unambiguous handle is high confidence; two handles seen equally
+    // often (e.g. a group with several locations) is only medium.
+    handleConfidence: handle
+      ? rankedHandles.length > 1 && rankedHandles[1][1] === rankedHandles[0][1]
+        ? "medium"
+        : "high"
+      : null,
     alternates,
     socialLinks: merged.socialLinks,
     emails,
@@ -1153,6 +1248,7 @@ export async function scrapeLeadWebsite(
     homepageTitle: homeMeta.title,
     homepageH1: homeMeta.h1,
     ogSiteName: homeMeta.ogSiteName,
+    business: merged.business,
   };
 }
 
@@ -1341,6 +1437,11 @@ export async function applyWebsiteEnrichmentToLead(
       alternates: extraction.alternates,
       pages: extraction.pages,
       socialOnly: extraction.socialOnly,
+      // Keep the previous business profile if this run could not fetch one
+      // (e.g. the site timed out) so a flaky re-scan never erases data.
+      business: hasBusinessData(extraction.business)
+        ? extraction.business
+        : (asRecord(raw.websiteEnrichment).business ?? null),
     },
     handleAlternates: Array.from(
       new Set([
@@ -1359,7 +1460,10 @@ export async function applyWebsiteEnrichmentToLead(
     lastHandleEnrichmentAt: new Date(),
     email: primaryEmail,
     phone: primaryPhone,
-    phoneNormalized: primaryPhone ? normalizePhoneToE164(primaryPhone, "CA") : null,
+    phoneNormalized: primaryPhone
+      ? ((phones.find((p) => asRecord(p).value === primaryPhone) as { normalized?: string } | undefined)?.normalized ??
+        normalizePhoneToE164(primaryPhone, resolveCountryCode(lead.campaign?.location ?? lead.city ?? "") || "CA"))
+      : null,
     socialLink: primarySocial,
     socialPlatform: primaryPlatform,
     contactSource:
@@ -1412,7 +1516,11 @@ export async function applyWebsiteEnrichmentToLead(
   const newEmailCount = emails.length - existingEmails.length;
   const newPhoneCount = phones.length - existingPhones.length;
   const newSocialCount = newSocials.length;
+  const previousBusiness = asRecord(raw.websiteEnrichment).business;
+  const businessChanged =
+    hasBusinessData(extraction.business) && JSON.stringify(previousBusiness ?? null) !== JSON.stringify(extraction.business);
   const changed =
+    businessChanged ||
     Boolean(handleToStore) ||
     (!lead.email && Boolean(primaryEmail)) ||
     (!lead.phone && Boolean(primaryPhone)) ||
@@ -1486,6 +1594,23 @@ export type WebsiteBulkEnrichmentResult = {
   }>;
 };
 
+export type WebsiteEnrichmentProgress = {
+  phase: "scrape";
+  total: number;
+  processed: number;
+  currentWebsite: string | null;
+  currentLead: string | null;
+  outcome: "found" | "not_found" | "cooldown" | "error" | null;
+  found: number;
+  handlesFound: number;
+  emailsFound: number;
+  phonesFound: number;
+  socialsFound: number;
+  notFound: number;
+  failed: number;
+  cooldownSkipped: number;
+};
+
 export async function enrichLeadsFromWebsites(input: {
   campaignId?: string;
   leadIds?: string[];
@@ -1496,6 +1621,8 @@ export async function enrichLeadsFromWebsites(input: {
   limit?: number;
   concurrency?: number;
   fetchFn?: WebsiteFetchFn;
+  /** Called after each lead finishes so callers can stream live progress. */
+  onProgress?: (progress: WebsiteEnrichmentProgress) => void;
 }): Promise<WebsiteBulkEnrichmentResult> {
   const prisma = getPrismaClient();
   const cooldownMs = 7 * 24 * 60 * 60 * 1000;
@@ -1544,6 +1671,67 @@ export async function enrichLeadsFromWebsites(input: {
   });
 
   const results: WebsiteBulkEnrichmentResult["results"] = [];
+  const progress = {
+    processed: 0,
+    found: 0,
+    handlesFound: 0,
+    emailsFound: 0,
+    phonesFound: 0,
+    socialsFound: 0,
+    notFound: 0,
+    failed: 0,
+    cooldownSkipped: 0,
+  };
+  const emitProgress = (
+    result: WebsiteBulkEnrichmentResult["results"][number] | null,
+    lead: (typeof leads)[number] | null,
+    applied?: WebsiteApplyResult,
+  ) => {
+    if (!input.onProgress) return;
+    progress.processed++;
+    if (result?.outcome === "found") progress.found++;
+    if (result?.newHandle) progress.handlesFound++;
+    if (result?.newEmail) progress.emailsFound++;
+    if (applied) progress.phonesFound += applied.newPhoneCount;
+    progress.socialsFound += result?.newSocialCount ?? 0;
+    if (result?.outcome === "not_found") progress.notFound++;
+    if (result?.outcome === "error") progress.failed++;
+    if (result?.outcome === "cooldown") progress.cooldownSkipped++;
+    try {
+      input.onProgress({
+        phase: "scrape",
+        total: leads.length,
+        currentWebsite: lead?.website ?? null,
+        currentLead: lead?.fullName ?? lead?.username ?? null,
+        outcome: result?.outcome ?? null,
+        ...progress,
+      });
+    } catch {
+      // Progress reporting must never break the scrape.
+    }
+  };
+  if (input.onProgress) {
+    try {
+      input.onProgress({
+        phase: "scrape",
+        total: leads.length,
+        processed: 0,
+        currentWebsite: null,
+        currentLead: null,
+        outcome: null,
+        found: 0,
+        handlesFound: 0,
+        emailsFound: 0,
+        phonesFound: 0,
+        socialsFound: 0,
+        notFound: 0,
+        failed: 0,
+        cooldownSkipped: 0,
+      });
+    } catch {
+      // ignore
+    }
+  }
 
   await runWithConcurrency(leads, input.concurrency ?? 15, async (lead) => {
     if (!lead.website) return;
@@ -1554,11 +1742,11 @@ export async function enrichLeadsFromWebsites(input: {
         lead.lastHandleEnrichmentAt &&
         lead.lastHandleEnrichmentAt > cooldownCutoff
       ) {
-        results.push({
+        const cooldownResult = {
           id: lead.id,
           name: lead.fullName,
           website: lead.website,
-          outcome: "cooldown",
+          outcome: "cooldown" as const,
           handle: lead.username,
           email: lead.email,
           socials: [],
@@ -1566,7 +1754,9 @@ export async function enrichLeadsFromWebsites(input: {
           newEmail: false,
           newSocialCount: 0,
           message: "Website enrichment already ran within the last 7 days.",
-        });
+        };
+        results.push(cooldownResult);
+        emitProgress(cooldownResult, lead);
         return;
       }
 
@@ -1612,6 +1802,7 @@ export async function enrichLeadsFromWebsites(input: {
               .join(", ")} across ${applied.pagesTried} page(s).`
           : `No new handle/email/phone/social found across ${applied.pagesTried} page(s).`,
       });
+      emitProgress(results[results.length - 1], lead, applied);
     } catch (err: unknown) {
       results.push({
         id: lead.id,
@@ -1626,6 +1817,7 @@ export async function enrichLeadsFromWebsites(input: {
         newSocialCount: 0,
         message: err instanceof Error ? err.message : String(err),
       });
+      emitProgress(results[results.length - 1], lead);
     }
   });
 

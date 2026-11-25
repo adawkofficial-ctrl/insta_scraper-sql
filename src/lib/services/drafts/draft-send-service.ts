@@ -39,7 +39,7 @@ async function resolveConnectedSender(
         `Instagram sender account "${senderAccountId}" was not found.`,
       );
     }
-    if (owned.status !== "CONNECTED") {
+    if (!["CONNECTED", "ACTIVE", "WARMING"].includes(owned.status)) {
       throw new BadRequestError(
         owned.status === "AUTH_REQUIRED" || owned.status === "EXPIRED"
           ? "AUTH_REQUIRED"

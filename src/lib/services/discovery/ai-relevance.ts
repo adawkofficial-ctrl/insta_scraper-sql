@@ -4,6 +4,11 @@ import { generateStructured } from "../ai/gemini/gemini-client";
 import { logger } from "@/lib/logger";
 import type { LeadProfile } from "@/lib/types";
 import type { RelevanceCampaignContext } from "./lead-relevance";
+import {
+  isAutoAiEnrichmentEnabled,
+  ruleBasedCandidateRelevance,
+  ruleBasedProfileRelevance,
+} from "./rule-based-relevance";
 
 export type AccountType =
   | "business_clinic"
@@ -177,6 +182,9 @@ export async function evaluateProfileRelevanceWithAI(
   options?: AiRelevanceOptions,
 ): Promise<AiRelevanceOutput> {
   const threshold = options?.threshold ?? getAiRelevanceMinScore();
+  if (!isAutoAiEnrichmentEnabled()) {
+    return ruleBasedProfileRelevance(profile, campaign, threshold);
+  }
 
   const systemInstruction = [
     "You are an expert sales intelligence assistant evaluating Instagram business profiles for B2B outreach fit.",
@@ -338,6 +346,9 @@ export async function evaluateMapsCandidateRelevanceWithAI(
   options?: AiRelevanceOptions,
 ): Promise<AiRelevanceOutput> {
   const threshold = options?.threshold ?? getAiRelevanceMinScore();
+  if (!isAutoAiEnrichmentEnabled()) {
+    return ruleBasedCandidateRelevance(candidate, campaign, threshold);
+  }
 
   const systemInstruction = [
     "You are an expert sales intelligence assistant evaluating local businesses for B2B outreach fit.",

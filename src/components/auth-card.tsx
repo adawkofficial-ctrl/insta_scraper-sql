@@ -41,26 +41,8 @@ export function AuthCard({ initialMode: _initialMode }: AuthCardProps = {}) {
 
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [defaultAdmin, setDefaultAdmin] = useState<{ email: string; password?: string } | null>(null);
 
   const redirectPath = getSafeRedirect(searchParams.get("redirect"));
-  const isDevMode = process.env.NODE_ENV !== "production";
-
-  // Fetch configured default admin info for dev helper
-  useEffect(() => {
-    let isMounted = true;
-    fetch("/api/auth/default-admin")
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (isMounted && data?.email) {
-          setDefaultAdmin(data);
-        }
-      })
-      .catch(() => {});
-    return () => {
-      isMounted = false;
-    };
-  }, []);
 
   // Check if user is already authenticated
   useEffect(() => {
@@ -183,7 +165,7 @@ export function AuthCard({ initialMode: _initialMode }: AuthCardProps = {}) {
                 autoComplete="email"
                 value={email}
                 onChange={(e) => setEmail(e.target.value)}
-                placeholder={defaultAdmin?.email || "admin@instascraper.com"}
+                placeholder="admin@instascraper.com"
                 className="mt-1.5 block w-full rounded-lg border border-zinc-700/80 bg-zinc-950 px-3.5 py-2.5 text-sm text-white placeholder-zinc-500 focus:border-rose-500 focus:outline-none focus:ring-1 focus:ring-rose-500"
               />
             </div>
@@ -234,7 +216,7 @@ export function AuthCard({ initialMode: _initialMode }: AuthCardProps = {}) {
               type="submit"
               id="submit-auth-btn"
               disabled={loading}
-              className="mt-6 flex w-full items-center justify-center rounded-lg bg-rose-600 px-4 py-2.5 text-sm font-semibold text-white shadow-md transition hover:bg-rose-500 focus:outline-none focus:ring-2 focus:ring-rose-500 focus:ring-offset-2 focus:ring-offset-zinc-900 disabled:cursor-not-allowed disabled:opacity-50"
+              className="mt-6 flex w-full items-center justify-center rounded-lg bg-orange-600 px-4 py-2.5 text-sm font-semibold text-white shadow-md transition hover:bg-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-2 focus:ring-offset-zinc-900 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {loading ? (
                 <div className="flex items-center gap-2">
@@ -246,23 +228,6 @@ export function AuthCard({ initialMode: _initialMode }: AuthCardProps = {}) {
               )}
             </button>
           </form>
-
-          {/* Quick Fill Helper for Demo / Dev */}
-          {isDevMode && (
-            <div className="mt-6 border-t border-zinc-800 pt-4 text-center text-xs text-zinc-500">
-              <p>Default Admin Account:</p>
-              <button
-                type="button"
-                onClick={() => {
-                  setEmail(defaultAdmin?.email || "admin@instascraper.com");
-                  setPassword(defaultAdmin?.password || "AdminPass2026!Secure");
-                }}
-                className="mt-1 font-mono text-xs text-rose-400 hover:text-rose-300 hover:underline"
-              >
-                {defaultAdmin?.email || "admin@instascraper.com"} (auto-fill)
-              </button>
-            </div>
-          )}
         </div>
       </div>
     </div>

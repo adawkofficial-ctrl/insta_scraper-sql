@@ -273,7 +273,7 @@ async function resolveBulkSenderAccountId(
       `Instagram sender account "${senderAccountId}" was not found.`,
     );
   }
-  if (owned.status !== "CONNECTED") {
+  if (!["CONNECTED", "ACTIVE", "WARMING"].includes(owned.status)) {
     throw new BadRequestError(
       owned.status === "AUTH_REQUIRED" || owned.status === "EXPIRED"
         ? "AUTH_REQUIRED"
@@ -1176,7 +1176,7 @@ export async function dispatchBulkJobQueue(jobId: string): Promise<void> {
     let activeSenders: SenderAccountRecord[] = [];
     if (initialJob.senderAccountId) {
       const specific = await findSenderAccountOwned(initialJob.senderAccountId, initialJob.userId);
-      if (specific && specific.status === "CONNECTED") {
+      if (specific && ["CONNECTED", "ACTIVE", "WARMING"].includes(specific.status)) {
         activeSenders = [specific];
       }
     } else {
@@ -1454,17 +1454,25 @@ export async function dispatchBulkJobQueue(jobId: string): Promise<void> {
           continue;
         }
 
-        if (gateCheck.reason === "OUTSIDE_WORKING_HOURS") {
-          logger.info("[BULK_SEND_GATE] Lead outside working hours, deferring item", {
-            leadId: nextItem.leadId,
-            retryAt: gateCheck.retryAt,
-          });
+        if (
+          gateCheck.reason === "OUTSIDE_WORKING_HOURS" ||
+          gateCheck.reason === "OUTSIDE_CAMPAIGN_WINDOW"
+        ) {
+          const outsideCampaign = gateCheck.reason === "OUTSIDE_CAMPAIGN_WINDOW";
+          logger.info(
+            outsideCampaign
+              ? "[BULK_SEND_GATE] Outside campaign send window, deferring item"
+              : "[BULK_SEND_GATE] Lead outside working hours, deferring item",
+            { leadId: nextItem.leadId, retryAt: gateCheck.retryAt },
+          );
           // Item stays QUEUED with retryAt info (not failed!)
           await prisma.bulkMessageItem.update({
             where: { id: nextItem.id },
             data: {
               status: BulkMessageItemStatus.QUEUED,
-              errorMessage: `Queued: Outside recipient working hours (resumes at ${gateCheck.retryAt?.toISOString() ?? "next window"})`,
+              errorMessage: outsideCampaign
+                ? `Queued: Outside campaign send window (resumes at ${gateCheck.retryAt?.toISOString() ?? "next window"})`
+                : `Queued: Outside recipient working hours (resumes at ${gateCheck.retryAt?.toISOString() ?? "next window"})`,
             },
           });
           break;
@@ -1483,7 +1491,35 @@ export async function dispatchBulkJobQueue(jobId: string): Promise<void> {
             if (!shouldContinue) {
               break;
             }
+            // Re-run the gate after waiting instead of dispatching blindly.
+            continue;
           }
+        } else if (gateCheck.reason !== "COOLDOWN_ACTIVE") {
+
+        // Every other gate block (daily/hourly cap, stagger offset, sender
+        // paused, ...) is a "not now", not a failure: keep the item QUEUED and
+        // wait until retryAt (capped) before re-checking.
+        logger.info("[BULK_SEND_GATE] Gate deferred item", {
+          leadId: nextItem.leadId,
+          reason: gateCheck.reason,
+          retryAt: gateCheck.retryAt,
+        });
+        await prisma.bulkMessageItem.update({
+          where: { id: nextItem.id },
+          data: {
+            status: BulkMessageItemStatus.QUEUED,
+            errorMessage: `Queued: ${gateCheck.reason}${gateCheck.retryAt ? ` (resumes at ${gateCheck.retryAt.toISOString()})` : ""}`,
+          },
+        });
+        if (process.env.NODE_ENV === "test" || process.env.SKIP_SEND_DELAYS === "1") {
+          break;
+        }
+        const deferMs = gateCheck.retryAt
+          ? Math.min(60 * 60 * 1000, Math.max(30_000, gateCheck.retryAt.getTime() - Date.now()))
+          : 5 * 60 * 1000;
+        const keepGoing = await sleepWithJobCheck(jobId, deferMs);
+        if (!keepGoing) break;
+        continue;
         }
       }
 

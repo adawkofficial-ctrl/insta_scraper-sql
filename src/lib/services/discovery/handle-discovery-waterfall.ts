@@ -304,17 +304,88 @@ export async function isUrlSafe(
   }
 }
 
+const MAX_HTML_BYTES = 2 * 1024 * 1024;
+
+async function readBodyCapped(res: Response, maxBytes: number): Promise<string> {
+  if (!res.body) return res.text();
+  const reader = res.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  while (total < maxBytes) {
+    const { done, value } = await reader.read();
+    if (done || !value) break;
+    chunks.push(value);
+    total += value.byteLength;
+  }
+  if (total >= maxBytes) {
+    await reader.cancel().catch(() => undefined);
+  }
+  const buffer = new Uint8Array(Math.min(total, maxBytes));
+  let offset = 0;
+  for (const chunk of chunks) {
+    const slice = chunk.subarray(0, Math.max(0, buffer.length - offset));
+    buffer.set(slice, offset);
+    offset += slice.length;
+    if (offset >= buffer.length) break;
+  }
+  return new TextDecoder("utf-8", { fatal: false }).decode(buffer);
+}
+
 /**
  * Safely fetches HTML text with hardened SSRF protection:
  * - Checks target URL BEFORE fetching (including DNS resolution).
  * - Uses redirect: "manual" and re-checks every redirect hop (max 3 hops).
  * - Enforces timeout.
  */
+type SafeFetchResult = { ok: boolean; html?: string; finalUrl?: string; error?: string; status?: number | null };
+
+// Header profiles tried in order. Many small-business sites sit behind WAFs
+// that 403 an outdated/partial browser fingerprint, while others drop the
+// socket for any "Chrome" UA whose TLS fingerprint isn't a real browser but
+// accept a plain client. Try a complete modern browser profile first, then a
+// minimal one.
+const FETCH_HEADER_PROFILES: Record<string, string>[] = [
+  {
+    "User-Agent":
+      "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36",
+    Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+    "Accept-Language": "en-US,en;q=0.9",
+    "Upgrade-Insecure-Requests": "1",
+    "Sec-Fetch-Dest": "document",
+    "Sec-Fetch-Mode": "navigate",
+    "Sec-Fetch-Site": "none",
+    "Sec-Fetch-User": "?1",
+  },
+  {
+    Accept: "text/html,*/*;q=0.8",
+  },
+];
+
+function isBotBlock(result: SafeFetchResult): boolean {
+  if (result.ok) return false;
+  if (result.status === 403 || result.status === 429 || result.status === 503 || result.status === 406) return true;
+  return /other side closed|socket|ECONNRESET|fetch failed|terminated/i.test(result.error ?? "");
+}
+
 export async function safeFetchHtml(
   initialUrl: string,
   timeoutMs: number = 6000,
   maxHops: number = 3,
-): Promise<{ ok: boolean; html?: string; finalUrl?: string; error?: string }> {
+): Promise<SafeFetchResult> {
+  let last: SafeFetchResult = { ok: false, error: "No fetch attempted" };
+  for (const headers of FETCH_HEADER_PROFILES) {
+    last = await safeFetchHtmlWithHeaders(initialUrl, timeoutMs, maxHops, headers);
+    if (last.ok || !isBotBlock(last) || /SSRF blocked/.test(last.error ?? "")) return last;
+  }
+  return last;
+}
+
+async function safeFetchHtmlWithHeaders(
+  initialUrl: string,
+  timeoutMs: number,
+  maxHops: number,
+  headers: Record<string, string>,
+): Promise<SafeFetchResult> {
   let currentUrl = initialUrl;
   const visited = new Set<string>();
 
@@ -338,17 +409,12 @@ export async function safeFetchHtml(
         method: "GET",
         redirect: "manual",
         signal: controller.signal,
-        headers: {
-          "User-Agent":
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
-          Accept: "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        },
+        headers,
       });
-
-      clearTimeout(timer);
 
       // Handle redirect manually
       if ([301, 302, 303, 307, 308].includes(res.status)) {
+        clearTimeout(timer);
         if (hop >= maxHops) {
           return { ok: false, error: "Max redirect hops (3) exceeded" };
         }
@@ -361,15 +427,26 @@ export async function safeFetchHtml(
       }
 
       if (!res.ok) {
-        return { ok: false, error: `HTTP status ${res.status}` };
+        clearTimeout(timer);
+        return { ok: false, error: `HTTP status ${res.status}`, status: res.status, finalUrl: currentUrl };
       }
 
-      const text = await res.text();
-      return { ok: true, html: text, finalUrl: currentUrl };
+      const contentType = res.headers.get("content-type") ?? "";
+      if (contentType && !/html|xml|text\/plain/i.test(contentType)) {
+        clearTimeout(timer);
+        return { ok: false, error: `Not an HTML page (${contentType.split(";")[0]})`, status: res.status, finalUrl: currentUrl };
+      }
+
+      // Read at most MAX_HTML_BYTES so a huge page cannot exhaust memory. The
+      // abort timer stays armed while the body streams in.
+      const text = await readBodyCapped(res, MAX_HTML_BYTES);
+      clearTimeout(timer);
+      return { ok: true, html: text, finalUrl: currentUrl, status: res.status };
     } catch (err: unknown) {
       clearTimeout(timer);
+      const cause = (err as { cause?: { code?: string; message?: string } })?.cause;
       const msg = err instanceof Error ? err.message : String(err);
-      return { ok: false, error: msg };
+      return { ok: false, error: cause?.message ? `${msg}: ${cause.message}` : msg };
     }
   }
 

@@ -4,7 +4,6 @@ import { useEffect, useState } from "react";
 import Link from "next/link";
 import { usePathname } from "next/navigation";
 import { getMe, logoutUser, type AuthUser } from "@/lib/api/auth";
-import { ThemeToggle } from "@/components/ui/theme-toggle";
 
 export function Navbar({ onNewCampaign }: { onNewCampaign?: () => void }) {
   const pathname = usePathname();
@@ -45,11 +44,11 @@ export function Navbar({ onNewCampaign }: { onNewCampaign?: () => void }) {
   const isSettingsActive = pathname.startsWith("/settings");
 
   return (
-    <header className="sticky top-0 z-30 border-b border-subtle bg-surface/85 backdrop-blur-md transition-colors duration-150">
+    <header className="sticky top-0 z-30 border-b border-white/[0.06] bg-black/75 backdrop-blur-xl after:absolute after:inset-x-0 after:bottom-0 after:h-px after:bg-gradient-to-r after:from-transparent after:via-orange-500/50 after:to-transparent">
       <div className="mx-auto flex max-w-7xl items-center justify-between px-4 py-3 sm:px-6 lg:px-8">
         <div className="flex items-center gap-6">
           <Link href="/" className="group flex items-center gap-2.5 transition">
-            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-tr from-indigo-600 via-purple-600 to-rose-500 shadow-md shadow-indigo-500/20 transition-transform duration-200 group-hover:scale-105">
+            <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-brand-gradient shadow-lg shadow-orange-500/30 ring-1 ring-orange-300/30 transition-transform duration-300 group-hover:scale-110 group-hover:rotate-3">
               <svg
                 className="h-5 w-5 text-white"
                 fill="none"
@@ -66,7 +65,7 @@ export function Navbar({ onNewCampaign }: { onNewCampaign?: () => void }) {
             </div>
             <div className="flex flex-col">
               <span className="text-base font-bold tracking-tight text-primary">
-                Insta<span className="text-indigo-600 dark:text-indigo-400">Scraper</span>
+                Insta<span className="text-brand-gradient">Scraper</span>
               </span>
               <span className="text-[10px] font-semibold tracking-wider uppercase text-muted">
                 Campaign & Lead Engine
@@ -79,30 +78,19 @@ export function Navbar({ onNewCampaign }: { onNewCampaign?: () => void }) {
               href="/"
               className={`rounded-lg px-3.5 py-1.5 text-sm font-medium transition-all duration-150 ${
                 isCampaignsActive
-                  ? "bg-subtle text-primary font-semibold shadow-xs"
-                  : "text-secondary hover:bg-surface-hover hover:text-primary"
+                  ? "bg-orange-500/12 text-orange-300 font-semibold ring-1 ring-inset ring-orange-500/30"
+                  : "text-zinc-400 hover:bg-white/5 hover:text-white"
               }`}
             >
               Campaigns
-            </Link>
-            <Link
-              href="/email-accounts"
-              id="nav-email-link"
-              className={`rounded-lg px-3.5 py-1.5 text-sm font-medium transition-all duration-150 ${
-                pathname?.startsWith("/email-accounts")
-                  ? "bg-subtle text-primary font-semibold shadow-xs"
-                  : "text-secondary hover:bg-surface-hover hover:text-primary"
-              }`}
-            >
-              Email
             </Link>
             <Link
               href="/settings"
               id="nav-settings-link"
               className={`rounded-lg px-3.5 py-1.5 text-sm font-medium transition-all duration-150 ${
                 isSettingsActive
-                  ? "bg-subtle text-primary font-semibold shadow-xs"
-                  : "text-secondary hover:bg-surface-hover hover:text-primary"
+                  ? "bg-orange-500/12 text-orange-300 font-semibold ring-1 ring-inset ring-orange-500/30"
+                  : "text-zinc-400 hover:bg-white/5 hover:text-white"
               }`}
             >
               Settings
@@ -115,7 +103,7 @@ export function Navbar({ onNewCampaign }: { onNewCampaign?: () => void }) {
             <button
               onClick={onNewCampaign}
               id="new-campaign-btn"
-              className="inline-flex items-center gap-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 px-3.5 py-2 text-sm font-medium text-white shadow-sm shadow-indigo-500/20 transition-all duration-150 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2 focus:ring-offset-surface cursor-pointer"
+              className="inline-flex items-center gap-2 rounded-lg bg-brand-gradient px-3.5 py-2 text-sm font-semibold text-white border border-orange-400/40 shadow-[0_6px_20px_-8px_rgba(255,122,26,0.8)] transition-all duration-200 hover:brightness-110 hover:-translate-y-px focus:outline-none focus:ring-2 focus:ring-orange-500/60 cursor-pointer"
             >
               <svg className="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
                 <path strokeLinecap="round" strokeLinejoin="round" d="M12 4v16m8-8H4" />
@@ -124,13 +112,11 @@ export function Navbar({ onNewCampaign }: { onNewCampaign?: () => void }) {
             </button>
           )}
 
-          <ThemeToggle />
-
           {!loadingUser && (
             user ? (
               <div className="flex items-center gap-2.5 sm:gap-3 border-l border-subtle pl-2.5 sm:pl-3">
                 <div className="flex items-center gap-2">
-                  <div className="flex h-8 w-8 items-center justify-center rounded-full bg-gradient-to-tr from-indigo-600 to-purple-600 text-xs font-bold text-white shadow-sm">
+                  <div className="flex h-8 w-8 items-center justify-center rounded-full bg-brand-gradient text-xs font-bold text-white shadow-sm ring-2 ring-black ring-offset-1 ring-offset-orange-500/40">
                     {user.name ? user.name.charAt(0).toUpperCase() : user.email.charAt(0).toUpperCase()}
                   </div>
                   <div className="hidden flex-col md:flex">

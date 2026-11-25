@@ -9,6 +9,7 @@
  *
  * Usage: npm run test:db:setup
  */
+require("dotenv/config");
 const { execSync } = require("node:child_process");
 const mariadb = require("mariadb");
 const {

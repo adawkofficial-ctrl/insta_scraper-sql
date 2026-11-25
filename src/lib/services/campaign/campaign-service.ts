@@ -60,6 +60,11 @@ export type CampaignSummary = {
   location: string | null;
   category: string | null;
   leadLimit: number | null;
+  sendWindowEnabled?: boolean;
+  sendWindowStart?: string | null;
+  sendWindowEnd?: string | null;
+  sendWindowDays?: number[] | null;
+  sendWindowTimezone?: string | null;
   followUpEnabled?: boolean;
   followUpCount?: number;
   followUpDelayDays?: number[];
@@ -147,6 +152,11 @@ export type UpdateCampaignInput = {
   location?: string | null;
   category?: string | null;
   leadLimit?: number | null;
+  sendWindowEnabled?: boolean;
+  sendWindowStart?: string | null;
+  sendWindowEnd?: string | null;
+  sendWindowDays?: number[] | null;
+  sendWindowTimezone?: string | null;
   requireNameInFirstMessage?: boolean;
   allowNeutralGreeting?: boolean;
   followUpAllowSenderSwitch?: boolean;
@@ -245,6 +255,11 @@ export async function createCampaign(
   location: string | null;
   category: string | null;
   leadLimit: number | null;
+  sendWindowEnabled?: boolean;
+  sendWindowStart?: string | null;
+  sendWindowEnd?: string | null;
+  sendWindowDays?: number[] | null;
+  sendWindowTimezone?: string | null;
   followUpEnabled?: boolean;
   followUpCount?: number;
   followUpDelayDays?: number[];
@@ -520,6 +535,11 @@ export async function createCampaign(
       location: true,
       category: true,
       leadLimit: true,
+      sendWindowEnabled: true,
+      sendWindowStart: true,
+      sendWindowEnd: true,
+      sendWindowDays: true,
+      sendWindowTimezone: true,
       followUpEnabled: true,
       followUpCount: true,
       followUpDelayDays: true,
@@ -544,6 +564,7 @@ export async function createCampaign(
 
   return {
     ...campaign,
+    sendWindowDays: (campaign.sendWindowDays as number[] | null) ?? null,
     followUpDelayDays: parseCampaignFollowUpDelayDays(campaign.followUpDelayDays),
     followUpTemplates: parseCampaignFollowUpTemplates(campaign.followUpTemplates),
     requireNameInFirstMessage: campaign.requireNameInFirstMessage,
@@ -577,6 +598,11 @@ export async function listCampaigns(userId?: string): Promise<CampaignSummary[]>
       location: true,
       category: true,
       leadLimit: true,
+      sendWindowEnabled: true,
+      sendWindowStart: true,
+      sendWindowEnd: true,
+      sendWindowDays: true,
+      sendWindowTimezone: true,
       followUpEnabled: true,
       followUpCount: true,
       followUpDelayDays: true,
@@ -622,6 +648,11 @@ export async function listCampaigns(userId?: string): Promise<CampaignSummary[]>
     location: campaign.location,
     category: campaign.category,
     leadLimit: campaign.leadLimit,
+    sendWindowEnabled: campaign.sendWindowEnabled,
+    sendWindowStart: campaign.sendWindowStart,
+    sendWindowEnd: campaign.sendWindowEnd,
+    sendWindowDays: (campaign.sendWindowDays as number[] | null) ?? null,
+    sendWindowTimezone: campaign.sendWindowTimezone,
     companyProfileId: campaign.companyProfileId,
     companyProfile: campaign.companyProfile,
     createdAt: campaign.createdAt,
@@ -659,6 +690,11 @@ export async function getCampaignById(
       location: true,
       category: true,
       leadLimit: true,
+      sendWindowEnabled: true,
+      sendWindowStart: true,
+      sendWindowEnd: true,
+      sendWindowDays: true,
+      sendWindowTimezone: true,
       followUpEnabled: true,
       followUpCount: true,
       followUpDelayDays: true,
@@ -734,6 +770,11 @@ export async function getCampaignById(
     location: campaign.location,
     category: campaign.category,
     leadLimit: campaign.leadLimit,
+    sendWindowEnabled: campaign.sendWindowEnabled,
+    sendWindowStart: campaign.sendWindowStart,
+    sendWindowEnd: campaign.sendWindowEnd,
+    sendWindowDays: (campaign.sendWindowDays as number[] | null) ?? null,
+    sendWindowTimezone: campaign.sendWindowTimezone,
     followUpEnabled: campaign.followUpEnabled,
     followUpCount: campaign.followUpCount,
     followUpDelayDays: parseCampaignFollowUpDelayDays(campaign.followUpDelayDays),
@@ -780,6 +821,11 @@ export async function updateCampaign(
   location: string | null;
   category: string | null;
   leadLimit: number | null;
+  sendWindowEnabled?: boolean;
+  sendWindowStart?: string | null;
+  sendWindowEnd?: string | null;
+  sendWindowDays?: number[] | null;
+  sendWindowTimezone?: string | null;
   followUpEnabled?: boolean;
   followUpCount?: number;
   followUpDelayDays?: number[];
@@ -819,6 +865,11 @@ export async function updateCampaign(
     location?: string | null;
     category?: string | null;
     leadLimit?: number | null;
+    sendWindowEnabled?: boolean;
+    sendWindowStart?: string | null;
+    sendWindowEnd?: string | null;
+    sendWindowDays?: Prisma.InputJsonValue | null;
+    sendWindowTimezone?: string | null;
     companyProfileId?: string;
     autoOptimize?: boolean;
     explorationBudgetShare?: number;
@@ -969,6 +1020,58 @@ export async function updateCampaign(
         throw new BadRequestError("INVALID_SCHEDULED_AT", 'Invalid date format for "scheduledAt".');
       }
       data.scheduledAt = parsedDate;
+    }
+  }
+
+  const hhmm = (value: unknown, field: string): string | null => {
+    if (value === null) return null;
+    if (typeof value !== "string" || !/^([01]\d|2[0-3]):[0-5]\d$/.test(value.trim())) {
+      throw new BadRequestError("INVALID_SEND_WINDOW", `"${field}" must be a HH:MM time or null.`);
+    }
+    return value.trim();
+  };
+
+  if (record.sendWindowEnabled !== undefined) {
+    if (typeof record.sendWindowEnabled !== "boolean") {
+      throw new BadRequestError("INVALID_SEND_WINDOW", '"sendWindowEnabled" must be a boolean.');
+    }
+    data.sendWindowEnabled = record.sendWindowEnabled;
+  }
+  if (record.sendWindowStart !== undefined) {
+    data.sendWindowStart = hhmm(record.sendWindowStart, "sendWindowStart");
+  }
+  if (record.sendWindowEnd !== undefined) {
+    data.sendWindowEnd = hhmm(record.sendWindowEnd, "sendWindowEnd");
+  }
+  if (record.sendWindowDays !== undefined) {
+    if (record.sendWindowDays === null) {
+      data.sendWindowDays = null;
+    } else if (
+      Array.isArray(record.sendWindowDays) &&
+      record.sendWindowDays.length <= 7 &&
+      record.sendWindowDays.every((day) => Number.isInteger(day) && Number(day) >= 0 && Number(day) <= 6)
+    ) {
+      data.sendWindowDays = Array.from(new Set(record.sendWindowDays.map(Number))).sort((a, b) => a - b);
+    } else {
+      throw new BadRequestError(
+        "INVALID_SEND_WINDOW",
+        '"sendWindowDays" must be an array of weekday numbers (0=Sunday .. 6=Saturday) or null.',
+      );
+    }
+  }
+  if (record.sendWindowTimezone !== undefined) {
+    if (record.sendWindowTimezone === null) {
+      data.sendWindowTimezone = null;
+    } else if (typeof record.sendWindowTimezone === "string" && record.sendWindowTimezone.trim()) {
+      const tz = record.sendWindowTimezone.trim();
+      try {
+        Intl.DateTimeFormat("en-US", { timeZone: tz });
+      } catch {
+        throw new BadRequestError("INVALID_SEND_WINDOW", '"sendWindowTimezone" must be a valid IANA timezone.');
+      }
+      data.sendWindowTimezone = tz;
+    } else {
+      throw new BadRequestError("INVALID_SEND_WINDOW", '"sendWindowTimezone" must be a valid IANA timezone or null.');
     }
   }
 
@@ -1239,6 +1342,11 @@ export async function updateCampaign(
     "location",
     "category",
     "leadLimit",
+    "sendWindowEnabled",
+    "sendWindowStart",
+    "sendWindowEnd",
+    "sendWindowDays",
+    "sendWindowTimezone",
     "companyProfileId",
     "autoOptimize",
     "explorationBudgetShare",
@@ -1268,7 +1376,7 @@ export async function updateCampaign(
 
   const updated = await prisma.campaign.update({
     where: { id: campaignId },
-    data,
+    data: data as Prisma.CampaignUncheckedUpdateInput,
     select: {
       id: true,
       name: true,
@@ -1285,6 +1393,11 @@ export async function updateCampaign(
       location: true,
       category: true,
       leadLimit: true,
+      sendWindowEnabled: true,
+      sendWindowStart: true,
+      sendWindowEnd: true,
+      sendWindowDays: true,
+      sendWindowTimezone: true,
       followUpEnabled: true,
       followUpCount: true,
       followUpDelayDays: true,
@@ -1307,6 +1420,7 @@ export async function updateCampaign(
 
   return {
     ...updated,
+    sendWindowDays: (updated.sendWindowDays as number[] | null) ?? null,
     followUpDelayDays: parseCampaignFollowUpDelayDays(updated.followUpDelayDays),
     followUpTemplates: parseCampaignFollowUpTemplates(updated.followUpTemplates),
   };

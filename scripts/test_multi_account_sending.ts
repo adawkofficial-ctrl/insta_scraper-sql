@@ -39,6 +39,7 @@ process.env.WORKING_HOURS_START = "0";
 process.env.WORKING_HOURS_END = "24";
 process.env.FOLLOWUP_ALLOW_SENDER_SWITCH = "false";
 process.env.OUTBOUND_SENDING_ENABLED = "true";
+delete process.env.SENDER_MIN_GAP_FLOOR;
 
 const prisma = getPrismaClient();
 let passed = 0;
@@ -136,7 +137,8 @@ async function main() {
 
   let gapRejected = false;
   try {
-    await updateSenderSettings(senderA.id, user.id, { minutesBetweenMessages: 4 });
+    // Floor is 1 minute by default (SENDER_MIN_GAP_FLOOR); 0 is below it.
+    await updateSenderSettings(senderA.id, user.id, { minutesBetweenMessages: 0 });
   } catch {
     gapRejected = true;
   }

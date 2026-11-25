@@ -338,6 +338,7 @@ export type FindLeadContactsResponse = {
     email: string | null;
     website: string | null;
     contacts: LeadContactsInfo;
+    websiteEnrichment?: Record<string, unknown> | null;
   }>;
 };
 

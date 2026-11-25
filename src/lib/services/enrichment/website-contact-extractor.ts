@@ -11,6 +11,7 @@ import {
   detectSocialPlatform,
 } from "@/lib/constants/social-platforms";
 import { scrapeLeadWebsite } from "./website-lead-enricher";
+import { hasBusinessData } from "./website-business-profile";
 import { resolveCountryCode } from "../discovery/country-cities";
 import { getPrismaClient } from "@/lib/db/prisma";
 import { withLeadChannelFlags } from "../lead/lead-channels";
@@ -190,6 +191,96 @@ export type WebsiteContactResult = {
   websiteDomain: string | null;
   contactSource: "website_fallback" | null;
 };
+
+/**
+ * Merge freshly extracted contacts into whatever is already stored, instead
+ * of overwriting. Earlier runs (the main website scraper, CSV import, maps)
+ * may have recorded emails/phones with richer metadata (sourceUrl, generic)
+ * that a narrower re-scan does not find again.
+ */
+export function mergeContactsData(
+  existing: unknown,
+  incoming: LeadContactsData,
+  extra?: {
+    emails?: Array<{ value: string; sourceUrl?: string; generic?: boolean }>;
+    phones?: Array<{ value: string; normalized: string; sourceUrl?: string }>;
+    whatsapp?: string | null;
+    socialLinks?: Record<string, string | null | undefined>;
+  },
+): LeadContactsData & Record<string, unknown> {
+  const prev =
+    existing && typeof existing === "object" && !Array.isArray(existing)
+      ? (existing as Record<string, unknown>)
+      : {};
+  const prevEmails = Array.isArray(prev.emails) ? (prev.emails as Array<Record<string, unknown>>) : [];
+  const prevPhones = Array.isArray(prev.phones) ? (prev.phones as Array<Record<string, unknown>>) : [];
+  const prevWhatsapps = Array.isArray(prev.whatsapps) ? (prev.whatsapps as Array<Record<string, unknown>>) : [];
+  const prevSocials =
+    prev.socialLinks && typeof prev.socialLinks === "object" ? (prev.socialLinks as Record<string, unknown>) : {};
+
+  const emailKey = (v: unknown) => String(v ?? "").trim().toLowerCase();
+  const emails: Array<Record<string, unknown>> = [...prevEmails];
+  const pushEmail = (item: Record<string, unknown>) => {
+    const key = emailKey(item.value);
+    if (!key || emails.some((e) => emailKey(e.value) === key)) return;
+    emails.push({ ...item, value: key, normalized: key });
+  };
+  incoming.emails.forEach((e) => pushEmail({ ...e }));
+  extra?.emails?.forEach((e) => pushEmail({ value: e.value, source: "website", sourceUrl: e.sourceUrl, generic: e.generic }));
+
+  const phones: Array<Record<string, unknown>> = [...prevPhones];
+  const pushPhone = (item: Record<string, unknown>) => {
+    const key = String(item.normalized ?? item.value ?? "");
+    if (!key || phones.some((p) => String(p.normalized ?? p.value) === key)) return;
+    phones.push(item);
+  };
+  incoming.phones.forEach((p) => pushPhone({ ...p }));
+  extra?.phones?.forEach((p) => pushPhone({ value: p.value, normalized: p.normalized, source: "website", sourceUrl: p.sourceUrl }));
+
+  const whatsapps: Array<Record<string, unknown>> = [...prevWhatsapps];
+  const pushWhatsapp = (item: Record<string, unknown>) => {
+    if (!item.url || whatsapps.some((w) => w.url === item.url)) return;
+    whatsapps.push(item);
+  };
+  incoming.whatsapps.forEach((w) => pushWhatsapp({ ...w }));
+  if (extra?.whatsapp) pushWhatsapp({ url: extra.whatsapp, source: "website" });
+
+  const socialLinks: Record<string, unknown> = { ...prevSocials };
+  for (const [key, value] of Object.entries({ ...incoming.socialLinks, ...(extra?.socialLinks ?? {}) })) {
+    if (typeof value === "string" && value) socialLinks[key] = value;
+  }
+
+  return {
+    ...prev,
+    emails: emails as unknown as ExtractedEmailItem[],
+    phones: phones as unknown as ExtractedPhoneItem[],
+    whatsapps: whatsapps as unknown as ExtractedWhatsappItem[],
+    socialLinks: socialLinks as LeadContactsData["socialLinks"],
+    extractedAt: incoming.extractedAt,
+  };
+}
+
+/** websiteEnrichment block persisted from a main-scraper run. */
+function websiteEnrichmentBlock(
+  previous: unknown,
+  scrape: Awaited<ReturnType<typeof scrapeLeadWebsite>>,
+): Record<string, unknown> {
+  const prev =
+    previous && typeof previous === "object" && !Array.isArray(previous)
+      ? (previous as Record<string, unknown>)
+      : {};
+  return {
+    ...prev,
+    fetchedAt: scrape.fetchedAt,
+    website: scrape.website,
+    domain: scrape.domain,
+    handle: scrape.handle,
+    alternates: scrape.alternates,
+    pages: scrape.pages,
+    socialOnly: scrape.socialOnly,
+    business: hasBusinessData(scrape.business) ? scrape.business : (prev.business ?? null),
+  };
+}
 
 export const WEBSITE_EXTRACT_TIMEOUT_MS = 6000;
 export const WEBSITE_EXTRACT_MAX_BYTES = 1024 * 1024; // 1 MB
@@ -611,8 +702,12 @@ export async function enrichProfilesWithContacts(
             businessName: profile.fullName,
             countryCode,
           });
-        } catch {
+        } catch (err) {
           // Non-fatal per-lead website failure
+          console.warn(
+            `[contact-enrichment] website scrape failed for ${websiteForScrape}:`,
+            err instanceof Error ? err.message : err,
+          );
         }
       }
 
@@ -623,7 +718,7 @@ export async function enrichProfilesWithContacts(
       }
       if (contacts.emails.length > 0) {
         profile.email = contacts.emails[0].value;
-        profile.emailNormalized = contacts.emails[0].value;
+        profile.emailNormalized = contacts.emails[0].value.toLowerCase();
       }
       if (!profile.website && (profile.externalUrl || rawObj.website)) {
         const norm = normalizeWebsite(profile.website || (rawObj.website as string) || profile.externalUrl);
@@ -684,10 +779,20 @@ export async function enrichProfilesWithContacts(
         profile.availableChannels.push("SOCIAL");
       }
 
-      // Persist in rawProfileData.contacts
+      // Persist in rawProfileData.contacts, keeping every email/phone the
+      // main website scraper found (not just the first) plus its business
+      // profile and per-page diagnostics.
       profile.rawProfileData = {
         ...rawObj,
-        contacts,
+        contacts: mergeContactsData(rawObj.contacts, contacts, websiteScrape
+          ? {
+              emails: websiteScrape.emails,
+              phones: websiteScrape.phones,
+              whatsapp: websiteScrape.whatsapp,
+              socialLinks: websiteScrape.socialLinks as Record<string, string | null | undefined>,
+            }
+          : undefined),
+        ...(websiteScrape ? { websiteEnrichment: websiteEnrichmentBlock(rawObj.websiteEnrichment, websiteScrape) } : {}),
       };
 
       // Accumulate counts
@@ -704,8 +809,12 @@ export async function enrichProfilesWithContacts(
       ) {
         leadsWithAnyContact++;
       }
-    } catch {
+    } catch (err) {
       // Non-fatal per-lead failure
+      console.warn(
+        `[contact-enrichment] failed for ${profile.username ?? profile.fullName ?? "lead"}:`,
+        err instanceof Error ? err.message : err,
+      );
     }
   });
 
@@ -732,6 +841,7 @@ export async function extractContactsForLeadsOnDemand(params: {
     email: string | null;
     website: string | null;
     contacts: LeadContactsData;
+    websiteEnrichment?: Record<string, unknown> | null;
   }>;
 }> {
   const { leadIds, userId } = params;
@@ -760,6 +870,7 @@ export async function extractContactsForLeadsOnDemand(params: {
     email: string | null;
     website: string | null;
     contacts: LeadContactsData;
+    websiteEnrichment?: Record<string, unknown> | null;
   }> = [];
 
   await runWithConcurrency(leads, WEBSITE_EXTRACT_CONCURRENCY, async (lead) => {
@@ -781,10 +892,36 @@ export async function extractContactsForLeadsOnDemand(params: {
       timeoutMs: WEBSITE_EXTRACT_TIMEOUT_MS,
     });
 
-    const bestPhone = contacts.phones[0]?.value ?? lead.phone;
-    const bestPhoneNormalized = contacts.phones[0]?.normalized ?? lead.phoneNormalized;
-    const bestEmail = contacts.emails[0]?.value ?? lead.email;
-    const bestEmailNormalized = contacts.emails[0]?.value ?? lead.emailNormalized;
+    // Also run the full website scraper so "Find Contacts" captures the
+    // business profile (services, hours, address, description) and every
+    // email/phone across the contact/about pages, not just the first page.
+    const scrapeTarget = lead.website || lead.externalUrl || (typeof rawObj.website === "string" ? rawObj.website : null);
+    let websiteScrape: Awaited<ReturnType<typeof scrapeLeadWebsite>> | null = null;
+    if (scrapeTarget) {
+      try {
+        websiteScrape = await scrapeLeadWebsite({
+          website: scrapeTarget,
+          businessName: lead.fullName,
+          countryCode,
+        });
+      } catch (err) {
+        console.warn(
+          `[contact-enrichment] on-demand website scrape failed for ${scrapeTarget}:`,
+          err instanceof Error ? err.message : err,
+        );
+      }
+    }
+
+    const bestPhone = contacts.phones[0]?.value ?? lead.phone ?? websiteScrape?.phones[0]?.value ?? null;
+    const bestPhoneNormalized =
+      contacts.phones[0]?.normalized ?? lead.phoneNormalized ?? websiteScrape?.phones[0]?.normalized ?? null;
+    const bestEmail =
+      contacts.emails[0]?.value ??
+      lead.email ??
+      websiteScrape?.emails.find((e) => !e.generic)?.value ??
+      websiteScrape?.emails[0]?.value ??
+      null;
+    const bestEmailNormalized = bestEmail ? bestEmail.trim().toLowerCase() : lead.emailNormalized;
 
     let targetWebsite = lead.website;
     let targetDomain = lead.websiteDomain;
@@ -804,14 +941,29 @@ export async function extractContactsForLeadsOnDemand(params: {
       null;
 
     const availableChannels = computeAvailableChannels({
-      hasInstagram: true,
+      hasInstagram: Boolean(lead.username || lead.instagramUsername),
       email: bestEmail,
       phone: bestPhone,
+      whatsapp: contacts.whatsapps[0]?.url ?? websiteScrape?.whatsapp ?? null,
+      website: targetWebsite,
     });
 
+    const mergedContacts = mergeContactsData(
+      rawObj.contacts,
+      contacts,
+      websiteScrape
+        ? {
+            emails: websiteScrape.emails,
+            phones: websiteScrape.phones,
+            whatsapp: websiteScrape.whatsapp,
+            socialLinks: websiteScrape.socialLinks as Record<string, string | null | undefined>,
+          }
+        : undefined,
+    );
     const updatedRaw = {
       ...rawObj,
-      contacts,
+      contacts: mergedContacts,
+      ...(websiteScrape ? { websiteEnrichment: websiteEnrichmentBlock(rawObj.websiteEnrichment, websiteScrape) } : {}),
     };
 
     await prisma.lead.update({
@@ -835,7 +987,8 @@ export async function extractContactsForLeadsOnDemand(params: {
       phoneNormalized: bestPhoneNormalized,
       email: bestEmail,
       website: targetWebsite,
-      contacts,
+      contacts: mergedContacts,
+      websiteEnrichment: (updatedRaw as { websiteEnrichment?: Record<string, unknown> }).websiteEnrichment ?? null,
     });
   });
 

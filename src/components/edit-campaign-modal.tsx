@@ -9,6 +9,8 @@ import {
 import { ApiClientError } from "@/lib/api/client";
 import { MAX_CAMPAIGN_LEAD_LIMIT } from "@/lib/constants/campaign-limits";
 
+const SEND_WINDOW_DAY_LABELS = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"] as const;
+
 export type EditCampaignModalProps = {
   isOpen: boolean;
   onClose: () => void;
@@ -20,6 +22,11 @@ export type EditCampaignModalProps = {
     location?: string | null;
     category?: string | null;
     leadLimit?: number | null;
+    sendWindowEnabled?: boolean;
+    sendWindowStart?: string | null;
+    sendWindowEnd?: string | null;
+    sendWindowDays?: number[] | null;
+    sendWindowTimezone?: string | null;
     companyProfileId?: string;
     companyProfile?: {
       id: string;
@@ -77,6 +84,22 @@ function EditCampaignDialog({
   const [category, setCategory] = useState(campaign.category || "");
   const [leadLimit, setLeadLimit] = useState(
     campaign.leadLimit != null ? String(campaign.leadLimit) : "",
+  );
+  // Send timetable state
+  const [sendWindowEnabled, setSendWindowEnabled] = useState(
+    campaign.sendWindowEnabled ?? false,
+  );
+  const [sendWindowStart, setSendWindowStart] = useState(
+    campaign.sendWindowStart || "09:00",
+  );
+  const [sendWindowEnd, setSendWindowEnd] = useState(
+    campaign.sendWindowEnd || "18:00",
+  );
+  const [sendWindowDays, setSendWindowDays] = useState<number[]>(
+    campaign.sendWindowDays ?? [1, 2, 3, 4, 5],
+  );
+  const [sendWindowTimezone, setSendWindowTimezone] = useState(
+    campaign.sendWindowTimezone || "UTC",
   );
 
   // Company profile selection state
@@ -208,6 +231,15 @@ function EditCampaignDialog({
       }
     }
 
+    if (sendWindowEnabled && sendWindowDays.length === 0) {
+      setError("Select at least one day for the send timetable.");
+      return;
+    }
+    if (sendWindowEnabled && (!sendWindowStart || !sendWindowEnd)) {
+      setError("Send timetable needs a start and end time.");
+      return;
+    }
+
     setIsSubmitting(true);
     try {
       const parsedMinScore = parseInt(autoApproveMinScore.trim() || "80", 10);
@@ -220,6 +252,11 @@ function EditCampaignDialog({
         location: location.trim() || null,
         category: category.trim() || null,
         leadLimit: parsedLeadLimit,
+        sendWindowEnabled,
+        sendWindowStart: sendWindowEnabled ? sendWindowStart : null,
+        sendWindowEnd: sendWindowEnabled ? sendWindowEnd : null,
+        sendWindowDays: sendWindowEnabled ? sendWindowDays : null,
+        sendWindowTimezone: sendWindowEnabled ? sendWindowTimezone.trim() || "UTC" : null,
         companyProfileId: selectedProfileId || undefined,
         requireApproval,
         approvalMode,
@@ -681,6 +718,112 @@ function EditCampaignDialog({
                 Maximum qualified leads to persist in this campaign.
               </p>
             </div>
+          </div>
+
+          {/* Send Timetable */}
+          <div className="rounded-xl border border-zinc-800 bg-zinc-950/70 p-4 space-y-3">
+            <div className="flex items-center justify-between gap-3">
+              <div>
+                <span className="text-xs font-semibold text-zinc-200">Send Timetable</span>
+                <p className="text-[11px] text-zinc-400">
+                  Only dispatch campaign messages inside this local time window on the selected days.
+                  Sending also still respects each account&apos;s working hours.
+                </p>
+              </div>
+              <label className="relative inline-flex items-center cursor-pointer shrink-0">
+                <input
+                  id="edit-campaign-send-window"
+                  type="checkbox"
+                  checked={sendWindowEnabled}
+                  onChange={(e) => setSendWindowEnabled(e.target.checked)}
+                  disabled={isSubmitting}
+                  className="sr-only peer"
+                />
+                <div className="w-9 h-5 bg-zinc-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-zinc-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-indigo-500" />
+              </label>
+            </div>
+
+            {sendWindowEnabled && (
+              <div className="space-y-3">
+                <div>
+                  <span className="block text-[11px] font-semibold uppercase text-zinc-400">Days</span>
+                  <div className="mt-1 flex flex-wrap gap-1.5">
+                    {SEND_WINDOW_DAY_LABELS.map((label, day) => {
+                      const active = sendWindowDays.includes(day);
+                      return (
+                        <button
+                          key={label}
+                          type="button"
+                          disabled={isSubmitting}
+                          onClick={() =>
+                            setSendWindowDays((prev) =>
+                              prev.includes(day)
+                                ? prev.filter((d) => d !== day)
+                                : [...prev, day].sort((a, b) => a - b),
+                            )
+                          }
+                          className={`rounded-md border px-2.5 py-1 text-[11px] font-semibold transition ${
+                            active
+                              ? "border-indigo-500/40 bg-indigo-500/20 text-indigo-200"
+                              : "border-zinc-700 bg-zinc-900 text-zinc-400 hover:text-zinc-200"
+                          }`}
+                        >
+                          {label}
+                        </button>
+                      );
+                    })}
+                  </div>
+                </div>
+                <div className="grid grid-cols-1 gap-3 sm:grid-cols-3">
+                  <div>
+                    <label htmlFor="edit-campaign-window-start" className="block text-[11px] font-semibold uppercase text-zinc-400">
+                      Start time
+                    </label>
+                    <input
+                      id="edit-campaign-window-start"
+                      type="time"
+                      value={sendWindowStart}
+                      onChange={(e) => setSendWindowStart(e.target.value)}
+                      disabled={isSubmitting}
+                      className="mt-1 block w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-xs text-zinc-100 focus:border-indigo-500 focus:outline-none disabled:opacity-50"
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="edit-campaign-window-end" className="block text-[11px] font-semibold uppercase text-zinc-400">
+                      End time
+                    </label>
+                    <input
+                      id="edit-campaign-window-end"
+                      type="time"
+                      value={sendWindowEnd}
+                      onChange={(e) => setSendWindowEnd(e.target.value)}
+                      disabled={isSubmitting}
+                      className="mt-1 block w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-xs text-zinc-100 focus:border-indigo-500 focus:outline-none disabled:opacity-50"
+                    />
+                  </div>
+                  <div>
+                    <label htmlFor="edit-campaign-window-tz" className="block text-[11px] font-semibold uppercase text-zinc-400">
+                      Timezone
+                    </label>
+                    <input
+                      id="edit-campaign-window-tz"
+                      type="text"
+                      value={sendWindowTimezone}
+                      onChange={(e) => setSendWindowTimezone(e.target.value)}
+                      placeholder="Africa/Lagos"
+                      disabled={isSubmitting}
+                      className="mt-1 block w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-xs text-zinc-100 placeholder-zinc-500 focus:border-indigo-500 focus:outline-none disabled:opacity-50"
+                    />
+                  </div>
+                </div>
+                <p className="text-[11px] text-zinc-500">
+                  {sendWindowDays.length === 0
+                    ? "Select at least one day."
+                    : `Active ${sendWindowDays.map((d) => SEND_WINDOW_DAY_LABELS[d]).join(", ")} · ${sendWindowStart}–${sendWindowEnd} (${sendWindowTimezone || "UTC"})`}
+                  {" "}— overnight windows are supported (end before start).
+                </p>
+              </div>
+            )}
           </div>
 
           {/* Message Approval & Quality Gates */}

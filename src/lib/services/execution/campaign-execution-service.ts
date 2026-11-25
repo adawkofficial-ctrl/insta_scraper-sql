@@ -1859,12 +1859,19 @@ export async function dispatchExecution(
       });
 
       if (!gateCheck.allowed) {
-        if (gateCheck.reason === "OUTSIDE_WORKING_HOURS") {
+        if (
+        gateCheck.reason === "OUTSIDE_WORKING_HOURS" ||
+        gateCheck.reason === "OUTSIDE_CAMPAIGN_WINDOW"
+      ) {
+          const reasonLabel =
+            gateCheck.reason === "OUTSIDE_CAMPAIGN_WINDOW"
+              ? "Outside campaign send window"
+              : "Outside working hours";
           await prisma.campaignExecutionItem.update({
             where: { id: item.id },
             data: {
               status: ExecutionItemStatus.SKIPPED,
-              errorMessage: `Outside working hours (resumes at ${gateCheck.retryAt?.toISOString() ?? "next window"})`,
+              errorMessage: `${reasonLabel} (resumes at ${gateCheck.retryAt?.toISOString() ?? "next window"})`,
               processedAt: new Date(),
             },
           });
@@ -1873,7 +1880,7 @@ export async function dispatchExecution(
             leadId: item.leadId,
             username: item.lead.username,
             status: ExecutionItemStatus.SKIPPED,
-            errorMessage: "Outside working hours",
+            errorMessage: reasonLabel,
           });
           continue;
         }

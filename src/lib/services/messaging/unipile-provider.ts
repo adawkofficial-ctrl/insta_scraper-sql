@@ -157,8 +157,11 @@ export class UnipileMessagingProvider implements MessagingProvider {
       unipileAccountId = await this.resolveSenderAccountId(request.senderAccountId);
     }
 
-    // Fallback: If no specific sender was found, pick the first available active Unipile account
-    if (!unipileAccountId) {
+    // Fallback to the first active Unipile account ONLY when the caller did
+    // not name a sender. If a sender was named but can't be resolved, fail:
+    // sending from a different account would bypass that account's caps,
+    // ledger and warm-up, and DM the lead from the wrong profile.
+    if (!unipileAccountId && !request.senderAccountId) {
       const accounts = await this.client.getAccounts();
       const active = accounts.find((acc) => {
         const prov = String(acc.provider || acc.type || "").toUpperCase();

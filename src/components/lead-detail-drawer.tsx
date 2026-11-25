@@ -38,6 +38,7 @@ import {
 import { ConfirmModal } from "./confirm-modal";
 import { LeadAvatar } from "./lead-avatar";
 import { LeadDraftsPanel } from "./lead-drafts-panel";
+import { WebsiteIntelPanel } from "./website-intel-panel";
 import { SocialPlatformIcon, getLeadLinkClassification } from "./social-platform-icon";
 
 type LeadDetailDrawerProps = {
@@ -493,6 +494,7 @@ export function LeadDetailDrawer({
             rawProfileData: {
               ...(typeof prev.rawProfileData === "object" && prev.rawProfileData !== null ? prev.rawProfileData : {}),
               contacts: updated.contacts,
+              ...(updated.websiteEnrichment ? { websiteEnrichment: updated.websiteEnrichment } : {}),
             },
           };
         });
@@ -679,7 +681,7 @@ export function LeadDetailDrawer({
         />
 
         <div className="fixed inset-y-0 right-0 flex max-w-full pl-10">
-          <div className="w-screen max-w-xl border-l border-zinc-800 bg-zinc-900 shadow-2xl flex flex-col">
+          <div className="w-screen max-w-xl border-l border-orange-500/20 bg-zinc-950 shadow-2xl shadow-black flex flex-col animate-slide-in-right">
             {/* Drawer Header */}
             <div className="flex items-center justify-between border-b border-zinc-800 px-6 py-4">
               <div className="flex items-center gap-3">
@@ -1903,6 +1905,17 @@ export function LeadDetailDrawer({
                           </div>
                         );
                       })()}
+
+                      {/* Website Intel: business profile + contacts scraped from the lead's site */}
+                      {(lead.website || lead.externalUrl) && (
+                        <div className="pt-1 pb-2">
+                          <WebsiteIntelPanel
+                            rawProfileData={lead.rawProfileData}
+                            onRescan={handleFindContacts}
+                            rescanning={isFindingContacts}
+                          />
+                        </div>
+                      )}
 
                       {/* Maps Details */}
                       {(() => {

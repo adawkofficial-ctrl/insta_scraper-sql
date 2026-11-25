@@ -11,17 +11,17 @@ export interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElemen
 
 const variantStyles: Record<ButtonVariant, string> = {
   primary:
-    "bg-indigo-600 hover:bg-indigo-500 active:bg-indigo-700 text-white border border-transparent shadow-sm shadow-indigo-500/20 focus-visible:ring-2 focus-visible:ring-indigo-500/50",
+    "bg-brand-gradient text-white font-semibold border border-orange-400/40 shadow-[0_6px_20px_-8px_rgba(255,122,26,0.7)] hover:brightness-110 hover:shadow-[0_8px_26px_-8px_rgba(255,122,26,0.85)] active:brightness-95 focus-visible:ring-2 focus-visible:ring-orange-500/60",
   secondary:
-    "bg-surface hover:bg-surface-hover active:bg-subtle text-secondary border border-subtle shadow-card hover:border-slate-300 dark:hover:border-slate-700 focus-visible:ring-2 focus-visible:ring-slate-400/30",
+    "bg-white text-black font-semibold border border-white hover:bg-zinc-200 active:bg-zinc-300 shadow-card focus-visible:ring-2 focus-visible:ring-white/40",
   outline:
-    "bg-transparent hover:bg-surface-hover active:bg-subtle text-secondary border border-default focus-visible:ring-2 focus-visible:ring-slate-400/30",
+    "bg-transparent hover:bg-orange-500/10 active:bg-orange-500/15 text-secondary hover:text-orange-300 border border-default hover:border-orange-500/50 focus-visible:ring-2 focus-visible:ring-orange-500/30",
   ghost:
-    "bg-transparent hover:bg-surface-hover active:bg-subtle text-secondary focus-visible:ring-2 focus-visible:ring-slate-400/30",
+    "bg-transparent hover:bg-surface-hover active:bg-subtle text-secondary hover:text-white focus-visible:ring-2 focus-visible:ring-orange-500/30",
   danger:
     "bg-rose-600 hover:bg-rose-500 active:bg-rose-700 text-white border border-transparent shadow-sm shadow-rose-500/20 focus-visible:ring-2 focus-visible:ring-rose-500/50",
   "subtle-danger":
-    "bg-rose-500/10 hover:bg-rose-500/20 text-rose-600 dark:text-rose-400 border border-rose-500/20 focus-visible:ring-2 focus-visible:ring-rose-500/30",
+    "bg-rose-500/10 hover:bg-rose-500/20 text-rose-400 border border-rose-500/20 focus-visible:ring-2 focus-visible:ring-rose-500/30",
 };
 
 const sizeStyles: Record<ButtonSize, string> = {

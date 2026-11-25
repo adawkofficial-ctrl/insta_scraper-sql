@@ -167,6 +167,8 @@ const SUITES: Suite[] = [
   { file: "test_handle_waterfall_fixes.ts", category: "unit", kind: "deterministic", needsServer: false },
   { file: "test_enrichment_persistence_resume.ts", category: "unit", kind: "deterministic", needsServer: false },
   { file: "test_website_enrichment.ts", category: "unit", kind: "deterministic", needsServer: false },
+  { file: "test_website_business_profile.ts", category: "unit", kind: "deterministic", needsServer: false },
+  { file: "test_rule_based_relevance.ts", category: "unit", kind: "deterministic", needsServer: false },
   { file: "test_instagram_places_discovery.ts", category: "unit", kind: "deterministic", needsServer: false },
   { file: "test_instagram_all_in_one.ts", category: "unit", kind: "deterministic", needsServer: false },
   { file: "test_discovery_runaway_guard.ts", category: "unit", kind: "deterministic", needsServer: false },
