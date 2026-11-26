@@ -29,7 +29,7 @@ import {
   isWithinSendWindow,
   isWithinWorkingHours,
   parseSendWindowDays,
-  resolveLeadTimezone,
+  resolveWorkingHoursTimezone,
   type CanSendNowInput,
   type CanSendNowResult,
 } from "./send-gate";
@@ -427,9 +427,12 @@ async function buildBulkSchedule(
   ): Date => {
     let at = t;
     for (let i = 0; i < 4; i++) {
-      const wh = isWithinWorkingHours(
+      // Campaign sending hours, when set, replace the default working hours.
+      const wh = campaign?.sendWindowEnabled
+        ? { inWindow: true, nextWindowStart: at }
+        : isWithinWorkingHours(
         at,
-        resolveLeadTimezone(lead, s.timezone),
+        resolveWorkingHoursTimezone(lead, s.timezone),
         s.workingHoursStart,
         s.workingHoursEnd,
         getSkipWeekends(),

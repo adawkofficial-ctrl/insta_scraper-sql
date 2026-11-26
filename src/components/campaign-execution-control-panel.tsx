@@ -12,6 +12,7 @@ import {
 import { ApiClientError } from "@/lib/api/client";
 import { isTerminalBulkJobStatus } from "@/lib/polling/job-polling";
 import { ConfirmModal } from "./confirm-modal";
+import { CampaignSendingHours } from "./campaign-sending-hours";
 
 type Props = {
   campaignId: string;
@@ -678,8 +679,9 @@ export function CampaignExecutionControlPanel({
       {status?.estimatedCompletion && (
         <div
           data-testid="campaign-estimated-completion"
-          className="rounded-xl border border-indigo-500/20 bg-indigo-950/20 p-3.5 flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs"
+          className="rounded-xl border border-indigo-500/20 bg-indigo-950/20 p-3.5 text-xs"
         >
+          <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
           <div className="flex items-center gap-2">
             <div className="h-2 w-2 rounded-full bg-emerald-400 animate-pulse shrink-0" />
             <span className="font-semibold text-zinc-200">
@@ -698,6 +700,12 @@ export function CampaignExecutionControlPanel({
               <span className="text-zinc-500">No active senders or queue complete</span>
             )}
           </div>
+          </div>
+          <CampaignSendingHours
+            campaignId={campaignId}
+            value={status.estimatedCompletion.sendWindow}
+            onSaved={() => void loadStatus(true)}
+          />
         </div>
       )}
 

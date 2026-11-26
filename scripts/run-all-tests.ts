@@ -193,6 +193,7 @@ const SUITES: Suite[] = [
   { file: "test_unipile_integration.ts", category: "unit", kind: "deterministic", needsServer: false },
   { file: "test_multi_account_round_robin.ts", category: "unit", kind: "deterministic", needsServer: false },
   { file: "test_multi_account_sending.ts", category: "unit", kind: "deterministic", needsServer: false },
+  { file: "test_campaign_sending_hours.ts", category: "unit", kind: "deterministic", needsServer: false },
   { file: "test_send_path_guard.ts", category: "unit", kind: "deterministic", needsServer: false },
   { file: "test_csv_upload_leads.ts", category: "unit", kind: "deterministic", needsServer: false },
   { file: "test_lead_deletion.ts", category: "unit", kind: "deterministic", needsServer: false },

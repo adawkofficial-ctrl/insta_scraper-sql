@@ -88,6 +88,27 @@ export function getSkipWeekends(): boolean {
   return process.env.SKIP_WEEKENDS === "true" || process.env.SKIP_WEEKENDS === "1";
 }
 
+/**
+ * When true (default), working hours are judged in the lead's local timezone
+ * (derived from city/country). Set LEAD_LOCAL_WORKING_HOURS=false to judge
+ * them in the sender account's timezone instead, so bulk sends go out during
+ * the operator's sending day. Tests always use lead-local hours.
+ */
+export function isLeadLocalWorkingHoursEnabled(): boolean {
+  if (process.env.NODE_ENV === "test") return true;
+  const v = process.env.LEAD_LOCAL_WORKING_HOURS?.trim().toLowerCase();
+  return !(v === "false" || v === "0" || v === "no");
+}
+
+/** Timezone the working-hours window is evaluated in for this lead/sender. */
+export function resolveWorkingHoursTimezone(
+  lead: { city?: string | null; location?: string | null } | null | undefined,
+  senderTimezone: string | null | undefined,
+): string {
+  const senderTz = senderTimezone || "UTC";
+  return isLeadLocalWorkingHoursEnabled() ? resolveLeadTimezone(lead, senderTz) : senderTz;
+}
+
 export function getMessageVariationWindowMinutes(): number {
   const envVal = process.env.MESSAGE_VARIATION_WINDOW_MINUTES;
   const parsed = envVal ? Number(envVal) : NaN;
@@ -1049,7 +1070,7 @@ export async function canSendNow(
   }
 
   // 5. Working-hours window (Lead's timezone derived from city/country, fallback campaign/sender/UTC)
-  const leadTimezone = resolveLeadTimezone(input.lead, sender.timezone || "UTC");
+  const leadTimezone = resolveWorkingHoursTimezone(input.lead, sender.timezone);
   const effectiveStart =
     process.env.NODE_ENV === "test" && process.env.WORKING_HOURS_START !== undefined
       ? getWorkingHoursStart()
@@ -1066,9 +1087,25 @@ export async function canSendNow(
     getSkipWeekends(),
   );
 
+  // A campaign with its own sending hours (5a) replaces the default
+  // working-hours window, so "send 10:00-16:00" means exactly that.
+  const campaignWindow = input.campaignId
+    ? await prisma.campaign.findUnique({
+        where: { id: input.campaignId },
+        select: {
+          sendWindowEnabled: true,
+          sendWindowStart: true,
+          sendWindowEnd: true,
+          sendWindowDays: true,
+          sendWindowTimezone: true,
+        },
+      })
+    : null;
+  const campaignWindowActive = campaignWindow?.sendWindowEnabled === true;
+
   // Manual one-off sends (operator clicked Send) skip the lead-local window;
   // caps, gaps, warmup, DNC and the kill switch still apply.
-  if (!workingHours.inWindow && !input.bypassWorkingHours) {
+  if (!workingHours.inWindow && !input.bypassWorkingHours && !campaignWindowActive) {
     return {
       allowed: false,
       reason: "OUTSIDE_WORKING_HOURS",
@@ -1086,18 +1123,8 @@ export async function canSendNow(
   }
 
   // 5a. Campaign send timetable (days + local sending window)
-  if (!input.bypassWorkingHours && input.campaignId) {
-    const campaignWindow = await prisma.campaign.findUnique({
-      where: { id: input.campaignId },
-      select: {
-        sendWindowEnabled: true,
-        sendWindowStart: true,
-        sendWindowEnd: true,
-        sendWindowDays: true,
-        sendWindowTimezone: true,
-      },
-    });
-    if (campaignWindow?.sendWindowEnabled) {
+  if (!input.bypassWorkingHours && campaignWindow) {
+    if (campaignWindow.sendWindowEnabled) {
       const windowCheck = isWithinSendWindow(
         now,
         campaignWindow.sendWindowTimezone || sender.timezone || "UTC",

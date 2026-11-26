@@ -103,6 +103,13 @@ export type CampaignExecutionStatusResponse = {
     dailyCapacity: number;
     daysRemaining: number | null;
     workingHoursWindow: string;
+    sendWindow?: {
+      enabled: boolean;
+      start: string | null;
+      end: string | null;
+      days: number[] | null;
+      timezone: string | null;
+    };
   } | null;
 };
 

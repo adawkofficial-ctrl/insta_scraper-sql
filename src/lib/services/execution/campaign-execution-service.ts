@@ -14,7 +14,7 @@ import { renderTemplate } from "../template/template-renderer";
 import { getMessagingProvider, sendSingleMessage, canSendNow } from "../messaging";
 import { findConnectedSenderForDispatch } from "../senders/instagram-sender-service";
 import { findConnectedSendersForUser } from "../senders/instagram-sender-repository";
-import { calculateWarmupCap } from "../messaging/send-gate";
+import { calculateWarmupCap, isLeadLocalWorkingHoursEnabled, parseSendWindowDays } from "../messaging/send-gate";
 import { runDiscovery } from "../discovery/discovery-service";
 import {
   createBulkMessageJob,
@@ -244,6 +244,13 @@ export type CampaignExecutionStatusResponse = {
     dailyCapacity: number;
     daysRemaining: number | null;
     workingHoursWindow: string;
+    sendWindow?: {
+      enabled: boolean;
+      start: string | null;
+      end: string | null;
+      days: number[] | null;
+      timezone: string | null;
+    };
   } | null;
 };
 
@@ -1387,7 +1394,18 @@ export async function getCampaignExecutionStatus(
     healthySendersCount: healthySenders.length,
     dailyCapacity: totalDailyCapacity,
     daysRemaining,
-    workingHoursWindow: "09:00 - 18:00 (Lead Local Time)",
+    workingHoursWindow: campaign.sendWindowEnabled
+      ? `${campaign.sendWindowStart ?? "09:00"} - ${campaign.sendWindowEnd ?? "18:00"} (${campaign.sendWindowTimezone || "UTC"})`
+      : isLeadLocalWorkingHoursEnabled()
+        ? "09:00 - 18:00 (Lead Local Time)"
+        : "09:00 - 18:00 (Sender Account Time)",
+    sendWindow: {
+      enabled: campaign.sendWindowEnabled === true,
+      start: campaign.sendWindowStart ?? null,
+      end: campaign.sendWindowEnd ?? null,
+      days: parseSendWindowDays(campaign.sendWindowDays),
+      timezone: campaign.sendWindowTimezone ?? null,
+    },
   };
 
   return {
