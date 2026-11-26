@@ -1262,7 +1262,7 @@ export function InstagramSenderSettings() {
                     data-testid="interactive-login-panel"
                     className="mt-3 rounded-xl border border-indigo-500/20 bg-indigo-500/5 p-3.5 text-[11px] text-indigo-900 dark:text-indigo-200"
                   >
-                    <p className="font-semibold">Instagram browser opened â€” authentication in progress</p>
+                    <p className="font-semibold">Instagram browser opened — authentication in progress</p>
                     <ul className="mt-1 list-disc space-y-0.5 pl-4 text-muted">
                       <li>Log into Instagram in the browser window. Keep the browser open.</li>
                       <li>Complete 2FA/security verification if requested.</li>
@@ -1273,7 +1273,7 @@ export function InstagramSenderSettings() {
                       Elapsed: {elapsedLabel(sender.updatedAt, nowMs)}
                       {sender.username.startsWith("pending_")
                         ? ""
-                        : ` Â· @${sender.username}`}
+                        : ` · @${sender.username}`}
                     </p>
                   </div>
                 )}
@@ -1314,10 +1314,10 @@ export function InstagramSenderSettings() {
                           <strong className={dmResult.composerFound ? "text-emerald-600 dark:text-emerald-400" : "text-rose-600 dark:text-rose-400"}>
                             {String(dmResult.composerFound)}
                           </strong>
-                          {dmResult.code ? ` Â· code: ${dmResult.code}` : ""}
+                          {dmResult.code ? ` · code: ${dmResult.code}` : ""}
                         </p>
                         <p>
-                          State: {dmResult.diagnostics.pageState} Â· URL:{" "}
+                          State: {dmResult.diagnostics.pageState} · URL:{" "}
                           {dmResult.diagnostics.currentUrl || "-"}
                         </p>
                         {dmResult.diagnostics.messageActionFound && (

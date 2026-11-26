@@ -6,7 +6,7 @@ import {
   type Prisma,
 } from "@/generated/prisma/client";
 import { transitionLeadStatus } from "../lead/lead-status-service";
-import { BadRequestError, NotFoundError, DncSuppressedError } from "@/lib/errors";
+import { BadRequestError, ConflictError, NotFoundError, DncSuppressedError } from "@/lib/errors";
 import { logger } from "@/lib/logger";
 import {
   checkLeadSuppression,
@@ -2410,6 +2410,98 @@ export async function cancelBulkMessageJob(
         tx,
       });
     }
+  });
+
+  return getBulkMessageJobStatus(jobId, userId);
+}
+
+/**
+ * Removes one QUEUED item from a bulk job so it is never sent. The item is
+ * marked CANCELLED and the lead returns to its pre-queue status. When nothing
+ * is left to send, the job is closed (COMPLETED if anything was sent,
+ * otherwise CANCELLED) so the worker stops.
+ */
+export async function cancelBulkMessageItem(
+  jobId: string,
+  itemId: string,
+  userId?: string,
+): Promise<BulkJobStatusResponse> {
+  const prisma = getPrismaClient();
+
+  const job = await prisma.bulkMessageJob.findFirst({
+    where: { id: jobId, ...(userId ? { userId } : {}) },
+  });
+  if (!job) {
+    throw new NotFoundError("JOB_NOT_FOUND", `Bulk message job "${jobId}" was not found.`);
+  }
+  const item = await prisma.bulkMessageItem.findFirst({ where: { id: itemId, jobId } });
+  if (!item) {
+    throw new NotFoundError("ITEM_NOT_FOUND", `Item "${itemId}" was not found in this job.`);
+  }
+
+  await prisma.$transaction(async (tx) => {
+    // Atomic: only a still-QUEUED item can be removed (the worker claims by
+    // the same QUEUED -> PROCESSING transition, so there is no double path).
+    const removed = await tx.bulkMessageItem.updateMany({
+      where: { id: itemId, jobId, status: BulkMessageItemStatus.QUEUED },
+      data: {
+        status: BulkMessageItemStatus.CANCELLED,
+        completedAt: new Date(),
+        errorMessage: "Removed from queue by user.",
+      },
+    });
+    if (removed.count === 0) {
+      throw new ConflictError(
+        "ITEM_NOT_QUEUED",
+        item.status === BulkMessageItemStatus.PROCESSING
+          ? "This message is being sent right now and can no longer be removed."
+          : `This message is ${item.status.toLowerCase()} and is no longer in the queue.`,
+      );
+    }
+
+    const lastQueueHistory = await tx.leadStatusHistory.findFirst({
+      where: { leadId: item.leadId, toStatus: LeadStatus.QUEUED },
+      orderBy: { createdAt: "desc" },
+    });
+    const lead = await tx.lead.findUnique({ where: { id: item.leadId }, select: { status: true } });
+    if (lead?.status === LeadStatus.QUEUED) {
+      await transitionLeadStatus({
+        leadId: item.leadId,
+        to:
+          lastQueueHistory?.fromStatus === LeadStatus.READY_FOR_OUTREACH
+            ? LeadStatus.READY_FOR_OUTREACH
+            : LeadStatus.NEW,
+        reason: "bulk_item_removed",
+        actor: userId ? `user:${userId}` : "worker",
+        tx,
+      });
+    }
+
+    const remaining = await tx.bulkMessageItem.count({
+      where: {
+        jobId,
+        status: { in: [BulkMessageItemStatus.QUEUED, BulkMessageItemStatus.PROCESSING] },
+      },
+    });
+    const sentCount = await tx.bulkMessageItem.count({
+      where: { jobId, status: BulkMessageItemStatus.SENT },
+    });
+    const isOpen =
+      job.status !== BulkMessageJobStatus.COMPLETED &&
+      job.status !== BulkMessageJobStatus.CANCELLED;
+
+    await tx.bulkMessageJob.update({
+      where: { id: jobId },
+      data: {
+        cancelled: { increment: 1 },
+        queued: { decrement: 1 },
+        ...(remaining === 0 && isOpen
+          ? sentCount > 0
+            ? { status: BulkMessageJobStatus.COMPLETED, completedAt: new Date() }
+            : { status: BulkMessageJobStatus.CANCELLED, cancelledAt: new Date() }
+          : {}),
+      },
+    });
   });
 
   return getBulkMessageJobStatus(jobId, userId);

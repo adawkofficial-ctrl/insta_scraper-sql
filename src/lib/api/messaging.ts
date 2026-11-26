@@ -319,6 +319,16 @@ export async function resumeBulkJob(
   );
 }
 
+export async function cancelBulkJobItem(
+  jobId: string,
+  itemId: string
+): Promise<BulkJobStatusResponse> {
+  return apiFetch<BulkJobStatusResponse>(
+    `/api/message-jobs/${encodeURIComponent(jobId)}/items/${encodeURIComponent(itemId)}/cancel`,
+    { method: "POST" }
+  );
+}
+
 export async function cancelBulkJob(
   jobId: string
 ): Promise<BulkJobStatusResponse> {

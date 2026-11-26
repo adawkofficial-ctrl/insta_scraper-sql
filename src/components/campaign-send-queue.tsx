@@ -2,6 +2,8 @@
 
 import { useCallback, useEffect, useState } from "react";
 import {
+  cancelBulkJob,
+  cancelBulkJobItem,
   listCampaignBulkJobs,
   type BulkJobItemRecord,
   type BulkJobStatusResponse,
@@ -30,7 +32,9 @@ function formatClock(iso: string | null | undefined): string {
 }
 
 /** Plain-language reason a queued item is waiting (from the worker's note). */
-function waitReason(item: BulkJobItemRecord): string | null {
+function waitReason(item: BulkJobItemRecord, nowMs: number): string | null {
+  // The worker's note is stale once the projected time has arrived.
+  if (!item.etaAt || new Date(item.etaAt).getTime() <= nowMs) return null;
   const msg = item.errorMessage ?? "";
   if (msg.includes("working hours")) return "waiting for lead's local 9 AM";
   if (msg.includes("campaign send window")) return "outside campaign window";
@@ -51,6 +55,9 @@ export function CampaignSendQueue({ campaignId }: { campaignId: string }) {
   const [jobs, setJobs] = useState<BulkJobStatusResponse[] | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [nowMs, setNowMs] = useState(() => Date.now());
+  const [removingId, setRemovingId] = useState<string | null>(null);
+  const [aborting, setAborting] = useState(false);
+  const [notice, setNotice] = useState<string | null>(null);
 
   const load = useCallback(async () => {
     try {
@@ -100,6 +107,51 @@ export function CampaignSendQueue({ campaignId }: { campaignId: string }) {
   }
 
   const sentToday = (jobs ?? []).reduce((n, j) => n + j.sent, 0);
+  const queuedCount = rows.filter((r) => r.status === "QUEUED").length;
+
+  const handleRemove = async (row: QueueRow) => {
+    if (removingId || aborting) return;
+    if (!window.confirm(`Remove @${row.username} from the queue? This message will not be sent.`)) return;
+    setRemovingId(row.id);
+    setNotice(null);
+    try {
+      await cancelBulkJobItem(row.jobId, row.id);
+      setNotice(`Removed @${row.username} from the queue.`);
+      await load();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Could not remove this message.");
+    } finally {
+      setRemovingId(null);
+    }
+  };
+
+  const handleAbortAll = async () => {
+    if (aborting || !jobs || jobs.length === 0) return;
+    if (
+      !window.confirm(
+        `Abort the whole queue? ${queuedCount} queued message${queuedCount === 1 ? "" : "s"} will be removed and not sent. A message already sending will finish.`,
+      )
+    ) {
+      return;
+    }
+    setAborting(true);
+    setNotice(null);
+    const failures: string[] = [];
+    for (const job of jobs) {
+      try {
+        await cancelBulkJob(job.id);
+      } catch (err) {
+        failures.push(err instanceof Error ? err.message : job.id);
+      }
+    }
+    setAborting(false);
+    if (failures.length > 0) {
+      setError(`Some jobs could not be aborted: ${failures.join("; ")}`);
+    } else {
+      setNotice(`Queue aborted. ${queuedCount} message${queuedCount === 1 ? "" : "s"} removed.`);
+    }
+    await load();
+  };
 
   return (
     <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4 space-y-3">
@@ -112,7 +164,7 @@ export function CampaignSendQueue({ campaignId }: { campaignId: string }) {
         </div>
         <div className="flex items-center gap-3 text-xs">
           <span className="text-zinc-400">
-            Queued <strong className="text-orange-300">{rows.filter((r) => r.status === "QUEUED").length}</strong>
+            Queued <strong className="text-orange-300">{queuedCount}</strong>
           </span>
           <span className="text-zinc-400">
             Sent in active jobs <strong className="text-emerald-300">{sentToday}</strong>
@@ -124,11 +176,25 @@ export function CampaignSendQueue({ campaignId }: { campaignId: string }) {
           >
             Refresh
           </button>
+          {queuedCount > 0 && (
+            <button
+              type="button"
+              id="abort-send-queue-btn"
+              disabled={aborting || Boolean(removingId)}
+              onClick={() => void handleAbortAll()}
+              className="rounded border border-rose-500/50 bg-rose-500/15 px-2.5 py-0.5 text-[11px] font-semibold text-rose-300 hover:bg-rose-500/25 disabled:opacity-50"
+            >
+              {aborting ? "Aborting..." : "Abort all"}
+            </button>
+          )}
         </div>
       </div>
 
       {error && (
         <div className="rounded-lg border border-rose-500/30 bg-rose-500/10 p-2 text-xs text-rose-300">{error}</div>
+      )}
+      {notice && !error && (
+        <div className="rounded-lg border border-emerald-500/30 bg-emerald-500/10 p-2 text-xs text-emerald-300">{notice}</div>
       )}
 
       {jobs === null && !error ? (
@@ -171,7 +237,7 @@ export function CampaignSendQueue({ campaignId }: { campaignId: string }) {
 
           <div className="max-h-72 overflow-y-auto space-y-1.5 rounded-lg border border-zinc-800 bg-zinc-950 p-2 text-xs">
             {rows.map((row) => {
-              const reason = waitReason(row);
+              const reason = waitReason(row, nowMs);
               return (
                 <div
                   key={row.id}
@@ -181,7 +247,7 @@ export function CampaignSendQueue({ campaignId }: { campaignId: string }) {
                     <span className="font-mono text-zinc-100 shrink-0">@{row.username}</span>
                     {row.senderUsername && (
                       <span className="text-[10px] text-zinc-500 shrink-0">
-                        {row.status === "PROCESSING" ? "via" : "â†’"} @{row.senderUsername}
+                        {row.status === "PROCESSING" ? "via" : "→"} @{row.senderUsername}
                       </span>
                     )}
                     {reason && row.status === "QUEUED" && (
@@ -194,10 +260,23 @@ export function CampaignSendQueue({ campaignId }: { campaignId: string }) {
                     ) : (
                       <>
                         <span className="font-mono tabular-nums text-orange-300">
-                          {row.jobStatus === "PAUSED" ? "paused" : `in ${formatCountdown(row.etaAt, nowMs)}`}
+                          {row.jobStatus === "PAUSED"
+                            ? "paused"
+                            : formatCountdown(row.etaAt, nowMs) === "now"
+                              ? "due now"
+                              : `in ${formatCountdown(row.etaAt, nowMs)}`}
                         </span>
                         {row.etaAt && <span className="text-[10px] text-zinc-500">{formatClock(row.etaAt)}</span>}
                         <span className="text-[11px] font-semibold text-zinc-500">QUEUED</span>
+                        <button
+                          type="button"
+                          disabled={aborting || Boolean(removingId)}
+                          onClick={() => void handleRemove(row)}
+                          title="Remove from queue (will not be sent)"
+                          className="rounded border border-rose-500/40 bg-rose-500/10 px-2 py-0.5 text-[10px] font-semibold text-rose-300 hover:bg-rose-500/20 disabled:opacity-50"
+                        >
+                          {removingId === row.id ? "Removing..." : "Remove"}
+                        </button>
                       </>
                     )}
                   </div>
