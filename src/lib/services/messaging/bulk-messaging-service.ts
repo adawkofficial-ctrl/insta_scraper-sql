@@ -22,8 +22,16 @@ import { renderTemplate, validateTemplateVariables } from "../template/template-
 import { sendSingleMessage } from "./messaging-service";
 import {
   canSendNow,
-  chooseHealthySender,
   getSendGateNow,
+  getSenderMaxGapSeconds,
+  getSenderMinGapSeconds,
+  getSkipWeekends,
+  isWithinSendWindow,
+  isWithinWorkingHours,
+  parseSendWindowDays,
+  resolveLeadTimezone,
+  type CanSendNowInput,
+  type CanSendNowResult,
 } from "./send-gate";
 import { extractDomainParts } from "../discovery/name-website-matcher";
 import { resolveLeadProfileUrl } from "../lead/profile-url";
@@ -245,8 +253,239 @@ export type BulkJobStatusResponse = {
     errorMessage: string | null;
     completedAt: string | null;
     attempts?: number;
+    /** Projected send time (ISO) for QUEUED items while the job is active. */
+    etaAt?: string | null;
+    /** Sender projected (QUEUED) or used (processed) for this item. */
+    senderUsername?: string | null;
   }>;
+  /** Per-account timers: when each sender can send its next message. */
+  senderTimers?: BulkSenderTimer[];
 };
+
+export type BulkSenderTimer = {
+  senderAccountId: string;
+  username: string;
+  /** ISO time the account is free to send; null when it cannot send. */
+  availableAt: string | null;
+  reason: string;
+  sentToday: number;
+  dailyCap: number;
+};
+
+// ---------------------------------------------------------------------------
+// Sender rotation: each lead goes to the account whose timer is free first.
+// ---------------------------------------------------------------------------
+
+type PreloadedGateSender = NonNullable<CanSendNowInput["preloadedSender"]>;
+type GateSender = PreloadedGateSender & { username: string };
+
+/**
+ * Runs the send gate for every sender against this lead and picks the account
+ * that should send it:
+ *  - any sender allowed now -> the one idle longest (accounts take turns)
+ *  - otherwise -> the sender whose block clears first (earliest retryAt), so
+ *    the worker waits for the next free account, not the one that just sent.
+ */
+async function pickSenderForLead<S extends GateSender>(
+  senders: S[],
+  lead: CanSendNowInput["lead"],
+  leadId: string,
+  campaignId: string,
+): Promise<{ sender: S; gate: CanSendNowResult } | null> {
+  const evaluated: Array<{ sender: S; gate: CanSendNowResult }> = [];
+  for (const sender of senders) {
+    const gate = await canSendNow({
+      senderAccountId: sender.id,
+      leadId,
+      lead,
+      campaignId,
+      preloadedSender: { ...sender },
+    });
+    evaluated.push({ sender, gate });
+  }
+  if (evaluated.length === 0) return null;
+
+  const allowed = evaluated.filter((e) => e.gate.allowed);
+  if (allowed.length > 0) {
+    allowed.sort(
+      (a, b) =>
+        (a.sender.lastSentAt?.getTime() ?? 0) - (b.sender.lastSentAt?.getTime() ?? 0),
+    );
+    return allowed[0];
+  }
+
+  const timed = evaluated.filter((e) => e.gate.retryAt);
+  if (timed.length > 0) {
+    timed.sort((a, b) => a.gate.retryAt!.getTime() - b.gate.retryAt!.getTime());
+    return timed[0];
+  }
+  // Lead-level blocks (kill switch, dry-run, DNC, ...) are the same for all.
+  return evaluated[0];
+}
+
+function nextLocalMidnight(now: Date): Date {
+  const d = new Date(now.getTime() + 24 * 3600 * 1000);
+  d.setHours(0, 0, 0, 0);
+  return d;
+}
+
+type ScheduleResult = {
+  timers: BulkSenderTimer[];
+  etaByItem: Map<string, { etaAt: Date | null; username: string | null }>;
+};
+
+/**
+ * Projects, for QUEUED items in dispatch order, which account sends each one
+ * and when. Mirrors the worker: the earliest-free account takes the next lead,
+ * then waits its average gap. Sender state (caps, gap, pause, stagger) comes
+ * from the real send gate; lead working hours + campaign window are per lead.
+ */
+async function buildBulkSchedule(
+  job: { id: string; userId: string; campaignId: string; senderAccountId: string | null },
+  queuedItems: Array<{ id: string; lead: { city: string | null; location: string | null } }>,
+): Promise<ScheduleResult> {
+  const prisma = getPrismaClient();
+  const etaByItem: ScheduleResult["etaByItem"] = new Map();
+
+  const senderIds = job.senderAccountId
+    ? [job.senderAccountId]
+    : (await findConnectedSendersForDispatch(job.userId)).map((s) => s.id);
+  const senders = senderIds.length
+    ? await prisma.instagramSenderAccount.findMany({
+        where: {
+          id: { in: senderIds },
+          status: { in: ["CONNECTED", "ACTIVE", "WARMING"] },
+        },
+      })
+    : [];
+
+  const now = getSendGateNow();
+  const campaign = await prisma.campaign.findUnique({
+    where: { id: job.campaignId },
+    select: {
+      sendWindowEnabled: true,
+      sendWindowStart: true,
+      sendWindowEnd: true,
+      sendWindowDays: true,
+      sendWindowTimezone: true,
+    },
+  });
+
+  type SimSender = {
+    id: string;
+    username: string;
+    timezone: string;
+    workingHoursStart: number;
+    workingHoursEnd: number;
+    availableAt: Date | null;
+    remaining: number;
+    dailyCap: number;
+    gapMs: number;
+    lastSentAtMs: number;
+  };
+  const state: SimSender[] = [];
+  const timers: BulkSenderTimer[] = [];
+
+  for (const s of senders) {
+    // Sender-only gate (no lead): working hours are applied per lead below.
+    const gate = await canSendNow({
+      senderAccountId: s.id,
+      preloadedSender: { ...s },
+      bypassWorkingHours: true,
+    });
+    const dailyCap = gate.details?.dailyCap ?? 0;
+    const sentToday = gate.details?.sentToday ?? s.sentToday;
+    const availableAt: Date | null = gate.allowed ? now : gate.retryAt ?? null;
+    const minSec = s.customMinGapSeconds ?? getSenderMinGapSeconds();
+    const maxSec = s.customMaxGapSeconds ?? getSenderMaxGapSeconds();
+    state.push({
+      id: s.id,
+      username: s.username,
+      timezone: s.timezone || "UTC",
+      workingHoursStart: s.workingHoursStart,
+      workingHoursEnd: s.workingHoursEnd,
+      availableAt,
+      remaining: Math.max(0, dailyCap - sentToday),
+      dailyCap,
+      gapMs: ((minSec + maxSec) / 2) * 1000,
+      lastSentAtMs: s.lastSentAt?.getTime() ?? 0,
+    });
+    timers.push({
+      senderAccountId: s.id,
+      username: s.username,
+      availableAt: availableAt ? availableAt.toISOString() : null,
+      reason: gate.allowed ? "READY" : gate.reason,
+      sentToday,
+      dailyCap,
+    });
+  }
+
+  const fitLeadWindows = (
+    t: Date,
+    lead: { city: string | null; location: string | null },
+    s: SimSender,
+  ): Date => {
+    let at = t;
+    for (let i = 0; i < 4; i++) {
+      const wh = isWithinWorkingHours(
+        at,
+        resolveLeadTimezone(lead, s.timezone),
+        s.workingHoursStart,
+        s.workingHoursEnd,
+        getSkipWeekends(),
+      );
+      if (!wh.inWindow) {
+        at = wh.nextWindowStart;
+        continue;
+      }
+      if (campaign?.sendWindowEnabled) {
+        const cw = isWithinSendWindow(
+          at,
+          campaign.sendWindowTimezone || s.timezone,
+          campaign.sendWindowStart,
+          campaign.sendWindowEnd,
+          parseSendWindowDays(campaign.sendWindowDays),
+        );
+        if (!cw.inWindow && cw.retryAt) {
+          at = cw.retryAt;
+          continue;
+        }
+      }
+      break;
+    }
+    return at;
+  };
+
+  for (const item of queuedItems) {
+    let best: { s: SimSender; at: Date } | null = null;
+    for (const s of state) {
+      if (!s.availableAt) continue;
+      let at = new Date(Math.max(now.getTime(), s.availableAt.getTime()));
+      if (s.remaining <= 0) {
+        at = new Date(Math.max(at.getTime(), nextLocalMidnight(at).getTime()));
+      }
+      at = fitLeadWindows(at, item.lead, s);
+      if (
+        !best ||
+        at.getTime() < best.at.getTime() ||
+        (at.getTime() === best.at.getTime() && s.lastSentAtMs < best.s.lastSentAtMs)
+      ) {
+        best = { s, at };
+      }
+    }
+    if (!best) {
+      etaByItem.set(item.id, { etaAt: null, username: null });
+      continue;
+    }
+    etaByItem.set(item.id, { etaAt: best.at, username: best.s.username });
+    best.s.availableAt = new Date(best.at.getTime() + best.s.gapMs);
+    best.s.lastSentAtMs = best.at.getTime();
+    // A new day resets the quota; otherwise spend one send.
+    best.s.remaining = (best.s.remaining > 0 ? best.s.remaining : best.s.dailyCap) - 1;
+  }
+
+  return { timers, etaByItem };
+}
 
 /**
  * Resolves the sender account for a bulk job. Client-provided ids are never
@@ -1025,12 +1264,32 @@ export async function getBulkMessageJobStatus(
       orderBy: { createdAt: "asc" },
       include: {
         lead: {
-          select: { username: true },
+          select: { username: true, city: true, location: true },
         },
+        senderAccount: { select: { username: true } },
       },
       take: 50,
     }),
   ]);
+
+  const isActiveJob =
+    job.status === BulkMessageJobStatus.RUNNING ||
+    job.status === BulkMessageJobStatus.QUEUED ||
+    job.status === BulkMessageJobStatus.PAUSED;
+  let schedule: ScheduleResult | null = null;
+  if (isActiveJob) {
+    try {
+      schedule = await buildBulkSchedule(
+        job,
+        items.filter((it) => it.status === BulkMessageItemStatus.QUEUED),
+      );
+    } catch (err) {
+      logger.warn("[BULK] schedule projection failed", {
+        jobId: job.id,
+        error: err instanceof Error ? err.message : String(err),
+      });
+    }
+  }
 
   const countByStatus = (status: BulkMessageItemStatus): number =>
     statusCounts.find((row) => row.status === status)?._count._all ?? 0;
@@ -1077,7 +1336,13 @@ export async function getBulkMessageJobStatus(
       errorMessage: it.errorMessage,
       completedAt: it.completedAt?.toISOString() ?? null,
       attempts: it.attempts,
+      etaAt: schedule?.etaByItem.get(it.id)?.etaAt?.toISOString() ?? null,
+      senderUsername:
+        it.status === BulkMessageItemStatus.QUEUED
+          ? schedule?.etaByItem.get(it.id)?.username ?? null
+          : it.senderAccount?.username ?? null,
     })),
+    senderTimers: schedule?.timers ?? [],
   };
 }
 
@@ -1194,7 +1459,6 @@ export async function dispatchBulkJobQueue(jobId: string): Promise<void> {
       return;
     }
 
-    let roundRobinIndex = 0;
 
     while (true) {
       // Check current job status
@@ -1407,23 +1671,20 @@ export async function dispatchBulkJobQueue(jobId: string): Promise<void> {
         break;
       }
 
-      // 3. Pick healthy sender spreading sends by remaining quota (round-robin)
-      let candidateSender = chooseHealthySender(activeSenders);
-      if (!candidateSender && activeSenders.length > 0) {
-        candidateSender = activeSenders[roundRobinIndex % activeSenders.length];
-      }
-
-      if (!candidateSender) {
+      // 3. Rotate accounts by timer: the sender free now (idle longest) takes
+      // this lead; if every account is cooling down, wait for the one whose
+      // timer ends first instead of the one that just sent.
+      const pick = await pickSenderForLead(
+        activeSenders,
+        lead,
+        nextItem.leadId,
+        currentJob.campaignId,
+      );
+      if (!pick) {
         break;
       }
-
-      // Check send gate right before dispatch
-      const gateCheck = await canSendNow({
-        senderAccountId: candidateSender.id,
-        leadId: nextItem.leadId,
-        lead,
-        campaignId: currentJob.campaignId,
-      });
+      const candidateSender = pick.sender;
+      const gateCheck = pick.gate;
 
       if (!gateCheck.allowed) {
         if (gateCheck.reason === "SENDING_DISABLED") {
@@ -1483,9 +1744,18 @@ export async function dispatchBulkJobQueue(jobId: string): Promise<void> {
             logger.info("[BULK_SEND_GATE] Test environment: skipping real-time jitter sleep");
           } else {
             const waitTime = Math.max(1000, gateCheck.retryAt.getTime() - Date.now());
-            logger.info("[BULK_SEND_GATE] Sender in cooldown / jitter gap, waiting", {
+            logger.info("[BULK_SEND_GATE] All senders cooling down, waiting for next free account", {
               senderId: candidateSender.id,
               remainingWaitMs: waitTime,
+            });
+            // Hand the item back to the queue while waiting so it is not left
+            // stuck in PROCESSING when the loop re-claims after the timer.
+            await prisma.bulkMessageItem.update({
+              where: { id: nextItem.id },
+              data: {
+                status: BulkMessageItemStatus.QUEUED,
+                errorMessage: `Queued: next account @${candidateSender.username} free at ${gateCheck.retryAt.toISOString()}`,
+              },
             });
             const shouldContinue = await sleepWithJobCheck(jobId, waitTime);
             if (!shouldContinue) {
@@ -1594,7 +1864,6 @@ export async function dispatchBulkJobQueue(jobId: string): Promise<void> {
       // 4. Update item status in DB based on result
       if (sendResult.status === "SENT") {
         recordSenderAccountSent(candidateSender.id, getSendGateNow().getTime());
-        roundRobinIndex++;
 
         await prisma.bulkMessageItem.update({
           where: { id: nextItem.id },
@@ -1741,7 +2010,6 @@ export async function dispatchBulkJobQueue(jobId: string): Promise<void> {
           // Healthy accounts still remain in activeSenders! Rotate to next healthy account.
         } else {
           // Advance rotation index on normal item failure
-          roundRobinIndex++;
         }
       }
 

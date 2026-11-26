@@ -21,7 +21,10 @@ export async function POST(request: Request): Promise<Response> {
       body && typeof body === "object"
         ? { ...(body as Record<string, unknown>), enforceFirstMessageName: true }
         : body;
-    const result = await sendSingleMessage(payload, user.id);
+    // Manual one-off send from the lead drawer: the operator chose to send now,
+    // so the lead-local working-hours window does not apply (bulk jobs and
+    // follow-ups stay gated). Set server-side; clients cannot toggle it.
+    const result = await sendSingleMessage(payload, user.id, { bypassWorkingHours: true });
     return NextResponse.json(result, { status: 200 });
   } catch (error) {
     return handleRouteError(request, error);

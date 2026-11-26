@@ -1066,7 +1066,9 @@ export async function canSendNow(
     getSkipWeekends(),
   );
 
-  if (!workingHours.inWindow) {
+  // Manual one-off sends (operator clicked Send) skip the lead-local window;
+  // caps, gaps, warmup, DNC and the kill switch still apply.
+  if (!workingHours.inWindow && !input.bypassWorkingHours) {
     return {
       allowed: false,
       reason: "OUTSIDE_WORKING_HOURS",

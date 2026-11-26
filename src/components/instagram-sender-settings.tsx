@@ -624,8 +624,13 @@ export function InstagramSenderSettings() {
 
   // Most common per-account timer becomes the suggested default (unless the
   // user already typed one in the header control).
+  // Only connected accounts count: disconnected ones still carry the old
+  // 10-minute default and would otherwise always win the vote.
   const timerCounts = new Map<number, number>();
-  for (const sender of senders) {
+  const timerSource = senders.some((s) => s.isConnected)
+    ? senders.filter((s) => s.isConnected)
+    : senders;
+  for (const sender of timerSource) {
     const value = sender.minutesBetweenMessages;
     if (typeof value === "number" && Number.isFinite(value)) {
       timerCounts.set(value, (timerCounts.get(value) ?? 0) + 1);

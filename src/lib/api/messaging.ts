@@ -205,6 +205,19 @@ export type BulkJobItemRecord = {
   completedAt?: string | null;
   errorCode?: string | null;
   errorMessage?: string | null;
+  /** Projected send time for QUEUED items (ISO). */
+  etaAt?: string | null;
+  /** Account projected to send (QUEUED) or that sent this item. */
+  senderUsername?: string | null;
+};
+
+export type BulkSenderTimer = {
+  senderAccountId: string;
+  username: string;
+  availableAt: string | null;
+  reason: string;
+  sentToday: number;
+  dailyCap: number;
 };
 
 export type BulkJobStatusResponse = {
@@ -227,6 +240,7 @@ export type BulkJobStatusResponse = {
   completedAt?: string | null;
   cancelledAt?: string | null;
   items?: BulkJobItemRecord[];
+  senderTimers?: BulkSenderTimer[];
 };
 
 export async function previewBulkMessages(
@@ -261,6 +275,15 @@ export async function getBulkJobStatus(
   return apiFetch<BulkJobStatusResponse>(
     `/api/message-jobs/${encodeURIComponent(jobId)}`
   );
+}
+
+export async function listCampaignBulkJobs(
+  campaignId: string
+): Promise<BulkJobStatusResponse[]> {
+  const res = await apiFetch<{ jobs: BulkJobStatusResponse[] }>(
+    `/api/campaigns/${encodeURIComponent(campaignId)}/message-jobs`
+  );
+  return res.jobs ?? [];
 }
 
 export async function startBulkJob(

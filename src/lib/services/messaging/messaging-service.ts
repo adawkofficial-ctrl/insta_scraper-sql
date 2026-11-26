@@ -108,6 +108,8 @@ export type SendTestMessageResult = {
 
 export type SendSingleMessageOptions = {
   getNow?: () => Date;
+  /** Server-set only: manual operator sends skip the lead-local working-hours window. */
+  bypassWorkingHours?: boolean;
 };
 
 export async function sendSingleMessage(
@@ -493,6 +495,7 @@ export async function sendSingleMessage(
       messageText,
       lead,
       now: getNow(),
+      bypassWorkingHours: options?.bypassWorkingHours === true,
     });
 
     if (!reservation.success) {

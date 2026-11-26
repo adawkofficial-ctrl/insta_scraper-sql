@@ -14,6 +14,35 @@ import { startJobPolling } from "@/lib/polling/job-polling";
 
 const POLL_INTERVAL_MS = 2500;
 
+/** "2h 05m", "4m 09s", "12s"; "now" once the time has passed. */
+function formatCountdown(targetIso: string | null | undefined, nowMs: number): string {
+  if (!targetIso) return "—";
+  const diff = new Date(targetIso).getTime() - nowMs;
+  if (!Number.isFinite(diff) || diff <= 0) return "now";
+  const total = Math.floor(diff / 1000);
+  const h = Math.floor(total / 3600);
+  const m = Math.floor((total % 3600) / 60);
+  const sec = total % 60;
+  if (h > 0) return `${h}h ${String(m).padStart(2, "0")}m`;
+  if (m > 0) return `${m}m ${String(sec).padStart(2, "0")}s`;
+  return `${sec}s`;
+}
+
+function formatClock(iso: string | null | undefined): string {
+  if (!iso) return "";
+  return new Date(iso).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+}
+
+const TIMER_REASON_LABEL: Record<string, string> = {
+  READY: "Ready",
+  COOLDOWN_ACTIVE: "Cooling down",
+  DAILY_CAP_REACHED: "Daily cap reached",
+  HOURLY_CAP_REACHED: "Hourly cap reached",
+  SENDER_PAUSED: "Paused",
+  STAGGER_OFFSET: "Staggered start",
+  OUTSIDE_CAMPAIGN_WINDOW: "Outside campaign window",
+};
+
 type BulkJobProgressPanelProps = {
   jobId: string | null;
   onClose: () => void;
@@ -30,6 +59,12 @@ export function BulkJobProgressPanel({
   const [error, setError] = useState<string | null>(null);
   const [actionInProgress, setActionInProgress] = useState<string | null>(null);
   const [retryingItemId, setRetryingItemId] = useState<string | null>(null);
+  // 1s clock so countdowns tick between polls.
+  const [nowMs, setNowMs] = useState(() => Date.now());
+  useEffect(() => {
+    const t = setInterval(() => setNowMs(Date.now()), 1000);
+    return () => clearInterval(t);
+  }, []);
 
   // Keep the latest callback in a ref so effect deps never include an inline
   // function prop (that previously caused an endless poll/render loop).
@@ -240,6 +275,13 @@ export function BulkJobProgressPanel({
     }
   };
 
+  const isJobActive =
+    job?.status === "RUNNING" || job?.status === "QUEUED" || job?.status === "PAUSED";
+  const nextQueued = job?.items
+    ?.filter((it) => it.status === "QUEUED" && it.etaAt)
+    .sort((a, b) => new Date(a.etaAt!).getTime() - new Date(b.etaAt!).getTime())[0];
+  const sendingNow = job?.items?.find((it) => it.status === "PROCESSING");
+
   const processedCount = job ? job.sent + job.failed + (job.unknown ?? 0) : 0;
   const totalItems = job ? job.total : 0;
   const progressPercent = job?.progress ?? 0;
@@ -376,6 +418,75 @@ export function BulkJobProgressPanel({
             </div>
           </div>
 
+          {/* Live send schedule: next send + per-account timers */}
+          {isJobActive && (sendingNow || nextQueued || (job.senderTimers?.length ?? 0) > 0) && (
+            <div className="rounded-xl border border-zinc-800 bg-zinc-950/60 p-3 space-y-2.5">
+              <div className="flex flex-wrap items-baseline justify-between gap-2">
+                <span className="text-[10px] font-bold uppercase text-zinc-400">Next send</span>
+                {sendingNow ? (
+                  <span className="text-xs text-blue-300 animate-pulse">
+                    Sending to <span className="font-mono">@{sendingNow.username}</span>
+                    {sendingNow.senderUsername ? <> from <span className="font-mono">@{sendingNow.senderUsername}</span></> : null}
+                    ...
+                  </span>
+                ) : nextQueued ? (
+                  <span className="text-xs text-zinc-300">
+                    <span className="font-mono text-zinc-100">@{nextQueued.username}</span>
+                    {nextQueued.senderUsername ? <> from <span className="font-mono text-orange-300">@{nextQueued.senderUsername}</span></> : null}
+                    {" in "}
+                    <span className="font-mono text-lg font-bold text-orange-400 tabular-nums">
+                      {formatCountdown(nextQueued.etaAt, nowMs)}
+                    </span>
+                    <span className="ml-1.5 text-[10px] text-zinc-500">({formatClock(nextQueued.etaAt)})</span>
+                  </span>
+                ) : (
+                  <span className="text-xs text-zinc-500">No account can send right now</span>
+                )}
+              </div>
+              {job.status === "PAUSED" && (
+                <p className="text-[10px] text-amber-400">Job is paused. Times apply once you resume.</p>
+              )}
+              {(job.senderTimers?.length ?? 0) > 0 && (
+                <div className="grid grid-cols-1 sm:grid-cols-2 gap-1.5">
+                  {job.senderTimers!.map((t) => {
+                    const ready = !t.availableAt || new Date(t.availableAt).getTime() <= nowMs;
+                    const canSend = t.availableAt !== null;
+                    return (
+                      <div
+                        key={t.senderAccountId}
+                        className="flex items-center justify-between rounded-lg border border-zinc-800/60 bg-zinc-900/60 px-2.5 py-1.5 text-[11px]"
+                      >
+                        <div className="flex items-center gap-1.5 overflow-hidden">
+                          <span
+                            className={`h-1.5 w-1.5 shrink-0 rounded-full ${
+                              !canSend ? "bg-rose-500" : ready ? "bg-emerald-400" : "bg-orange-400"
+                            }`}
+                          />
+                          <span className="font-mono text-zinc-200 truncate">@{t.username}</span>
+                          <span className="text-zinc-500 shrink-0">
+                            {t.sentToday}/{t.dailyCap} today
+                          </span>
+                        </div>
+                        <span
+                          className={`shrink-0 font-mono tabular-nums ${
+                            !canSend ? "text-rose-400" : ready ? "text-emerald-400" : "text-orange-300"
+                          }`}
+                          title={TIMER_REASON_LABEL[t.reason] ?? t.reason}
+                        >
+                          {!canSend
+                            ? TIMER_REASON_LABEL[t.reason] ?? t.reason
+                            : ready
+                              ? "Ready"
+                              : formatCountdown(t.availableAt, nowMs)}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          )}
+
           {/* Error Summary Alert if stopped or paused due to safety */}
           {job.errorSummary && (
             <div className="rounded-xl border border-rose-500/40 bg-rose-500/10 p-3 text-xs text-rose-300 flex items-start gap-2">
@@ -426,7 +537,19 @@ export function BulkJobProgressPanel({
                   >
                     <div className="flex items-center gap-2 overflow-hidden mr-2">
                       <span className="font-mono text-zinc-200 shrink-0">@{item.username}</span>
-                      {item.errorMessage && (
+                      {item.senderUsername && (
+                        <span className="text-[10px] text-zinc-500 shrink-0">
+                          {item.status === "QUEUED" ? "→" : "via"} @{item.senderUsername}
+                        </span>
+                      )}
+                      {item.status === "QUEUED" && isJobActive && item.etaAt ? (
+                        <span
+                          className="text-[10px] font-mono tabular-nums text-orange-300 shrink-0"
+                          title={item.errorMessage ?? undefined}
+                        >
+                          in {formatCountdown(item.etaAt, nowMs)} · {formatClock(item.etaAt)}
+                        </span>
+                      ) : item.errorMessage && (
                         <span className="text-[10px] text-rose-400 truncate max-w-xs" title={item.errorMessage}>
                           ({item.errorMessage})
                         </span>

@@ -22,6 +22,7 @@ import { listSenderAccounts, type InstagramSenderAccount } from "@/lib/api/sende
 import { startBulkJob } from "@/lib/api/messaging";
 import { ApiClientError } from "@/lib/api/client";
 import { ConfirmModal } from "@/components/confirm-modal";
+import { CampaignSendQueue } from "@/components/campaign-send-queue";
 
 const STATUS_FILTERS = ["PENDING_REVIEW", "BLOCKED", "APPROVED", "REJECTED"] as const;
 type StatusFilter = (typeof STATUS_FILTERS)[number] | "ALL";
@@ -360,6 +361,9 @@ export function CampaignReviewQueueTab({
           )}
         </div>
       )}
+
+      {/* Live send queue (bulk jobs, incl. template sends that skip review) */}
+      <CampaignSendQueue campaignId={campaignId} />
 
       {/* Send approved panel */}
       <div className="rounded-xl border border-zinc-800 bg-zinc-900/60 p-4">

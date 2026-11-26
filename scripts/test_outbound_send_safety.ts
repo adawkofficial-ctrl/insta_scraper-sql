@@ -623,8 +623,8 @@ async function main() {
     // Check that bulk messaging calls canSendNow and reserveSendSlot
     const bulkServiceCode = fs.readFileSync(path.join(srcDir, "messaging/bulk-messaging-service.ts"), "utf-8");
     assert(
-      bulkServiceCode.includes("canSendNow") && bulkServiceCode.includes("chooseHealthySender"),
-      "bulk-messaging-service.ts calls canSendNow and chooseHealthySender",
+      bulkServiceCode.includes("canSendNow") && bulkServiceCode.includes("pickSenderForLead"),
+      "bulk-messaging-service.ts calls canSendNow and pickSenderForLead",
     );
 
     // Check that campaign execution calls canSendNow and sendSingleMessage (which calls gate)
