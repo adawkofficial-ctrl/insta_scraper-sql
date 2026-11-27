@@ -15,6 +15,60 @@ export type TemplateLeadContext = {
   profileUrl?: string | null;
 };
 
+/** Loose shape of a Lead row (Prisma or client) used to build template context. */
+export type LeadLikeRecord = {
+  username?: string | null;
+  instagramUsername?: string | null;
+  fullName?: string | null;
+  biography?: string | null;
+  category?: string | null;
+  businessCategoryName?: string | null;
+  city?: string | null;
+  discoveryCity?: string | null;
+  location?: string | null;
+  followersCount?: number | null;
+  followers?: number | null;
+  followsCount?: number | null;
+  following?: number | null;
+  postsCount?: number | null;
+  externalUrl?: string | null;
+  website?: string | null;
+  profileUrl?: string | null;
+};
+
+function firstNonEmpty(...values: Array<string | null | undefined>): string | null {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim().length > 0) return value.trim();
+  }
+  return null;
+}
+
+/**
+ * Single mapping from a stored lead to the renderer's context. Every send and
+ * preview path must use this so variables like {{city}} resolve identically.
+ */
+export function buildTemplateLeadContext(
+  lead: LeadLikeRecord,
+  fallbackCity?: string | null,
+): TemplateLeadContext {
+  const username = firstNonEmpty(lead.username, lead.instagramUsername) ?? "";
+  return {
+    username,
+    fullName: lead.fullName ?? null,
+    biography: lead.biography ?? null,
+    category: lead.category ?? null,
+    businessCategory: lead.businessCategoryName ?? null,
+    city: firstNonEmpty(lead.city, lead.discoveryCity, lead.location, fallbackCity),
+    followersCount: lead.followersCount ?? lead.followers ?? null,
+    followingCount: lead.followsCount ?? lead.following ?? null,
+    postsCount: lead.postsCount ?? null,
+    externalUrl: firstNonEmpty(lead.externalUrl, lead.website),
+    profileUrl:
+      firstNonEmpty(lead.profileUrl) ??
+      (username ? `https://www.instagram.com/${username}/` : null),
+  };
+}
+
 export type TemplateVariableDefinition = {
   /** Canonical variable name, without braces. */
   name: string;
@@ -279,4 +333,10 @@ export function renderTemplate(
 ): string {
   return renderTemplateDetailed(templateBody, lead, campaignContext, senderName)
     .text;
+}
+
+/** Derives a city fallback from a campaign's free-text location ("Dubai, UAE" -> "Dubai"). */
+export function campaignCityFallback(location?: string | null): string | null {
+  const first = location?.split(/[,;\n|]/)[0]?.trim();
+  return first && first.length > 0 && first.length <= 80 ? first : null;
 }

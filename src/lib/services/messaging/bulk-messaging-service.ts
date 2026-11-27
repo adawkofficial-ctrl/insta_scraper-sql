@@ -18,7 +18,13 @@ import {
 } from "../senders/instagram-sender-service";
 import { findSenderAccountOwned } from "../senders/instagram-sender-repository";
 import { decideStaleRecovery, isManualRetryAllowed } from "../errors";
-import { renderTemplate, validateTemplateVariables } from "../template/template-renderer";
+import {
+  buildTemplateLeadContext,
+  campaignCityFallback,
+  renderTemplate,
+  renderTemplateDetailed,
+} from "../template/template-renderer";
+import { resolveTemplateSenderName } from "../template/sender-name";
 import { sendSingleMessage } from "./messaging-service";
 import {
   canSendNow,
@@ -650,7 +656,7 @@ async function resolveCampaignAndTemplate(
       id: campaignId,
       ...(userId ? { userId } : {}),
     },
-    select: { id: true, name: true, userId: true, description: true, intent: true },
+    select: { id: true, name: true, userId: true, description: true, intent: true, location: true },
   });
 
   if (!campaign) {
@@ -691,14 +697,7 @@ async function resolveCampaignAndTemplate(
     }
   }
 
-  let senderName: string | null = null;
-  if (userId) {
-    const owner = await prisma.user.findUnique({
-      where: { id: userId },
-      select: { name: true },
-    });
-    senderName = owner?.name ?? null;
-  }
+  const senderName = await resolveTemplateSenderName(userId ?? campaign.userId);
 
   return { campaign, template, senderName };
 }
@@ -870,18 +869,10 @@ export async function previewBulkMessageJob(
     }
 
     // Render and check variables
-    const rendered = renderTemplate(
+    const { text: rendered, missingVariables } = renderTemplateDetailed(
       template.body,
       {
-        username: lead.username,
-        fullName: lead.fullName,
-        biography: lead.biography,
-        category: lead.category,
-        businessCategory: lead.businessCategoryName,
-        followersCount: lead.followersCount ?? lead.followers,
-        followingCount: lead.followsCount ?? lead.following,
-        postsCount: lead.postsCount,
-        externalUrl: lead.externalUrl,
+        ...buildTemplateLeadContext(lead, campaignCityFallback(campaign.location)),
         profileUrl: resolveLeadProfileUrl(lead),
       },
       {
@@ -892,12 +883,11 @@ export async function previewBulkMessageJob(
       senderName,
     );
 
-    const varCheck = validateTemplateVariables(rendered);
-    if (!varCheck.valid) {
+    if (missingVariables.length > 0) {
       skippedReasons.push({
         leadId: lead.id,
         username: lead.username,
-        reason: `Unsupported template variable(s): {{${varCheck.unsupported.join("}}, {{")}}}.`,
+        reason: `No value for {{${missingVariables.join("}}, {{")}}} on this lead — the message would have a blank gap.`,
       });
       continue;
     }
@@ -931,15 +921,7 @@ export async function previewBulkMessageJob(
     renderedMessage: renderTemplate(
       template.body,
       {
-        username: lead.username ?? "",
-        fullName: lead.fullName,
-        biography: lead.biography,
-        category: lead.category,
-        businessCategory: lead.businessCategoryName,
-        followersCount: lead.followersCount ?? lead.followers,
-        followingCount: lead.followsCount ?? lead.following,
-        postsCount: lead.postsCount,
-        externalUrl: lead.externalUrl,
+        ...buildTemplateLeadContext(lead, campaignCityFallback(campaign.location)),
         profileUrl: resolveLeadProfileUrl(lead),
       },
       {
@@ -1115,18 +1097,10 @@ export async function createBulkMessageJob(
       continue;
     }
 
-    const rendered = renderTemplate(
+    const { text: rendered, missingVariables } = renderTemplateDetailed(
       template.body,
       {
-        username: lead.username ?? "",
-        fullName: lead.fullName,
-        biography: lead.biography,
-        category: lead.category,
-        businessCategory: lead.businessCategoryName,
-        followersCount: lead.followersCount ?? lead.followers,
-        followingCount: lead.followsCount ?? lead.following,
-        postsCount: lead.postsCount,
-        externalUrl: lead.externalUrl,
+        ...buildTemplateLeadContext(lead, campaignCityFallback(campaign.location)),
         profileUrl: resolveLeadProfileUrl(lead),
       },
       {
@@ -1137,8 +1111,7 @@ export async function createBulkMessageJob(
       senderName,
     );
 
-    const varCheck = validateTemplateVariables(rendered);
-    if (!varCheck.valid || rendered.trim().length === 0 || rendered.length > 1000) {
+    if (missingVariables.length > 0 || rendered.trim().length === 0 || rendered.length > 1000) {
       skippedCount++;
       continue;
     }

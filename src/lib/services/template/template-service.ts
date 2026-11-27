@@ -14,9 +14,12 @@ import {
 } from "./template-constants";
 import {
   SUPPORTED_TEMPLATE_VARIABLES,
+  buildTemplateLeadContext,
+  campaignCityFallback,
   renderTemplateDetailed,
   validateTemplateVariables,
 } from "./template-renderer";
+import { resolveTemplateSenderName } from "./sender-name";
 
 export type MessageTemplateSummary = {
   id: string;
@@ -331,7 +334,14 @@ export async function previewTemplateForLeads(
       id: campaignId,
       ...(userId ? { userId } : {}),
     },
-    select: { id: true, name: true },
+    select: {
+      id: true,
+      name: true,
+      description: true,
+      intent: true,
+      location: true,
+      userId: true,
+    },
   });
 
   if (!campaign) {
@@ -362,6 +372,14 @@ export async function previewTemplateForLeads(
       profilePictureUrl: true,
       isVerified: true,
       isBusiness: true,
+      instagramUsername: true,
+      businessCategoryName: true,
+      city: true,
+      discoveryCity: true,
+      location: true,
+      followersCount: true,
+      followsCount: true,
+      website: true,
     },
   });
 
@@ -372,15 +390,8 @@ export async function previewTemplateForLeads(
     );
   }
 
-  const senderName =
-    userId === undefined
-      ? null
-      : (
-          await prisma.user.findUnique({
-            where: { id: userId },
-            select: { name: true },
-          })
-        )?.name ?? null;
+  const senderName = await resolveTemplateSenderName(userId ?? campaign.userId);
+  const cityFallback = campaignCityFallback(campaign.location);
 
   const byId = new Map(leads.map((lead) => [lead.id, lead]));
 
@@ -388,18 +399,12 @@ export async function previewTemplateForLeads(
     const lead = byId.get(leadId)!;
     const rendered = renderTemplateDetailed(
       template.body,
+      buildTemplateLeadContext(lead, cityFallback),
       {
-        username: lead.username ?? "",
-        fullName: lead.fullName,
-        biography: lead.biography,
-        category: lead.category,
-        followersCount: lead.followers,
-        followingCount: lead.following,
-        postsCount: lead.postsCount,
-        externalUrl: lead.externalUrl,
-        profileUrl: lead.profileUrl ?? "",
+        name: campaign.name,
+        description: campaign.description,
+        intent: campaign.intent,
       },
-      campaign.name,
       senderName,
     );
 

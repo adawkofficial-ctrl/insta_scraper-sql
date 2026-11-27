@@ -3,9 +3,12 @@ import "server-only";
 import { getPrismaClient } from "@/lib/db/prisma";
 import { BadRequestError, NotFoundError } from "@/lib/errors";
 import {
+  buildTemplateLeadContext,
+  campaignCityFallback,
   renderTemplate,
   validateTemplateVariables,
 } from "../template/template-renderer";
+import { resolveTemplateSenderName } from "../template/sender-name";
 import { getAIProvider } from "./default-ai-provider";
 
 export type MessagePreviewRequest = {
@@ -64,7 +67,11 @@ export async function previewTemplateMessage(
       id: leadId,
       ...(userId ? { campaign: { userId } } : {}),
     },
-    include: { campaign: { select: { id: true, name: true, userId: true } } },
+    include: {
+      campaign: {
+        select: { id: true, name: true, userId: true, description: true, intent: true, location: true },
+      },
+    },
   });
 
   if (!lead) {
@@ -119,13 +126,12 @@ export async function previewTemplateMessage(
   const contextName = campaignContext || lead.campaign?.name || "";
   const rendered = renderTemplate(
     template.body,
+    buildTemplateLeadContext(lead, campaignCityFallback(lead.campaign?.location)),
     {
-      username: lead.username ?? "",
-      fullName: lead.fullName,
-      biography: lead.biography,
-      category: lead.category,
+      name: contextName,
+      description: lead.campaign?.description,
+      intent: lead.campaign?.intent,
     },
-    contextName,
     senderName,
   );
 
@@ -147,12 +153,7 @@ async function resolveSenderName(
     return null;
   }
 
-  const user = await prisma.user.findUnique({
-    where: { id: userId },
-    select: { name: true },
-  });
-
-  return user?.name ?? null;
+  return resolveTemplateSenderName(userId);
 }
 
 export async function previewAIMessage(
@@ -195,7 +196,11 @@ export async function previewAIMessage(
       id: leadId,
       ...(userId ? { campaign: { userId } } : {}),
     },
-    include: { campaign: { select: { id: true, name: true, userId: true } } },
+    include: {
+      campaign: {
+        select: { id: true, name: true, userId: true, description: true, intent: true, location: true },
+      },
+    },
   });
 
   if (!lead) {
@@ -250,13 +255,12 @@ export async function previewAIMessage(
   const contextName = campaignContext || lead.campaign?.name || "";
   const renderedBase = renderTemplate(
     template.body,
+    buildTemplateLeadContext(lead, campaignCityFallback(lead.campaign?.location)),
     {
-      username: lead.username ?? "",
-      fullName: lead.fullName,
-      biography: lead.biography,
-      category: lead.category,
+      name: contextName,
+      description: lead.campaign?.description,
+      intent: lead.campaign?.intent,
     },
-    contextName,
     senderName,
   );
 

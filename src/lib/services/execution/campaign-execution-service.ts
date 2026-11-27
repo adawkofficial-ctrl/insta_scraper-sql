@@ -10,7 +10,12 @@ import {
 } from "@/generated/prisma/client";
 import { BadRequestError, NotFoundError, ConflictError } from "@/lib/errors";
 import { logger } from "@/lib/logger";
-import { renderTemplate } from "../template/template-renderer";
+import {
+  buildTemplateLeadContext,
+  campaignCityFallback,
+  renderTemplate,
+} from "../template/template-renderer";
+import { resolveTemplateSenderName } from "../template/sender-name";
 import { getMessagingProvider, sendSingleMessage, canSendNow } from "../messaging";
 import { findConnectedSenderForDispatch } from "../senders/instagram-sender-service";
 import { findConnectedSendersForUser } from "../senders/instagram-sender-repository";
@@ -1537,13 +1542,23 @@ export async function createExecutionPreview(
     }
   }
 
+  const senderName = await resolveTemplateSenderName(userId ?? campaign.userId);
+  const cityFallback = campaignCityFallback(campaign.location);
   const preparedItems = activeLeads.map((lead) => ({
     leadId: lead.id,
     username: lead.username ?? "",
     messageText: renderTemplate(
       selectedTemplate.body,
-      { username: lead.username ?? "", fullName: lead.fullName },
-      campaign.name,
+      {
+        ...buildTemplateLeadContext(lead, cityFallback),
+        profileUrl: resolveLeadProfileUrl(lead),
+      },
+      {
+        name: campaign.name,
+        description: campaign.description,
+        intent: campaign.intent,
+      },
+      senderName,
     ),
   }));
 

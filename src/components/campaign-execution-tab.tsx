@@ -22,6 +22,7 @@ import type { Lead } from "@/lib/api/leads";
 import { getMe } from "@/lib/api/auth";
 import {
   TEMPLATE_VARIABLE_DEFINITIONS,
+  buildTemplateLeadContext,
   renderTemplate,
 } from "@/lib/services/template/template-renderer";
 import { ApiClientError } from "@/lib/api/client";
@@ -162,12 +163,7 @@ export function CampaignExecutionTab({
   const previewText = previewLead
     ? renderTemplate(
         templateBody,
-        {
-          username: previewLead.username,
-          fullName: previewLead.fullName,
-          biography: previewLead.biography,
-          category: previewLead.category,
-        },
+        buildTemplateLeadContext(previewLead),
         campaignName,
         senderName,
       )
